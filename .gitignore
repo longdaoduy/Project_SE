@@ -1,0 +1,11 @@
+# VS Code
+.vscode/
+.history/
+*.code-workspace
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
