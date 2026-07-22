@@ -18,51 +18,78 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-export default function ProfileScreen({navigation}) {
-    const [profileData, setProfileData] = useState({
-        name: 'Duy Long',
-        email: "longdeptrai@gmail.com",
-        englishLevel: "B2 English Level",
-        stats: {
-            streaks: 12,
-            level: 3,
-            xp: 243,
-            words: 1280,
-            quizzes: 45,
-            perfect: 12,
-            hours: 36,
-        },
-       
-        avatarUrl: null, // URL ảnh đại diện của người dùng, nếu null thì sẽ hiển thị ảnh mặc định
-        // Dữ liệu biểu đồ cột (số lượng từ học qua từng ngày từ Thứ 2 -> Chủ Nhật)
-        weeklyHistory: [
-        { day: 'M', words: 10 },
-        { day: 'T', words: 25 },
-        { day: 'W', words: 18 },
-        { day: 'T', words: 8 },
-        { day: 'F', words: 28 },
-        { day: 'S', words: 12 },
-        { day: 'S', words: 20 }, // Ngày hiện tại (Chủ nhật)
-        ],
-        // Dữ liệu thành tựu của người dùng
-        achievements: [
-            { title: 'First 100 Words', description: 'Learned 100 words', date: '2024-01-15' },
-            { title: '7-Day Streak', description: 'Completed 7 days in a row', date: '2024-02-10' },
-            { title: 'Level 5 Achieved', description: 'Reached Level 5', date: '2024-03-05' },
-        ],
-    });
+export default function SettingScreen({navigation}) {
+    
 
-    const [isLoading, setIsLoading] = useState(false);
+    const [isDarkMode, setIsDarkMode] = useState(false);
+    const [isVietnamese, setIsVietnamese] = useState(false);
+    const [notifications, setNotifications] = useState(true);
+    const [soundEffects, setSoundEffects] = useState(true);
+    
+    const [dailyGoal, setDailyGoal] = useState(10); // Mặc định là 20 từ/ngày
+    const goalOptions = ['10 words', '20 words', '30 words', '50 words', '100 words'];
 
-    useEffect(() => {
-        // Hiện tại chưa có backend, ta dùng dữ liệu Mock khai báo ở useState phía trên.
-        // Sau này có backend Node.js, chỉ cần mở đoạn code fetch dưới đây ra:
+    const handleDarkModeToggle = () => {
+        setIsDarkMode(!isDarkMode);
+    }
+
+    //Xử lý đăng xuất
+    const handleLogout = () => {
+        Alert.alert('Log Out', 'Are you sure you want to log out?', [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+            text: 'Log Out', 
+            style: 'destructive',
+            onPress: async () => {
+            // TODO: Backend Integration
+            // await AsyncStorage.removeItem('userToken'); // Xóa Token lưu trong máy
+            navigation.reset({ index: 0, routes: [{ name: 'LoginScreen' }] });
+            } 
+        }
+        ]);
+    };
+    const handleDeleteAccount = () => {
+        Alert.alert(
+        'Delete Account', 
+        'This action is permanent and cannot be undone. Do you want to proceed?', 
+        [
+            { text: 'Cancel', style: 'cancel' },
+            { 
+            text: 'Delete', 
+            style: 'destructive',
+            onPress: async () => {
+                // TODO: Backend Integration
+                // await api.delete('/user/account');
+                navigation.reset({ index: 0, routes: [{ name: 'LoginScreen' }] });
+            } 
+            }
+        ]
+        );
+    };
+
+    const handleFontSizePress = () => {
         
-    }, []);
+    };
 
-    const totalWordsThisWeek = profileData.weeklyHistory.reduce((sum, item) => sum + item.words, 0);
-    {/*Lấy số từ học được nhiều nhất trong tuần để tính phần trăm chiều cao cột biểu đồ*/}
-    const maxWordsInWeek = Math.max(...profileData.weeklyHistory.map((item) => item.words), 1);
+    const loadDailyGoal = async () => {
+        try {
+        // Đọc từ Local Storage trước
+        const savedGoal = await AsyncStorage.getItem('user_daily_goal');
+        if (savedGoal !== null) {
+            setDailyGoal(JSON.parse(savedGoal));
+        } else {
+            // Nếu chưa có local, lấy từ Backend API
+            // const response = await api.get('/user/settings');
+            // setDailyGoal(response.data.dailyGoal);
+        }
+        } catch (error) {
+        console.log('Error loading daily goal:', error);
+        }
+    };
+    
+    useEffect(() => {
+        loadDailyGoal();
+    }, []);
 
 
     return (
@@ -85,153 +112,141 @@ export default function ProfileScreen({navigation}) {
                             <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, marginBottom: 0, resizeMode: 'contain' }} />
                         </TouchableOpacity>
 
-                        <Text style={styles.appName}>My Profile</Text>
+                        <Text style={styles.appName}>Settings</Text>
 
-                        {/*Nút setting*/}
-                        <TouchableOpacity style={styles.settingsButton} onPress={() => navigation.navigate('Settings')}>
-                            <Ionicons name="settings-outline" size={18} color="#ffffff" />
-                        </TouchableOpacity>
                     </View>
 
-                    <View style={styles.avatarSection}>
-                        <View style={styles.avatarWrapper}>
-                            {profileData.avatarUrl ? (
-                                <Image source={{ uri: profileData.avatarUrl }} style={styles.avatarImage} />
-                            ) : (
-                            <View style={styles.avatarPlaceholder}>
-                                <Ionicons name="person" size={60} color="#ffffff" />
-                            </View>
-                            )}
-                    
-                            {/*Nút edit avatar*/}
-                            <TouchableOpacity style={styles.editAvatarButton}>
-                                <AntDesign name="edit" size={16} color="#ffffff" />
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-
-                    {/*Username và email người dùng*/}
-                    <Text style={styles.userNameText}>{profileData.name}</Text>
-                    <Text style={styles.userNameEmail}>{profileData.email}</Text>
-
-                    <View style={styles.levelWrapper}>
-                        {/*Hiển thị trình độ tiếng Anh của người dùng*/}
-                        <View style={styles.englishLevelContainer}>
-                            <Ionicons name="language-outline" size={16} color="#ffffff" />
-                            <Text style={styles.englishLevelText}>{profileData.englishLevel}</Text>
-                        </View>
-
-                        {/*Hiển thị level */}
-                        <View style={styles.levelContainer}>
-                            <Image source={require('../assets/trophy.png')} style={styles.levelIcon} />
-                            <Text style={styles.levelText}>Level {profileData.stats.level}</Text>
-                        </View>
-                    </View>
 
                     <View style={styles.whiteCardContainer}>
-                        {/* Lưới 6 thông số học tập */}
-                        <View style={styles.statsGridCard}>
-                            <View style={styles.gridRow}>
-                                <View style={styles.gridItem}>
-                                    <Image source={require('../assets/fire.png')} style={styles.gridIcon} />
-                                    <Text style={styles.gridValue}>{profileData.stats.streaks}</Text>
-                                    <Text style={styles.gridLabel}>Day streaks</Text>
-                                </View>
-                                <View style={styles.gridItem}>
-                                    <Image source={require('../assets/xp.png')} style={styles.gridIcon} />
-                                    <Text style={styles.gridValue}>{profileData.stats.xp}</Text>
-                                    <Text style={styles.gridLabel}>XP</Text>
-                                </View>
-                                <View style={styles.gridItem}>
-                                    <Image source={require('../assets/books.png')} style={styles.gridIcon} />
-                                    <Text style={styles.gridValue}>{profileData.stats.words}</Text>
-                                    <Text style={styles.gridLabel}>Words</Text>
-                                </View>
-                            </View>
+                        {/*Phần điều chỉnh account*/}
+                        <View style={styles.accountSetting}>
+                            <Text style={styles.accountSettingTitle}>ACCOUNT</Text>
 
-                            <View style={[styles.gridRow, { marginTop: 24 }]}>
-                                <View style={styles.gridItem}>
-                                    <Image source={require('../assets/target.png')} style={styles.gridIcon} />
-                                    <Text style={styles.gridValue}>{profileData.stats.quizzes}</Text>
-                                    <Text style={styles.gridLabel}>Quizzes</Text>
+                            <TouchableOpacity style={styles.accountSettingItem} onPress={handleLogout}>
+                                <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
+                                    <Text style={styles.accountSettingLabel}>Log Out</Text>
+                                    <Text style={styles.accountSettingSubLabel}>Log out of your account</Text>
                                 </View>
-                                <View style={styles.gridItem}>
-                                    <Text style={{fontSize: 22, marginBottom: 4}}>💯</Text>
-                                    <Text style={styles.gridValue}>{profileData.stats.perfect}</Text>
-                                    <Text style={styles.gridLabel}>Perfect</Text>
+                                
+                                <Image source={require('../assets/arrow_right.png')} style={{ width: 20, height: 20, resizeMode: 'contain' }} />
+                                
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.accountSettingItem} onPress={() => navigation.navigate('ChangePasswordScreen')}>
+                                <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
+                                    <Text style={styles.accountSettingLabel}>Change Password</Text>
+                                    <Text style={styles.accountSettingSubLabel}>Update your password</Text>
                                 </View>
-                                <View style={styles.gridItem}>
-                                    <Text style={{fontSize: 22, marginBottom: 4}}>🕒</Text>
-                                    <Text style={styles.gridValue}>{profileData.stats.hours}</Text>
-                                    <Text style={styles.gridLabel}>Hours</Text>
+                                <Image source={require('../assets/arrow_right.png')} style={{ width: 20, height: 20, resizeMode: 'contain' }} />
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.accountSettingItem} onPress={handleDeleteAccount}>
+                                <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
+                                    <Text style={styles.accountDeleteLabel}>Delete Account</Text>
+                                    <Text style={styles.accountSettingSubLabel}>Permanently delete your account</Text>
                                 </View>
-                            </View>
+                                <Image source={require('../assets/arrow_right.png')} style={{ width: 20, height: 20, resizeMode: 'contain' }} />
+                            </TouchableOpacity>
+
                         </View>
-                        
-                        <View style={styles.chartCard}>
-                            <View style={styles.chartHeader}>
-                                <Text style={styles.chartTitle}>This week</Text>
-                                <TouchableOpacity><Text style={styles.fullHistoryText}>Full history</Text></TouchableOpacity>
-                            </View>
 
-                            {/* Vẽ biểu đồ cột động tỉ lệ phần trăm */}
-                            <View style={styles.chartBarWrapper}>
-                                {profileData.weeklyHistory.map((item, index) => {
-                                    // Cột cuối cùng (Chủ nhật) tô màu tím đậm làm nổi bật ngày hiện tại
-                                    const isCurrentDay = index === profileData.weeklyHistory.length - 1;
-                                    // Tính phần trăm chiều cao cột động dựa trên số từ gõ được
-                                    const barHeightPercent = (item.words / maxWordsInWeek) * 100;
-
-                                    return (
-                                        <View key={index} style={styles.chartColumn}>
-                                            <View style={styles.barBackground}>
-                                                <View
-                                                    style={[
-                                                        styles.barFill,
-                                                        {
-                                                            height: `${barHeightPercent}%`,
-                                                            backgroundColor: isCurrentDay ? '#6366f1' : '#e0e7ff',
-                                                        },
-                                                    ]}
-                                                />
-                                            </View>
-                                            <Text
-                                                style={[
-                                                    styles.chartDayText,
-                                                    isCurrentDay && { color: '#6366f1', fontWeight: 'bold' },
-                                                ]}
-                                            >
-                                                {item.day}
-                                            </Text>
-                                        </View>
-                                    );
-                                    })}
-                            </View>
-
-                                <Text style={styles.chartSubText}>Total: {totalWordsThisWeek} words practised this week</Text>
-                            </View>
-
-                        <View style={styles.achievementsSection}>
-                            <Text style={{fontSize: 20, fontWeight: '700'}}>Achievements</Text>
+                        <View style={styles.appearenceSetting}>
+                            <Text style={styles.accountSettingTitle}>APPEARANCE</Text>
                             
-                            <ScrollView 
-                                horizontal={true} 
-                                showsHorizontalScrollIndicator={false} // Ẩn thanh cuộn mặc định cho đẹp
-                                contentContainerStyle={styles.horizontalScrollContent}>
-                                {profileData.achievements.map((achievement, index) => (
-                                <View key={index} style={styles.achievementCard}>
-                                    <AntDesign name="check-circle" size={16} color="#22c55e" style={styles.checkIcon} />
-                                    <Image source={require('../assets/achievement.png')} style={styles.gridIcon} />
-                                    
-                                    <View style={styles.achievementInfo}>
-                                        <Text style={styles.gridValue}>{achievement.title}</Text>
-                                        
-                                    </View>
+                            {/*Chuyển đổi Font Size và Language*/}
+                            <TouchableOpacity style={styles.accountSettingItem} onPress={handleFontSizePress}>
+                                <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
+                                    <Text style={styles.accountSettingLabel}>Font Size</Text>
+                                    <Text style={styles.accountSettingSubLabel}>Adjust the font size</Text>
                                 </View>
-                                ))}
-                            </ScrollView>
+                                <Image source={require('../assets/arrow_right.png')} style={{ width: 20, height: 20, resizeMode: 'contain' }} />
+                            </TouchableOpacity>
+
+                            {/*Tắt/Bật Theme*/}
+                            <View style={styles.accountSettingItem}>
+                                <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
+                                    <Text style={styles.accountSettingLabel}>Theme</Text>
+                                    <Text style={styles.accountSettingSubLabel}>Light / Dark Mode</Text>
+                                </View>
+                                <TouchableOpacity 
+                                    style={[styles.customToggle, isDarkMode && styles.customToggleActive]}
+                                    onPress={handleDarkModeToggle}
+                                >
+                                    <View style={[styles.customToggleThumb, isDarkMode && styles.customToggleThumbActive]}>
+                                        <Ionicons 
+                                            name={isDarkMode ? 'moon' : 'sunny'} 
+                                            size={12} 
+                                            color="#ffffff" 
+                                        />
+                                    </View>
+                                </TouchableOpacity>
+                            </View>
+
+                            {/*Chuyển đổi ngôn ngữ*/}
+                            <View style={styles.accountSettingItem}>
+                                <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
+                                    <Text style={styles.accountSettingLabel}>Language</Text>
+                                    <Text style={styles.accountSettingSubLabel}>English / Vietnamese</Text>
+                                </View>
+                                <TouchableOpacity 
+                                    style={[styles.customToggle, isVietnamese && styles.customToggleActive]}
+                                    onPress={() => setIsVietnamese(!isVietnamese)}
+                                >
+                                    <View style={[styles.customToggleThumb, isVietnamese && styles.customToggleThumbActive]}>
+                                        <Text style={{fontSize: 8, fontWeight: '700', color: '#ffffff'}}>
+                                            {isVietnamese ? 'VI' : 'EN'}
+                                        </Text>
+                                    </View>
+                                </TouchableOpacity>
+                            </View>
                         </View>
-                                    
+
+                        <View style={styles.learningSetting}>
+                            <Text style={styles.accountSettingTitle}>LEARNING</Text>
+                            <View style={styles.accountSettingItem}>
+                                <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
+                                    <Text style={styles.accountSettingLabel}>Daily Goal</Text>
+                                    <Text style={styles.accountSettingSubLabel}>Set your daily learning goal</Text>
+                                </View>
+                                <Text style={styles.learningGoal}>{dailyGoal} words</Text>
+                            </View>
+                            <View style={styles.accountSettingItem}>
+                                <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
+                                    <Text style={styles.accountSettingLabel}>Notification Reminder</Text>
+                                    <Text style={styles.accountSettingSubLabel}>Daily at 8:00 AM</Text>
+                                </View>
+                                <TouchableOpacity 
+                                    style={[styles.customToggle, notifications && styles.customToggleActive]}
+                                    onPress={() => setNotifications(!notifications)}
+                                >
+                                    <View style={[styles.customToggleThumb, notifications && styles.customToggleThumbActive]}>
+                                        <Ionicons
+                                            name={notifications ? 'notifications' : 'notifications-off'}
+                                            size={12}
+                                            color="#ffffff"
+                                        />
+                                    </View>
+                                </TouchableOpacity>
+                            </View>
+
+                            <View style={styles.accountSettingItem}>
+                                <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
+                                    <Text style={styles.accountSettingLabel}>Sound Effects</Text>
+                                    <Text style={styles.accountSettingSubLabel}>Plays sounds during practice</Text>
+                                </View>
+                                <TouchableOpacity 
+                                    style={[styles.customToggle, soundEffects && styles.customToggleActive]}
+                                    onPress={() => setSoundEffects(!soundEffects)}
+                                >
+                                    <View style={[styles.customToggleThumb, soundEffects && styles.customToggleThumbActive]}>
+                                        <Ionicons
+                                            name={soundEffects ? 'volume-high' : 'volume-mute'}
+                                            size={12}
+                                            color="#ffffff"
+                                        />
+                                    </View>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+
                     </View>
                 </ScrollView>
             </LinearGradient>
@@ -435,13 +450,7 @@ const styles = StyleSheet.create({
         textAlign: 'right',
     },
 
-    userNameText: {
-        alignSelf: 'flex-start',
-        marginTop: 5,
-        marginLeft: 10,
-        fontSize: 24,
-        color: '#ffffff',
-    },
+
     
     statsRow: {
         flexDirection: 'row',
@@ -867,21 +876,7 @@ const styles = StyleSheet.create({
         marginHorizontal: 0,
        
     },
-    gridIcon: { 
-        width: 32, 
-        height: 32, 
-        marginBottom: 6, 
-        resizeMode: 'contain' 
-    },
-    gridValue: { 
-        fontSize: 24, 
-        fontWeight: '800', 
-        color: '#0f172a',
-        lineHeight: 28,
-        letterSpacing: 0.2,
-        textAlign: 'center',
-    },
-    gridLabel: { 
+    gridLabel: {
         fontSize: 11, 
         color: '#64748b', 
         marginTop: 4, 
@@ -1002,6 +997,12 @@ const styles = StyleSheet.create({
         width: '100%',
     },
 
+    gridIcon: {
+        width: 25,
+        height: 25,
+        resizeMode: 'contain',
+    },
+
     gridValue: {
         fontSize: 12,
         fontWeight: '700',
@@ -1022,5 +1023,120 @@ const styles = StyleSheet.create({
         top: 10,    // Cách mép trên cùng của card 10px
         right: 10,  // Cách mép bên phải của card 10px
         zIndex: 1,  // Đảm bảo icon luôn nổi lên trên cùng không bị ảnh hay chữ đè mất,
-    }
+    },
+
+    accountSettingTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#000000',
+        opacity: 0.6,
+       
+        borderBottomWidth: 1,
+        borderBottomColor: '#e5e7eb',
+        paddingBottom: 8,
+    },
+
+    accountSetting: {
+        width: '100%',
+        marginTop: 20,
+        marginBottom: 20,
+        backgroundColor: '#ffffff',
+        borderRadius: 20,
+        padding: 16,
+    
+    },
+    accountSettingItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#e5e7eb',
+    },
+
+    accountSettingLabel: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#1e293b',
+    },
+
+    accountDeleteLabel: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#ef4444', // Màu đỏ để nhấn mạnh tính nguy hiểm
+    },
+
+    accountSettingSubLabel: {
+        fontSize: 12,
+        color: '#64748b',
+        marginTop: 2,
+    },
+
+    appearenceSetting: {
+        width: '100%',
+        marginBottom: 20,
+        backgroundColor: '#ffffff',
+        borderRadius: 20,
+        padding: 16,
+    },
+
+    customToggle: {
+        width: 54,
+        height: 28,
+        borderRadius: 16,
+        backgroundColor: '#e2e8f0',
+        justifyContent: 'flex-start',
+        alignItems: 'center',
+        paddingHorizontal: 2,
+        flexDirection: 'row',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 3,
+        elevation: 2,
+    },
+
+    customToggleActive: {
+        backgroundColor: '#667eea',
+        justifyContent: 'flex-end',
+    },
+
+    customToggleThumb: {
+        width: 25,
+        height: 25,
+        borderRadius: 14,
+        backgroundColor: '#ffffff',
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 3,
+        elevation: 3,
+    },
+
+    customToggleThumbActive: {
+        backgroundColor: '#ffffff',
+    },
+
+    learningSetting: {
+        width: '100%',
+        marginBottom: 20,
+        backgroundColor: '#ffffff',
+        borderRadius: 20,
+        padding: 16,
+    },
+
+    learningGoal: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#4160ed',
+        backgroundColor: '#e0e7ff',
+        paddingVertical: 3,
+        paddingHorizontal: 8,
+        borderRadius: 12,
+        borderColor: '#c7d2fe',
+        borderWidth: 1,
+    },
+
 });

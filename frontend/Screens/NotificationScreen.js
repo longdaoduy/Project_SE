@@ -15,55 +15,115 @@ import {
 
 import { AntDesign } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { FlatList } from 'react-native-gesture-handler';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-export default function ProfileScreen({navigation}) {
-    const [profileData, setProfileData] = useState({
-        name: 'Duy Long',
-        email: "longdeptrai@gmail.com",
-        englishLevel: "B2 English Level",
-        stats: {
-            streaks: 12,
-            level: 3,
-            xp: 243,
-            words: 1280,
-            quizzes: 45,
-            perfect: 12,
-            hours: 36,
+export default function NotificationScreen({navigation}) {
+    
+    const [notifications, setNotifications] = useState([]);
+    const MOCK_NOTIFICATIONS = [
+        { 
+            id: 1, 
+            title: 'Continue Streak', 
+            type: 'Streak',
+            isRead: false,
+            time: '2 hours ago' },
+        { 
+            id: 2, 
+            title: 'You have reached Level 3', 
+            type: 'Achievement',
+            isRead: false,
+            time: '1 day ago' 
         },
-       
-        avatarUrl: null, // URL ảnh đại diện của người dùng, nếu null thì sẽ hiển thị ảnh mặc định
-        // Dữ liệu biểu đồ cột (số lượng từ học qua từng ngày từ Thứ 2 -> Chủ Nhật)
-        weeklyHistory: [
-        { day: 'M', words: 10 },
-        { day: 'T', words: 25 },
-        { day: 'W', words: 18 },
-        { day: 'T', words: 8 },
-        { day: 'F', words: 28 },
-        { day: 'S', words: 12 },
-        { day: 'S', words: 20 }, // Ngày hiện tại (Chủ nhật)
-        ],
-        // Dữ liệu thành tựu của người dùng
-        achievements: [
-            { title: 'First 100 Words', description: 'Learned 100 words', date: '2024-01-15' },
-            { title: '7-Day Streak', description: 'Completed 7 days in a row', date: '2024-02-10' },
-            { title: 'Level 5 Achieved', description: 'Reached Level 5', date: '2024-03-05' },
-        ],
-    });
-
-    const [isLoading, setIsLoading] = useState(false);
-
+        { 
+            id: 3, 
+            title: 'Reminder', 
+            type: 'Studying',
+            isRead: false,
+            time: '3 days ago' 
+        },
+    ];
     useEffect(() => {
-        // Hiện tại chưa có backend, ta dùng dữ liệu Mock khai báo ở useState phía trên.
-        // Sau này có backend Node.js, chỉ cần mở đoạn code fetch dưới đây ra:
-        
+        // Giả lập dữ liệu thông báo
+        setNotifications(MOCK_NOTIFICATIONS);
     }, []);
+    // 1. CHỨC NĂNG: Bấm vào 1 item -> Đánh dấu là đã đọc
+    const handlePressNotification = (id) => {
+        setNotifications(prev =>
+        prev.map(item => item.id === id ? { ...item, isRead: true } : item)
+        );
+    };
 
-    const totalWordsThisWeek = profileData.weeklyHistory.reduce((sum, item) => sum + item.words, 0);
-    {/*Lấy số từ học được nhiều nhất trong tuần để tính phần trăm chiều cao cột biểu đồ*/}
-    const maxWordsInWeek = Math.max(...profileData.weeklyHistory.map((item) => item.words), 1);
+    // 2. CHỨC NĂNG: Đánh dấu tất cả là đã đọc
+    const handleMarkAllAsRead = () => {
+        setNotifications(prev => prev.map(item => ({ ...item, isRead: true })));
+    };
+    
+    // RENDER TỪNG CARD THÔNG BÁO
+  const renderItem = ({ item }) => (
+    <TouchableOpacity 
+        activeOpacity={0.8}
+        onPress={() => handlePressNotification(item.id)}
+        style={[
+            styles.notificationItem, 
+            item.isRead ? styles.readNotification : styles.unreadNotification
+        ]}
+        >
+        <View style={styles.notificationIcon}>
+            {renderNotificationsIcon(item.type)}
+        </View>
+        
+        <View style={styles.notificationContent}>
+            <View style={styles.cardTopRow}>
+                <Text style={[styles.notificationTitle, !item.isRead && styles.unreadTitleText]}>
+                    {item.title}
+                </Text>
+                {!item.isRead && <View style={styles.unreadDot} />}
+            </View>
 
+            {item.message && (
+            <Text style={styles.notificationMessage} numberOfLines={2}>
+                {item.message}
+            </Text>
+            )}
+
+            <Text style={styles.notificationTime}>{item.time}</Text>
+        </View>
+        </TouchableOpacity>
+    );
+
+    const unreadCount = notifications.filter(n => !n.isRead).length;
+
+    {/* 3. CHỨC NĂNG: Render icon dựa trên loại thông báo */}
+    const renderNotificationsIcon = (type) => {
+        switch (type) {
+        case 'Streak':
+            return (
+            <View style={[styles.iconBadge, { backgroundColor: '#ffedd5' }]}>
+                <Ionicons name="flame" size={20} color="#f97316" />
+            </View>
+            );
+        case 'Achievement':
+            return (
+            <View style={[styles.iconBadge, { backgroundColor: '#fef9c3' }]}>
+                <Ionicons name="trophy" size={20} color="#eab308" />
+            </View>
+            );
+        case 'Studying':
+            return (
+            <View style={[styles.iconBadge, { backgroundColor: '#adead5' }]}>
+                <Image source={require('../assets/layer.png')} style={{ width: 20, height: 20, resizeMode: 'contain' }} />
+            </View>
+            );
+        default:
+            return (
+            <View style={[styles.iconBadge, { backgroundColor: '#f1f5f9' }]}>
+                <Ionicons name="notifications" size={20} color="#64748b" />
+            </View>
+            );
+        }
+    };
 
     return (
         // Khung bọc ngoài cùng (Nếu là Web thì căn giữa để tạo hiệu ứng giả lập)
@@ -85,154 +145,28 @@ export default function ProfileScreen({navigation}) {
                             <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, marginBottom: 0, resizeMode: 'contain' }} />
                         </TouchableOpacity>
 
-                        <Text style={styles.appName}>My Profile</Text>
-
-                        {/*Nút setting*/}
-                        <TouchableOpacity style={styles.settingsButton} onPress={() => navigation.navigate('Settings')}>
-                            <Ionicons name="settings-outline" size={18} color="#ffffff" />
-                        </TouchableOpacity>
+                        <Text style={styles.appName}>Notifications</Text>
                     </View>
 
-                    <View style={styles.avatarSection}>
-                        <View style={styles.avatarWrapper}>
-                            {profileData.avatarUrl ? (
-                                <Image source={{ uri: profileData.avatarUrl }} style={styles.avatarImage} />
-                            ) : (
-                            <View style={styles.avatarPlaceholder}>
-                                <Ionicons name="person" size={60} color="#ffffff" />
-                            </View>
-                            )}
-                    
-                            {/*Nút edit avatar*/}
-                            <TouchableOpacity style={styles.editAvatarButton}>
-                                <AntDesign name="edit" size={16} color="#ffffff" />
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-
-                    {/*Username và email người dùng*/}
-                    <Text style={styles.userNameText}>{profileData.name}</Text>
-                    <Text style={styles.userNameEmail}>{profileData.email}</Text>
-
-                    <View style={styles.levelWrapper}>
-                        {/*Hiển thị trình độ tiếng Anh của người dùng*/}
-                        <View style={styles.englishLevelContainer}>
-                            <Ionicons name="language-outline" size={16} color="#ffffff" />
-                            <Text style={styles.englishLevelText}>{profileData.englishLevel}</Text>
-                        </View>
-
-                        {/*Hiển thị level */}
-                        <View style={styles.levelContainer}>
-                            <Image source={require('../assets/trophy.png')} style={styles.levelIcon} />
-                            <Text style={styles.levelText}>Level {profileData.stats.level}</Text>
-                        </View>
-                    </View>
 
                     <View style={styles.whiteCardContainer}>
-                        {/* Lưới 6 thông số học tập */}
-                        <View style={styles.statsGridCard}>
-                            <View style={styles.gridRow}>
-                                <View style={styles.gridItem}>
-                                    <Image source={require('../assets/fire.png')} style={styles.gridIcon} />
-                                    <Text style={styles.gridValue}>{profileData.stats.streaks}</Text>
-                                    <Text style={styles.gridLabel}>Day streaks</Text>
-                                </View>
-                                <View style={styles.gridItem}>
-                                    <Image source={require('../assets/xp.png')} style={styles.gridIcon} />
-                                    <Text style={styles.gridValue}>{profileData.stats.xp}</Text>
-                                    <Text style={styles.gridLabel}>XP</Text>
-                                </View>
-                                <View style={styles.gridItem}>
-                                    <Image source={require('../assets/books.png')} style={styles.gridIcon} />
-                                    <Text style={styles.gridValue}>{profileData.stats.words}</Text>
-                                    <Text style={styles.gridLabel}>Words</Text>
-                                </View>
+                        {/*Danh sách thông báo*/}
+                        <FlatList 
+                            data={notifications}
+                            keyExtractor={(item) => item.id.toString()}
+                            renderItem={renderItem}
+                            style={{ width: '100%' , paddingHorizontal: 30, marginTop: 15}}
+                            contentContainerStyle={styles.notificationsList}
+                            showsVerticalScrollIndicator={false}
+                            ListEmptyComponent={
+                            <View style={styles.emptyContainer}>
+                                <Ionicons name="notifications-off-outline" size={50} color="#cbd5e1" />
+                                <Text style={styles.emptyText}>No notifications yet</Text>
                             </View>
-
-                            <View style={[styles.gridRow, { marginTop: 24 }]}>
-                                <View style={styles.gridItem}>
-                                    <Image source={require('../assets/target.png')} style={styles.gridIcon} />
-                                    <Text style={styles.gridValue}>{profileData.stats.quizzes}</Text>
-                                    <Text style={styles.gridLabel}>Quizzes</Text>
-                                </View>
-                                <View style={styles.gridItem}>
-                                    <Text style={{fontSize: 22, marginBottom: 4}}>💯</Text>
-                                    <Text style={styles.gridValue}>{profileData.stats.perfect}</Text>
-                                    <Text style={styles.gridLabel}>Perfect</Text>
-                                </View>
-                                <View style={styles.gridItem}>
-                                    <Text style={{fontSize: 22, marginBottom: 4}}>🕒</Text>
-                                    <Text style={styles.gridValue}>{profileData.stats.hours}</Text>
-                                    <Text style={styles.gridLabel}>Hours</Text>
-                                </View>
-                            </View>
-                        </View>
-                        
-                        <View style={styles.chartCard}>
-                            <View style={styles.chartHeader}>
-                                <Text style={styles.chartTitle}>This week</Text>
-                                <TouchableOpacity><Text style={styles.fullHistoryText}>Full history</Text></TouchableOpacity>
-                            </View>
-
-                            {/* Vẽ biểu đồ cột động tỉ lệ phần trăm */}
-                            <View style={styles.chartBarWrapper}>
-                                {profileData.weeklyHistory.map((item, index) => {
-                                    // Cột cuối cùng (Chủ nhật) tô màu tím đậm làm nổi bật ngày hiện tại
-                                    const isCurrentDay = index === profileData.weeklyHistory.length - 1;
-                                    // Tính phần trăm chiều cao cột động dựa trên số từ gõ được
-                                    const barHeightPercent = (item.words / maxWordsInWeek) * 100;
-
-                                    return (
-                                        <View key={index} style={styles.chartColumn}>
-                                            <View style={styles.barBackground}>
-                                                <View
-                                                    style={[
-                                                        styles.barFill,
-                                                        {
-                                                            height: `${barHeightPercent}%`,
-                                                            backgroundColor: isCurrentDay ? '#6366f1' : '#e0e7ff',
-                                                        },
-                                                    ]}
-                                                />
-                                            </View>
-                                            <Text
-                                                style={[
-                                                    styles.chartDayText,
-                                                    isCurrentDay && { color: '#6366f1', fontWeight: 'bold' },
-                                                ]}
-                                            >
-                                                {item.day}
-                                            </Text>
-                                        </View>
-                                    );
-                                    })}
-                            </View>
-
-                                <Text style={styles.chartSubText}>Total: {totalWordsThisWeek} words practised this week</Text>
-                            </View>
-
-                        <View style={styles.achievementsSection}>
-                            <Text style={{fontSize: 20, fontWeight: '700'}}>Achievements</Text>
-                            
-                            <ScrollView 
-                                horizontal={true} 
-                                showsHorizontalScrollIndicator={false} // Ẩn thanh cuộn mặc định cho đẹp
-                                contentContainerStyle={styles.horizontalScrollContent}>
-                                {profileData.achievements.map((achievement, index) => (
-                                <View key={index} style={styles.achievementCard}>
-                                    <AntDesign name="check-circle" size={16} color="#22c55e" style={styles.checkIcon} />
-                                    <Image source={require('../assets/achievement.png')} style={styles.gridIcon} />
-                                    
-                                    <View style={styles.achievementInfo}>
-                                        <Text style={styles.gridValue}>{achievement.title}</Text>
-                                        
-                                    </View>
-                                </View>
-                                ))}
-                            </ScrollView>
-                        </View>
-                                    
+                            }
+                        />
                     </View>
+
                 </ScrollView>
             </LinearGradient>
         </View>
@@ -302,7 +236,7 @@ const styles = StyleSheet.create({
         width: '100%',
         minHeight: 450, // Đảm bảo card luôn có độ cao tối thiểu kể cả khi chưa có dữ liệu inside
         alignItems: 'center',
-        paddingHorizontal: 24,
+        paddingHorizontal: 0,
 
         marginTop: 34, // Tạo khoảng cách giữa phần header và card trắng
         paddingTop: 10, // Tạo khoảng cách giữa phần trên của card và nội dung bên trong
@@ -435,13 +369,7 @@ const styles = StyleSheet.create({
         textAlign: 'right',
     },
 
-    userNameText: {
-        alignSelf: 'flex-start',
-        marginTop: 5,
-        marginLeft: 10,
-        fontSize: 24,
-        color: '#ffffff',
-    },
+
     
     statsRow: {
         flexDirection: 'row',
@@ -867,21 +795,7 @@ const styles = StyleSheet.create({
         marginHorizontal: 0,
        
     },
-    gridIcon: { 
-        width: 32, 
-        height: 32, 
-        marginBottom: 6, 
-        resizeMode: 'contain' 
-    },
-    gridValue: { 
-        fontSize: 24, 
-        fontWeight: '800', 
-        color: '#0f172a',
-        lineHeight: 28,
-        letterSpacing: 0.2,
-        textAlign: 'center',
-    },
-    gridLabel: { 
+    gridLabel: {
         fontSize: 11, 
         color: '#64748b', 
         marginTop: 4, 
@@ -1002,6 +916,12 @@ const styles = StyleSheet.create({
         width: '100%',
     },
 
+    gridIcon: {
+        width: 25,
+        height: 25,
+        resizeMode: 'contain',
+    },
+
     gridValue: {
         fontSize: 12,
         fontWeight: '700',
@@ -1022,5 +942,207 @@ const styles = StyleSheet.create({
         top: 10,    // Cách mép trên cùng của card 10px
         right: 10,  // Cách mép bên phải của card 10px
         zIndex: 1,  // Đảm bảo icon luôn nổi lên trên cùng không bị ảnh hay chữ đè mất,
-    }
+    },
+
+    accountSettingTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#000000',
+        opacity: 0.6,
+       
+        borderBottomWidth: 1,
+        borderBottomColor: '#e5e7eb',
+        paddingBottom: 8,
+    },
+
+    accountSetting: {
+        width: '100%',
+        marginTop: 20,
+        marginBottom: 20,
+        backgroundColor: '#ffffff',
+        borderRadius: 20,
+        padding: 16,
+    
+    },
+    accountSettingItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#e5e7eb',
+    },
+
+    accountSettingLabel: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#1e293b',
+    },
+
+    accountDeleteLabel: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#ef4444', // Màu đỏ để nhấn mạnh tính nguy hiểm
+    },
+
+    accountSettingSubLabel: {
+        fontSize: 12,
+        color: '#64748b',
+        marginTop: 2,
+    },
+
+    appearenceSetting: {
+        width: '100%',
+        marginBottom: 20,
+        backgroundColor: '#ffffff',
+        borderRadius: 20,
+        padding: 16,
+    },
+
+    customToggle: {
+        width: 54,
+        height: 28,
+        borderRadius: 16,
+        backgroundColor: '#e2e8f0',
+        justifyContent: 'flex-start',
+        alignItems: 'center',
+        paddingHorizontal: 2,
+        flexDirection: 'row',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 3,
+        elevation: 2,
+    },
+
+    customToggleActive: {
+        backgroundColor: '#667eea',
+        justifyContent: 'flex-end',
+    },
+
+    customToggleThumb: {
+        width: 25,
+        height: 25,
+        borderRadius: 14,
+        backgroundColor: '#ffffff',
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 3,
+        elevation: 3,
+    },
+
+    customToggleThumbActive: {
+        backgroundColor: '#ffffff',
+    },
+
+    learningSetting: {
+        width: '100%',
+        marginBottom: 20,
+        backgroundColor: '#ffffff',
+        borderRadius: 20,
+        padding: 16,
+    },
+
+    learningGoal: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#4160ed',
+        backgroundColor: '#e0e7ff',
+        paddingVertical: 3,
+        paddingHorizontal: 8,
+        borderRadius: 12,
+        borderColor: '#c7d2fe',
+        borderWidth: 1,
+    },
+
+    notificationItem: {
+        flexDirection: 'row',
+        justifyContent: 'flex-start',
+        alignItems: 'center',
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderRadius: 12,
+        marginBottom: 10,
+        width: '100%',
+
+        backgroundColor: '#ffffff'
+        
+    },
+    unreadNotification: {
+        flexDirection: 'row',
+        justifyContent: 'flex-start',
+        alignItems: 'center',
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderRadius: 12,
+        marginBottom: 10,
+        width: '100%',
+        backgroundColor: '#e0e7ff', // Màu nền khác biệt cho thông báo chưa đọc
+
+    },
+    notificationIcon: {
+        marginRight: 12,
+    },
+
+    notificationContent: {
+        flex: 1,
+
+    },
+    notificationTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+    },
+
+    notificationTime: {
+        fontSize: 12,
+        color: '#64748b',
+        marginTop: 4,
+    },
+
+    notificationsList: {
+        width: '100%',
+    },
+
+    iconBadge: {
+        width: 42,
+        height: 42,
+        borderRadius: 14,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+
+    emptyContainer: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingTop: 80,
+    },
+
+    emptyText: {
+        fontSize: 14,
+        color: '#94a3b8',
+        marginTop: 10,
+    },
+
+
+    unreadTitleText: {
+        fontWeight: '700',
+        color: '#0f172a',
+    },
+
+    unreadDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: '#667eea',
+    },
+
+    cardTopRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+
 });

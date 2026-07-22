@@ -86,7 +86,7 @@ export default function HomeScreen({navigation}) {
 
                         </View>
                         {/*Nút notification*/}
-                        <TouchableOpacity style={styles.notificationButton} onPress={() => navigation.navigate('NotificationScreen')}>
+                        <TouchableOpacity style={styles.notificationButton} onPress={() => navigation.navigate('Notifications')}>
                             <Image source={require('../assets/Bell.png')} style={{ width: 16, height: 16, marginBottom: 0, resizeMode: 'contain' }} />
                         </TouchableOpacity>
 
