@@ -1,15 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import {Ionicons} from '@expo/vector-icons';
-import { 
-    StyleSheet, 
-    Text, 
+import { Ionicons } from '@expo/vector-icons';
+import {
+    StyleSheet,
+    Text,
     TextInput,
-    View, 
-    ScrollView, 
-    StatusBar, 
-    Platform, 
+    View,
+    ScrollView,
+    StatusBar,
+    Platform,
     Dimensions,
-    Image ,
+    Image,
     TouchableOpacity,
 } from 'react-native';
 
@@ -18,14 +18,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-export default function HomeScreen({navigation}) {
+export default function HomeScreen({ navigation }) {
     const [userData, setUserData] = useState({
         name: 'Duy Long',
         streak: 12,
         level: 3,
         xp: 243,
         wordlearned: 1280,
-        dailyGoal:{
+        dailyGoal: {
             current: 12,
             target: 20
         }
@@ -36,7 +36,7 @@ export default function HomeScreen({navigation}) {
     useEffect(() => {
         // Hiện tại chưa có backend, ta dùng dữ liệu Mock khai báo ở useState phía trên.
         // Sau này có backend Node.js, chỉ cần mở đoạn code fetch dưới đây ra:
-        
+
     }, []);
 
     const wordRemaining = userData.dailyGoal.target - userData.dailyGoal.current;
@@ -52,9 +52,9 @@ export default function HomeScreen({navigation}) {
             >
                 {/* Thanh trạng thái màu sáng */}
                 <StatusBar barStyle="light-content" />
-                
-                <ScrollView contentContainerStyle={styles.scrollContainer} 
-                showsVerticalScrollIndicator={false}>
+
+                <ScrollView contentContainerStyle={styles.scrollContainer}
+                    showsVerticalScrollIndicator={false}>
                     <View style={styles.headerSection}>
                         <Text style={styles.appWelcome}>Welcome Student👋</Text>
                         <Text style={styles.userNameText}>Hello, {userData.name}!</Text>
@@ -110,7 +110,7 @@ export default function HomeScreen({navigation}) {
                                 </Text>
                             </View>
 
-                            
+
 
                             {/* Vẽ thanh tiến trình */}
                             <View style={styles.progressContainer}>
@@ -124,7 +124,7 @@ export default function HomeScreen({navigation}) {
                             </View>
                         </View>
 
-                        <Text style={{fontSize: 24, color: '#000000', fontWeight: '700', marginTop: 10, alignSelf: 'flex-start'}}>
+                        <Text style={{ fontSize: 24, color: '#000000', fontWeight: '700', marginTop: 10, alignSelf: 'flex-start' }}>
                             Quick Practice
                         </Text>
 
@@ -141,7 +141,7 @@ export default function HomeScreen({navigation}) {
                             </TouchableOpacity>
 
                             {/* Nút Flashcards */}
-                            <TouchableOpacity style={styles.practiceButton} onPress={() => navigation.navigate('FlashcardScreen')} activeOpacity={0.8}>
+                            <TouchableOpacity style={styles.practiceButton} onPress={() => navigation.navigate('PracticeScreen')} activeOpacity={0.8}>
                                 <View style={styles.buttonContentWrapper}>
                                     <View style={[styles.iconCircle, { backgroundColor: '#e6f9f3' }]}>
                                         <Image source={require('../assets/flashcard.png')} style={styles.buttonIcon} />
@@ -171,11 +171,11 @@ export default function HomeScreen({navigation}) {
                                     <Text style={styles.buttonMainText}>Vocab Quiz</Text>
                                     <Text style={styles.buttonSubText}>10 questions</Text>
                                 </View>
-                            </TouchableOpacity>                        
+                            </TouchableOpacity>
                         </View>
                     </View>
 
-                    
+
                 </ScrollView>
                 {/*Thanh điều hướng nhanh đến các màn hình khác*/}
                 <View style={styles.quickNavContainer}>
@@ -224,16 +224,16 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
 
-    
+
     phoneContainer: {
-        
+
         width: Platform.OS === 'web' ? 400 : '100%',
         height: Platform.OS === 'web' ? 800 : '100%',
-        
+
         // Tạo hiệu ứng giống chiếc điện thoại khi xem trên máy tính
         borderRadius: Platform.OS === 'web' ? 35 : 0,
         overflow: 'hidden',
-        
+
         // Đổ bóng cho khung trên Web
         ...Platform.select({
             web: {
@@ -247,7 +247,7 @@ const styles = StyleSheet.create({
 
     // Cấu hình chuẩn cho ScrollView con bên trong
     scrollContainer: {
-        flexGrow: 1, 
+        flexGrow: 1,
         justifyContent: 'space-between', // Đẩy Header lên đỉnh, Card trắng xuống đáy
     },
 
@@ -271,7 +271,7 @@ const styles = StyleSheet.create({
         opacity: 0.9,
     },
 
-    
+
     whiteCardContainer: {
         flex: 1, // Tự động chiếm trọn phần không gian trống bên dưới
         backgroundColor: '#F0F2FF',
@@ -326,7 +326,7 @@ const styles = StyleSheet.create({
         fontSize: 18,
         color: '#ffffff',
         fontWeight: '600',
-        
+
     },
 
     facebookButtonContainer: {
@@ -353,7 +353,7 @@ const styles = StyleSheet.create({
         marginBottom: 8,
     },
     emailInput: {
-        
+
         backgroundColor: '#FFFBFB',
         borderRadius: 20,
         padding: 10,
@@ -366,7 +366,7 @@ const styles = StyleSheet.create({
     //Password Section styles
     passwordSection: {
         marginTop: 20,
-        width: '100%',  
+        width: '100%',
     },
 
     passwordSectionTitle: {
@@ -376,8 +376,8 @@ const styles = StyleSheet.create({
     },
 
     passwordInput: {
-        
-        backgroundColor: '#FFFBFB',    
+
+        backgroundColor: '#FFFBFB',
         borderRadius: 20,
         padding: 10,
         fontSize: 16,
@@ -418,7 +418,7 @@ const styles = StyleSheet.create({
         fontSize: 24,
         color: '#ffffff',
     },
-    
+
     statsRow: {
         flexDirection: 'row',
         marginTop: 20,
@@ -426,16 +426,16 @@ const styles = StyleSheet.create({
     },
 
     statsCard: {
-        flex: 1,                  
+        flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        paddingVertical: 10,      
-        borderRadius: 18,         
+        paddingVertical: 10,
+        borderRadius: 18,
 
         //Độ opacity và màu sắc của tấm kính mờ
-        backgroundColor: 'rgba(255, 255, 255, 0.12)', 
+        backgroundColor: 'rgba(255, 255, 255, 0.12)',
         borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.25)',  
+        borderColor: 'rgba(255, 255, 255, 0.25)',
 
         // Đổ bóng dịu nhẹ phía dưới tấm kính 
         shadowColor: 'rgba(31, 38, 135, 0.15)',
@@ -443,12 +443,12 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.2,
         shadowRadius: 10,
 
-        
+
         elevation: 3,
 
-        marginHorizontal: 5,    
+        marginHorizontal: 5,
     },
-    
+
     statsValue: {
         fontSize: 16,
         fontWeight: '700',
@@ -536,7 +536,7 @@ const styles = StyleSheet.create({
 
 
 
-    }, 
+    },
 
     buttonIcon: {
         width: 26,
@@ -568,9 +568,9 @@ const styles = StyleSheet.create({
         backgroundColor: '#ffffff',
         flexDirection: 'row',
 
-        width: '100%', 
+        width: '100%',
         alignSelf: 'stretch',
-    
+
     },
 
     notificationButton: {
@@ -580,13 +580,13 @@ const styles = StyleSheet.create({
         width: 32,
         height: 32,
         alignItems: 'center',
-        justifyContent: 'center',     
-        borderRadius: 22,         
+        justifyContent: 'center',
+        borderRadius: 22,
 
         //Độ opacity và màu sắc của tấm kính mờ
-        backgroundColor: 'rgba(255, 255, 255, 0.12)', 
+        backgroundColor: 'rgba(255, 255, 255, 0.12)',
         borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.25)',  
+        borderColor: 'rgba(255, 255, 255, 0.25)',
 
         // Đổ bóng dịu nhẹ phía dưới tấm kính 
         shadowColor: 'rgba(31, 38, 135, 0.15)',
@@ -594,7 +594,7 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.2,
         shadowRadius: 10,
 
-        
+
         elevation: 3,
     },
 
@@ -605,13 +605,13 @@ const styles = StyleSheet.create({
         width: 32,
         height: 32,
         alignItems: 'center',
-        justifyContent: 'center',     
+        justifyContent: 'center',
         borderRadius: 22,
 
         //Độ opacity và màu sắc của tấm kính mờ
-        backgroundColor: 'rgba(255, 255, 255, 0.12)', 
+        backgroundColor: 'rgba(255, 255, 255, 0.12)',
         borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.25)',  
+        borderColor: 'rgba(255, 255, 255, 0.25)',
 
         // Đổ bóng dịu nhẹ phía dưới tấm kính 
         shadowColor: 'rgba(31, 38, 135, 0.15)',
@@ -619,7 +619,7 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.2,
         shadowRadius: 10,
 
-        
+
         elevation: 3,
     },
 
