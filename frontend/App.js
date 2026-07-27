@@ -24,6 +24,8 @@ export default function App() {
         <Stack.Screen name="Notifications" component={NotificationScreen} />
         <Stack.Screen name="WordlistScreen" component={WordlistScreen} />
         <Stack.Screen name="FlashcardScreen" component={FlashcardScreen} />
+        <Stack.Screen name="PracticeScreen" component={PracticeScreen} />
+        <Stack.Screen name="AIReadingScreen" component={AIReadingScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
