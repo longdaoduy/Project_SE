@@ -4,6 +4,7 @@ import HomeScreen from './Screens/HomeScreen';
 import ProfileScreen from './Screens/ProfileScreen';
 import SettingsScreen from './Screens/SettingScreen';
 import NotificationScreen from './Screens/NotificationScreen';
+import WordlistScreen from './Screens/WordlistScreen';
 import PracticeScreen from './Screens/PracticeScreen';
 import FlashcardScreen from './Screens/FlashcardScreen'; // <-- Thêm dòng này
 import { NavigationContainer } from '@react-navigation/native';
@@ -20,8 +21,9 @@ export default function App() {
         <Stack.Screen name="Profile" component={ProfileScreen} />
         <Stack.Screen name="Settings" component={SettingsScreen} />
         <Stack.Screen name="Notifications" component={NotificationScreen} />
-        <Stack.Screen name="PracticeScreen" component={PracticeScreen} />
+        <Stack.Screen name="WordlistScreen" component={WordlistScreen} />
         <Stack.Screen name="FlashcardScreen" component={FlashcardScreen} />
+        <Stack.Screen name="PracticeScreen" component={PracticeScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

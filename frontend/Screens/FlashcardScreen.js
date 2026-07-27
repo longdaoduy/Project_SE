@@ -7,7 +7,8 @@ import {
     Platform,
     Dimensions,
     TouchableOpacity,
-    ScrollView
+    ScrollView,
+    Image
 } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
@@ -39,7 +40,7 @@ export default function FlashcardScreen({ navigation }) {
                 {/* Header */}
                 <View style={styles.headerSection}>
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <Ionicons name="chevron-back" size={20} color="#ffffff" />
+                        <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, marginBottom: 0, resizeMode: 'contain' }} />
                     </TouchableOpacity>
 
                     <View style={styles.headerTextContainer}>
@@ -235,20 +236,26 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
     },
     backButton: {
-        width: 40,
-        height: 40,
+        width: 32,
+        height: 32,
         alignItems: 'center',
         justifyContent: 'center',
         borderRadius: 12,
         backgroundColor: 'rgba(255, 255, 255, 0.15)',
+
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.25)',
     },
     settingsButton: {
-        width: 40,
-        height: 40,
+        width: 32,
+        height: 32,
         alignItems: 'center',
         justifyContent: 'center',
-        borderRadius: 12,
+        borderRadius: 15,
         backgroundColor: 'rgba(255, 255, 255, 0.15)',
+
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.25)',
     },
     headerTextContainer: {
         alignItems: 'center',

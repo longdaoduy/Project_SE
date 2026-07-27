@@ -4,11 +4,12 @@ import {
     Text,
     TextInput,
     View,
+    ScrollView,
     StatusBar,
     Platform,
     Dimensions,
     TouchableOpacity,
-    FlatList
+    Image
 } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
@@ -33,42 +34,6 @@ export default function PracticeScreen({ navigation }) {
         },
     ];
 
-    const renderDeck = ({ item }) => (
-        <View style={styles.deckCard}>
-            <View style={styles.deckHeader}>
-                <View style={styles.deckIconContainer}>
-                    <Ionicons name="clipboard-outline" size={24} color="#1e293b" />
-                </View>
-                <View style={styles.deckTitleContainer}>
-                    <Text style={styles.deckTitle}>{item.title}</Text>
-                    <View style={styles.badgeContainer}>
-                        <Text style={styles.badgeText}>{item.level}</Text>
-                    </View>
-                </View>
-            </View>
-
-            <View style={styles.progressInfo}>
-                <Text style={styles.progressText}>
-                    {item.currentWords} / {item.totalWords} words
-                </Text>
-                <Text style={styles.progressPercentage}>{item.progress}%</Text>
-            </View>
-
-            <View style={styles.progressContainer}>
-                <View style={[styles.progressBar, { width: `${item.progress}%` }]} />
-            </View>
-
-            <TouchableOpacity
-                style={styles.startButton}
-                activeOpacity={0.8}
-                onPress={() => navigation.navigate('FlashcardScreen')}
-            >
-                <Ionicons name="play-outline" size={16} color="#3b82f6" />
-                <Text style={styles.startButtonText}>START LEARNING</Text>
-            </TouchableOpacity>
-        </View>
-    );
-
     return (
         <View style={styles.webWrapper}>
             <LinearGradient
@@ -81,55 +46,88 @@ export default function PracticeScreen({ navigation }) {
 
                 <View style={styles.headerSection}>
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <Ionicons name="chevron-back" size={20} color="#ffffff" />
+                        <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, marginBottom: 0, resizeMode: 'contain' }} />
                     </TouchableOpacity>
                     <View style={styles.headerTextContainer}>
-                        <Text style={styles.subTitleText}>CHOOSE YOUR DECK</Text>
-                        <Text style={styles.appName}>Vocabulary Library</Text>
+                        <Text style={styles.appName}>FlashCard Decks</Text>
+                        <Text style={styles.subTitleText}>Choose your deck to study</Text>
                     </View>
+
+                    <TouchableOpacity style={styles.addButton} onPress={() => navigation.navigate('AddWordScreen')}>
+                        <Ionicons name="add" size={20} color="#ffffff" />
+                    </TouchableOpacity>
                 </View>
 
-                <View style={styles.whiteCardContainer}>
-                    <View style={styles.searchContainer}>
-                        <Ionicons name="search-outline" size={20} color="#64748b" style={styles.searchIcon} />
-                        <TextInput
-                            style={styles.searchInput}
-                            placeholder="Search decks..."
-                            placeholderTextColor="#94a3b8"
-                            value={searchQuery}
-                            onChangeText={setSearchQuery}
-                        />
-                    </View>
+                <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+                    <View style={styles.whiteCardContainer}>
+                        <View style={styles.searchContainer}>
+                            <Ionicons name="search-outline" size={20} color="#64748b" style={styles.searchIcon} />
+                            <TextInput
+                                style={styles.searchInput}
+                                placeholder="Search decks..."
+                                placeholderTextColor="#94a3b8"
+                                value={searchQuery}
+                                onChangeText={setSearchQuery}
+                            />
+                        </View>
 
-                    <View style={styles.filtersContainer}>
-                        {filters.map((filter) => (
-                            <TouchableOpacity
-                                key={filter}
-                                style={[
-                                    styles.filterChip,
-                                    selectedFilter === filter && styles.filterChipActive
-                                ]}
-                                onPress={() => setSelectedFilter(filter)}
-                            >
-                                <Text style={[
-                                    styles.filterText,
-                                    selectedFilter === filter && styles.filterTextActive
-                                ]}>
-                                    {filter}
-                                </Text>
-                            </TouchableOpacity>
+                        <View style={styles.filtersContainer}>
+                            {filters.map((filter) => (
+                                <TouchableOpacity
+                                    key={filter}
+                                    style={[
+                                        styles.filterChip,
+                                        selectedFilter === filter && styles.filterChipActive
+                                    ]}
+                                    onPress={() => setSelectedFilter(filter)}
+                                >
+                                    <Text style={[
+                                        styles.filterText,
+                                        selectedFilter === filter && styles.filterTextActive
+                                    ]}>
+                                        {filter}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+
+                        {mockDecks.map((item) => (
+                            <View key={item.id} style={styles.deckCard}>
+                                <View style={styles.deckHeader}>
+                                    <View style={styles.deckIconContainer}>
+                                        <Ionicons name="clipboard-outline" size={24} color="#1e293b" />
+                                    </View>
+                                    <View style={styles.deckTitleContainer}>
+                                        <Text style={styles.deckTitle}>{item.title}</Text>
+                                        <View style={styles.badgeContainer}>
+                                            <Text style={styles.badgeText}>{item.level}</Text>
+                                        </View>
+                                    </View>
+                                </View>
+
+                                <View style={styles.progressInfo}>
+                                    <Text style={styles.progressText}>
+                                        {item.currentWords} / {item.totalWords} words
+                                    </Text>
+                                    <Text style={styles.progressPercentage}>{item.progress}%</Text>
+                                </View>
+
+                                <View style={styles.progressContainer}>
+                                    <View style={[styles.progressBar, { width: `${item.progress}%` }]} />
+                                </View>
+
+                                <TouchableOpacity
+                                    style={styles.startButton}
+                                    activeOpacity={0.8}
+                                    onPress={() => navigation.navigate('FlashcardScreen')}
+                                >
+                                    <Ionicons name="play-outline" size={16} color="#ffffff" />
+                                    <Text style={styles.startButtonText}>START LEARNING</Text>
+                                </TouchableOpacity>
+                            </View>
                         ))}
                     </View>
-
-                    <FlatList
-                        data={mockDecks}
-                        keyExtractor={item => item.id}
-                        renderItem={renderDeck}
-                        showsVerticalScrollIndicator={false}
-                        contentContainerStyle={{ paddingBottom: 20 }}
-                        style={{ width: '100%' }}
-                    />
-                </View>
+                </ScrollView>
 
                 {/*Thanh điều hướng nhanh đến các màn hình khác (Chuẩn theo Ảnh 1)*/}
                 <View style={styles.quickNavContainer}>
@@ -190,11 +188,10 @@ const styles = StyleSheet.create({
         width: '100%',
         paddingTop: Platform.OS === 'ios' ? 60 : 40,
         paddingHorizontal: 20,
-        paddingBottom: 20,
     },
     backButton: {
-        width: 38,
-        height: 38,
+        width: 32,
+        height: 32,
         alignItems: 'center',
         justifyContent: 'center',
         borderRadius: 12,
@@ -202,12 +199,25 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: 'rgba(255, 255, 255, 0.25)',
     },
+
+    addButton: {
+        width: 32,
+        height: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: 12,
+        backgroundColor: 'rgba(255, 255, 255, 0.15)',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.25)',
+        marginLeft: 'auto',
+    },
+    
     headerTextContainer: {
         marginLeft: 16,
     },
     subTitleText: {
         color: '#cbd5e1',
-        fontSize: 12,
+        fontSize: 16,
         fontWeight: '600',
         letterSpacing: 0.5,
     },
@@ -217,21 +227,28 @@ const styles = StyleSheet.create({
         color: '#ffffff',
         marginTop: 2,
     },
+    scrollContainer: {
+        flexGrow: 1,
+        justifyContent: 'space-between',
+    },
+
     whiteCardContainer: {
-        flex: 1,
+        flex: 1, // Tự động chiếm trọn phần không gian trống bên dưới
         backgroundColor: '#F0F2FF',
-        borderTopLeftRadius: 30,
-        borderTopRightRadius: 30,
         width: '100%',
+        minHeight: 450, // Đảm bảo card luôn có độ cao tối thiểu kể cả khi chưa có dữ liệu inside
         alignItems: 'center',
         paddingHorizontal: 24,
-        paddingTop: 24,
+
+        marginTop: 34, // Tạo khoảng cách giữa phần header và card trắng
+        paddingTop: 10, // Tạo khoảng cách giữa phần trên của card và nội dung bên trong
     },
+
     searchContainer: {
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: '#ffffff',
-        borderRadius: 25,
+        borderRadius: 15,
         paddingHorizontal: 16,
         paddingVertical: 12,
         width: '100%',
@@ -241,6 +258,8 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.03,
         shadowRadius: 8,
         elevation: 2,
+
+        marginTop: 10, // Tạo khoảng cách giữa phần trên của card và thanh tìm kiếm
     },
     searchIcon: {
         marginRight: 10,
@@ -257,28 +276,21 @@ const styles = StyleSheet.create({
         gap: 12,
     },
     filterChip: {
-        backgroundColor: '#ffffff',
+        backgroundColor: '#e0e7ff',
         paddingVertical: 8,
         paddingHorizontal: 20,
         borderRadius: 20,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.02,
-        shadowRadius: 4,
-        elevation: 1,
     },
     filterChipActive: {
-        backgroundColor: '#ffffff',
-        borderColor: '#e2e8f0',
-        borderWidth: 1,
+        backgroundColor: '#4f46e5',
     },
     filterText: {
-        color: '#64748b',
+        color: '#4f46e5',
         fontWeight: '600',
         fontSize: 14,
     },
     filterTextActive: {
-        color: '#1e293b',
+        color: '#ffffff',
     },
     deckCard: {
         backgroundColor: '#ffffff',
@@ -360,13 +372,13 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#dbeafe',
+        backgroundColor: '#4f46e5',
         paddingVertical: 12,
         borderRadius: 14,
         gap: 6,
     },
     startButtonText: {
-        color: '#2563eb',
+        color: '#ffffff',
         fontSize: 14,
         fontWeight: '700',
     },

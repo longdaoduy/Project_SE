@@ -137,17 +137,17 @@ export default function NotificationScreen({navigation}) {
                 {/* Thanh trạng thái màu sáng */}
                 <StatusBar barStyle="light-content" />
                 
+                <View style={styles.headerSection}>
+                    {/*Nút back*/}
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                        <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, marginBottom: 0, resizeMode: 'contain' }} />
+                    </TouchableOpacity>
+
+                    <Text style={styles.appName}>Notifications</Text>
+                </View>
+
                 <ScrollView contentContainerStyle={styles.scrollContainer} 
                 showsVerticalScrollIndicator={false}>
-                    <View style={styles.headerSection}>
-                        {/*Nút back*/}
-                        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                            <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, marginBottom: 0, resizeMode: 'contain' }} />
-                        </TouchableOpacity>
-
-                        <Text style={styles.appName}>Notifications</Text>
-                    </View>
-
 
                     <View style={styles.whiteCardContainer}>
                         {/*Danh sách thông báo*/}
@@ -583,7 +583,7 @@ const styles = StyleSheet.create({
         height: 32,
         alignItems: 'center',
         justifyContent: 'center',     
-        borderRadius: 15,
+        borderRadius: 12,
 
         //Độ opacity và màu sắc của tấm kính mờ
         backgroundColor: 'rgba(255, 255, 255, 0.12)', 

@@ -11,6 +11,7 @@ import {
     Dimensions,
     Image ,
     TouchableOpacity,
+    FlatList,
 } from 'react-native';
 
 import { AntDesign } from '@expo/vector-icons';
@@ -18,52 +19,114 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-export default function ProfileScreen({navigation}) {
-    const [profileData, setProfileData] = useState({
-        name: 'Duy Long',
-        email: "longdeptrai@gmail.com",
-        englishLevel: "B2 English Level",
-        stats: {
-            streaks: 12,
-            level: 3,
-            xp: 243,
-            words: 1280,
-            quizzes: 45,
-            perfect: 12,
-            hours: 36,
-        },
-       
-        avatarUrl: null, // URL ảnh đại diện của người dùng, nếu null thì sẽ hiển thị ảnh mặc định
-        // Dữ liệu biểu đồ cột (số lượng từ học qua từng ngày từ Thứ 2 -> Chủ Nhật)
-        weeklyHistory: [
-        { day: 'M', words: 10 },
-        { day: 'T', words: 25 },
-        { day: 'W', words: 18 },
-        { day: 'T', words: 8 },
-        { day: 'F', words: 28 },
-        { day: 'S', words: 12 },
-        { day: 'S', words: 20 }, // Ngày hiện tại (Chủ nhật)
-        ],
-        // Dữ liệu thành tựu của người dùng
-        achievements: [
-            { title: 'First 100 Words', description: 'Learned 100 words', date: '2024-01-15' },
-            { title: '7-Day Streak', description: 'Completed 7 days in a row', date: '2024-02-10' },
-            { title: 'Level 5 Achieved', description: 'Reached Level 5', date: '2024-03-05' },
-        ],
-    });
+export default function WordlistScreen({navigation}) {
+    
+    const [vocabularies, setVocabularies] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [error, setError] = useState(null);
 
-    const [isLoading, setIsLoading] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
 
-    useEffect(() => {
-        // Hiện tại chưa có backend, ta dùng dữ liệu Mock khai báo ở useState phía trên.
-        // Sau này có backend Node.js, chỉ cần mở đoạn code fetch dưới đây ra:
+    const [selectedFilter, setSelectedFilter] = useState('all'); // 'all', 'studied', 'unstudied'
+
+    const fetchVocabularies = async () => {
+        try {
+            // Sử dụng dữ liệu mẫu cho đến khi có backend
+            setVocabularies(wordlist);
+            setLoading(false);
+            setRefreshing(false);
+
+        } catch (error) {
         
+            console.error("API Error:", error);
+            setError('Không thể tải từ vựng. Vui lòng thử lại!');
+            setLoading(false);
+            setRefreshing(false);
+        }
+    };
+
+    // Gọi API lần đầu khi component mount
+    useEffect(() => {
+        fetchVocabularies();
     }, []);
 
-    const totalWordsThisWeek = profileData.weeklyHistory.reduce((sum, item) => sum + item.words, 0);
-    {/*Lấy số từ học được nhiều nhất trong tuần để tính phần trăm chiều cao cột biểu đồ*/}
-    const maxWordsInWeek = Math.max(...profileData.weeklyHistory.map((item) => item.words), 1);
+    // Xử lý kéo xuống để làm mới (Pull to refresh)
+    const handleRefresh = () => {
+        setRefreshing(true);
+        fetchVocabularies();
+    };
 
+    // Xử lý phát âm thanh
+    const handlePlayAudio = (audioUrl, word) => {
+        // Tích hợp expo-av: Audio.Sound.createAsync({ uri: audioUrl })
+        console.log('Playing audio for:', word, audioUrl);
+    };
+
+    //Render card từ vựng
+    const renderVocabularyCard = ({item}) => 
+    (
+        <View style={styles.card}>
+            <View style={styles.cardHeader}>
+                <View style={styles.wordGroup}>
+                    <Text style={styles.wordText}>{item.word}</Text>
+                    <View style={styles.badge}>
+                        <Text style={styles.badgeText}>{item.type}</Text>
+                    </View>
+                </View>
+
+                <TouchableOpacity 
+                style={styles.audioButton}
+                onPress={() => handlePlayAudio(item.audioUrl, item.word)}
+                >
+                    <Ionicons name="volume-medium" size={18} color="#ffffff" />
+                </TouchableOpacity>
+            </View>
+
+            <Text style={styles.phoneticText}>{item.phonetic}</Text>
+            <Text style={styles.definitionText}>{item.definition}</Text>
+            <Text style={styles.exampleText}>"{item.example}"</Text>
+            {/* Hiển thị trạng thái từ vựng: studied hoặc unstudied */}
+            <View style={[styles.statusBadge, item.wordStatus === 'studied' ? styles.studied : styles.unstudied]}>
+                <Text style={styles.statusText}>{item.wordStatus === 'studied' ? 'Studied' : 'Unstudied'}</Text>
+            </View>
+        </View>
+    );
+
+    const wordlist = [
+        {
+            id: 1,
+            word: 'Ubiquitous',
+            type: 'adj',
+            phonetic: 'juːˈbɪkwɪtəs',
+            definition: 'Present, appearing, or found everywhere.',
+            example: 'Smartphones have become ubiquitous in modern society.',
+            audioUrl: 'https://www.oxfordlearnersdictionaries.com/media/english/us_pron/u/ubi/ubiquitous/ubiquitous__us_1.mp3',
+            wordStatus: 'studied', // 'studied' hoặc 'unstudied'
+        },
+
+        {
+            id: 2,
+            word: 'Accurate',
+            type: 'adj',
+            phonetic: 'ˈækjʊrət',
+            definition: 'Exact or correct.',
+            example: 'The survey results were accurate.',
+            audioUrl: 'https://www.oxfordlearnersdictionaries.com/media/english/us_pron/a/acc/accurate/accurate__us_1.mp3',
+            wordStatus: 'unstudied', // 'studied' hoặc 'unstudied'
+        },
+
+        {
+            id: 3,
+            word: 'Postpone',
+            type: 'verb',
+            phonetic: 'pəˈspəʊn',
+            definition: 'To delay or defer an event or action to a later time.',
+            example: 'The meeting was postponed due to unforeseen circumstances.',
+            audioUrl: 'https://www.oxfordlearnersdictionaries.com/media/english/us_pron/p/pos/postpone/postpone__us_1.mp3',
+            wordStatus: 'studied', // 'studied' hoặc 'unstudied'
+        }
+    ]
 
     return (
         // Khung bọc ngoài cùng (Nếu là Web thì căn giữa để tạo hiệu ứng giả lập)
@@ -76,164 +139,117 @@ export default function ProfileScreen({navigation}) {
             >
                 {/* Thanh trạng thái màu sáng */}
                 <StatusBar barStyle="light-content" />
-                
+
+                <View style={styles.headerSection}>
+                    {/*Nút back*/}
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                        <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, marginBottom: 0, resizeMode: 'contain' }} />
+                    </TouchableOpacity>
+                    <View style={styles.headerTextContainer}>
+                        <Text style={styles.appName}>My Vocabulary</Text>
+                        <Text style={styles.appSubtitle}>Manage and practice your words</Text>
+                    </View>
+
+                    <TouchableOpacity style={styles.addButton} onPress={() => navigation.navigate('AddWordScreen')}>
+                        <Ionicons name="add" size={20} color="#ffffff" />
+                    </TouchableOpacity>
+
+                </View>
+
+                {/*Ô tìm kiếm từ vựng*/}
+                <View style={{ width: '100%', paddingHorizontal: 20 , flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: 15 }}>
+                    <View style={styles.searchContainer}>
+                        <Ionicons name="search" size={20} color="#e4e7ec" style={{marginLeft: 3 }} />
+                        <TextInput
+                            placeholder="Search vocabulary..."
+                            style={styles.searchInput}
+                            value={searchQuery}
+                            onChangeText={(text) => setSearchQuery(text)}
+                            clearButtonMode="while-editing" //Nút xóa nhanh trên iOS
+                        />
+                    </View>
+                </View>
+
                 <ScrollView contentContainerStyle={styles.scrollContainer} 
                 showsVerticalScrollIndicator={false}>
-                    <View style={styles.headerSection}>
-                        {/*Nút back*/}
-                        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                            <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, marginBottom: 0, resizeMode: 'contain' }} />
-                        </TouchableOpacity>
-
-                        <Text style={styles.appName}>My Profile</Text>
-
-                        {/*Nút setting*/}
-                        <TouchableOpacity style={styles.settingsButton} onPress={() => navigation.navigate('Settings')}>
-                            <Ionicons name="settings-outline" size={18} color="#ffffff" />
-                        </TouchableOpacity>
-                    </View>
-
-                    <View style={styles.avatarSection}>
-                        <View style={styles.avatarWrapper}>
-                            {profileData.avatarUrl ? (
-                                <Image source={{ uri: profileData.avatarUrl }} style={styles.avatarImage} />
-                            ) : (
-                            <View style={styles.avatarPlaceholder}>
-                                <Ionicons name="person" size={60} color="#ffffff" />
-                            </View>
-                            )}
                     
-                            {/*Nút edit avatar*/}
-                            <TouchableOpacity style={styles.editAvatarButton}>
-                                <AntDesign name="edit" size={16} color="#ffffff" />
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-
-                    {/*Username và email người dùng*/}
-                    <Text style={styles.userNameText}>{profileData.name}</Text>
-                    <Text style={styles.userNameEmail}>{profileData.email}</Text>
-
-                    <View style={styles.levelWrapper}>
-                        {/*Hiển thị trình độ tiếng Anh của người dùng*/}
-                        <View style={styles.englishLevelContainer}>
-                            <Ionicons name="language-outline" size={16} color="#ffffff" />
-                            <Text style={styles.englishLevelText}>{profileData.englishLevel}</Text>
-                        </View>
-
-                        {/*Hiển thị level */}
-                        <View style={styles.levelContainer}>
-                            <Image source={require('../assets/trophy.png')} style={styles.levelIcon} />
-                            <Text style={styles.levelText}>Level {profileData.stats.level}</Text>
-                        </View>
-                    </View>
-
                     <View style={styles.whiteCardContainer}>
-                        {/* Lưới 6 thông số học tập */}
-                        <View style={styles.statsGridCard}>
-                            <View style={styles.gridRow}>
-                                <View style={styles.gridItem}>
-                                    <Image source={require('../assets/fire.png')} style={styles.gridIcon} />
-                                    <Text style={styles.gridValue}>{profileData.stats.streaks}</Text>
-                                    <Text style={styles.gridLabel}>Day streaks</Text>
-                                </View>
-                                <View style={styles.gridItem}>
-                                    <Image source={require('../assets/xp.png')} style={styles.gridIcon} />
-                                    <Text style={styles.gridValue}>{profileData.stats.xp}</Text>
-                                    <Text style={styles.gridLabel}>XP</Text>
-                                </View>
-                                <View style={styles.gridItem}>
-                                    <Image source={require('../assets/books.png')} style={styles.gridIcon} />
-                                    <Text style={styles.gridValue}>{profileData.stats.words}</Text>
-                                    <Text style={styles.gridLabel}>Words</Text>
-                                </View>
-                            </View>
-
-                            <View style={[styles.gridRow, { marginTop: 24 }]}>
-                                <View style={styles.gridItem}>
-                                    <Image source={require('../assets/target.png')} style={styles.gridIcon} />
-                                    <Text style={styles.gridValue}>{profileData.stats.quizzes}</Text>
-                                    <Text style={styles.gridLabel}>Quizzes</Text>
-                                </View>
-                                <View style={styles.gridItem}>
-                                    <Text style={{fontSize: 22, marginBottom: 4}}>💯</Text>
-                                    <Text style={styles.gridValue}>{profileData.stats.perfect}</Text>
-                                    <Text style={styles.gridLabel}>Perfect</Text>
-                                </View>
-                                <View style={styles.gridItem}>
-                                    <Text style={{fontSize: 22, marginBottom: 4}}>🕒</Text>
-                                    <Text style={styles.gridValue}>{profileData.stats.hours}</Text>
-                                    <Text style={styles.gridLabel}>Hours</Text>
-                                </View>
-                            </View>
-                        </View>
-                        
-                        <View style={styles.chartCard}>
-                            <View style={styles.chartHeader}>
-                                <Text style={styles.chartTitle}>This week</Text>
-                                <TouchableOpacity><Text style={styles.fullHistoryText}>Full history</Text></TouchableOpacity>
-                            </View>
-
-                            {/* Vẽ biểu đồ cột động tỉ lệ phần trăm */}
-                            <View style={styles.chartBarWrapper}>
-                                {profileData.weeklyHistory.map((item, index) => {
-                                    // Cột cuối cùng (Chủ nhật) tô màu tím đậm làm nổi bật ngày hiện tại
-                                    const isCurrentDay = index === profileData.weeklyHistory.length - 1;
-                                    // Tính phần trăm chiều cao cột động dựa trên số từ gõ được
-                                    const barHeightPercent = (item.words / maxWordsInWeek) * 100;
-
-                                    return (
-                                        <View key={index} style={styles.chartColumn}>
-                                            <View style={styles.barBackground}>
-                                                <View
-                                                    style={[
-                                                        styles.barFill,
-                                                        {
-                                                            height: `${barHeightPercent}%`,
-                                                            backgroundColor: isCurrentDay ? '#6366f1' : '#e0e7ff',
-                                                        },
-                                                    ]}
-                                                />
-                                            </View>
-                                            <Text
-                                                style={[
-                                                    styles.chartDayText,
-                                                    isCurrentDay && { color: '#6366f1', fontWeight: 'bold' },
-                                                ]}
-                                            >
-                                                {item.day}
-                                            </Text>
-                                        </View>
-                                    );
-                                    })}
-                            </View>
-
-                                <Text style={styles.chartSubText}>Total: {totalWordsThisWeek} words practised this week</Text>
-                            </View>
-
-                        <View style={styles.achievementsSection}>
-                            <Text style={{fontSize: 20, fontWeight: '700'}}>Achievements</Text>
+                        {/*Lọc theo All, Studied, Unstudied*/}
+                        <View style={styles.filterRow}>
                             
-                            <ScrollView 
-                                horizontal={true} 
-                                showsHorizontalScrollIndicator={false} // Ẩn thanh cuộn mặc định cho đẹp
-                                contentContainerStyle={styles.horizontalScrollContent}>
-                                {profileData.achievements.map((achievement, index) => (
-                                <View key={index} style={styles.achievementCard}>
-                                    <AntDesign name="check-circle" size={16} color="#22c55e" style={styles.checkIcon} />
-                                    <Image source={require('../assets/achievement.png')} style={styles.gridIcon} />
-                                    
-                                    <View style={styles.achievementInfo}>
-                                        <Text style={styles.gridValue}>{achievement.title}</Text>
-                                        
-                                    </View>
-                                </View>
-                                ))}
-                            </ScrollView>
+                            <View style={styles.filterContainer}>
+                                <TouchableOpacity 
+                                    style={[styles.filterButton, selectedFilter === 'all' && styles.selectedFilter]}
+                                    onPress={() => setSelectedFilter('all')}
+                                >
+                                    <Text style={[styles.filterText, selectedFilter === 'all' && styles.selectedFilterText]}>
+                                    All
+                                    </Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity 
+                                    style={[styles.filterButton, selectedFilter === 'studied' && styles.selectedFilter]}
+                                    onPress={() => setSelectedFilter('studied')}
+                                >
+                                    <Text style={[styles.filterText, selectedFilter === 'studied' && styles.selectedFilterText]}>
+                                    Studied
+                                    </Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity 
+                                    style={[styles.filterButton, selectedFilter === 'unstudied' && styles.selectedFilter]}
+                                    onPress={() => setSelectedFilter('unstudied')}
+                                >
+                                    <Text style={[styles.filterText, selectedFilter === 'unstudied' && styles.selectedFilterText]}>
+                                    Unstudied
+                                    </Text>
+                                </TouchableOpacity>
+                            </View>
+                            
                         </View>
-                                    
+
+                        <FlatList
+                            style={{ width: '100%', marginTop: 10 }}
+                            data={wordlist}
+                            renderItem={renderVocabularyCard}
+                            keyExtractor={(item) => item.id.toString()}
+                        />
                     </View>
                 </ScrollView>
+
+                {/*Thanh điều hướng nhanh đến các màn hình khác*/}
+                <View style={styles.quickNavContainer}>
+                    {/*Nút home */}
+                    <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('Home')}>
+                        <Ionicons name="home" size={20} color="#919191" opacity={1} />
+                        <Text style={{ fontSize: 12, color: '#919191', marginTop: 4 }}>Home</Text>
+                    </TouchableOpacity>
+
+                    {/*Nút card */}
+                    <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('FlashcardScreen')}>
+                        <Ionicons name="albums" size={20} color="#919191" opacity={0.6} />
+                        <Text style={{ fontSize: 12, color: '#919191', marginTop: 4 }}>Cards</Text>
+                    </TouchableOpacity>
+
+                    {/*Nút Wordlist */}
+                    <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('WordlistScreen')}>
+                        <Ionicons name="book" size={20} color="#667eea" opacity={0.6} />
+                        <Text style={{ fontSize: 12, color: '#667eea', marginTop: 4 }}>Words</Text>
+                    </TouchableOpacity>
+
+                    {/*Nút Reading */}
+                    <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('AIReadingScreen')}>
+                        <Ionicons name="sparkles" size={20} color="#919191" opacity={0.3} />
+                        <Text style={{ fontSize: 12, color: '#919191', marginTop: 4 }}>Reading</Text>
+                    </TouchableOpacity>
+
+                    {/*Nút Quiz */}
+                    <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('VocabQuizScreen')}>
+                        <Ionicons name="checkmark-circle" size={20} color="#919191" opacity={0.6} />
+                        <Text style={{ fontSize: 12, color: '#919191', marginTop: 4 }}>Quiz</Text>
+                    </TouchableOpacity>
+
+                </View>
             </LinearGradient>
         </View>
     )
@@ -276,20 +292,20 @@ const styles = StyleSheet.create({
     },
 
     headerSection: {
+        flexDirection: 'row',
         alignItems: 'center',
         width: '100%',
         paddingTop: Platform.OS === 'ios' ? 60 : 40, // Chừa khoảng trống an toàn cho tai thỏ điện thoại
         paddingHorizontal: 20,
     },
     appName: {
-        fontSize: 29,
+        fontSize: 26,
         fontWeight: '700',
         color: '#ffffff',
         letterSpacing: -0.5,
     },
     appSubtitle: {
-        marginTop: 6,
-        fontSize: 20,
+        fontSize: 16,
         color: '#e2e8f0',
         textAlign: 'center',
         opacity: 0.9,
@@ -304,7 +320,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingHorizontal: 24,
 
-        marginTop: 34, // Tạo khoảng cách giữa phần header và card trắng
+        marginTop: 5, // Tạo khoảng cách giữa phần header và card trắng
         paddingTop: 10, // Tạo khoảng cách giữa phần trên của card và nội dung bên trong
     },
 
@@ -435,13 +451,7 @@ const styles = StyleSheet.create({
         textAlign: 'right',
     },
 
-    userNameText: {
-        alignSelf: 'flex-start',
-        marginTop: 5,
-        marginLeft: 10,
-        fontSize: 24,
-        color: '#ffffff',
-    },
+
     
     statsRow: {
         flexDirection: 'row',
@@ -648,53 +658,26 @@ const styles = StyleSheet.create({
     },
 
     backButton: {
-        position: 'absolute',
-        left: 20,
-        top: 50,
         width: 32,
         height: 32,
         alignItems: 'center',
-        justifyContent: 'center',     
+        justifyContent: 'center',
         borderRadius: 12,
-
-        //Độ opacity và màu sắc của tấm kính mờ
-        backgroundColor: 'rgba(255, 255, 255, 0.12)', 
+        backgroundColor: 'rgba(255, 255, 255, 0.15)',
         borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.25)',  
-
-        // Đổ bóng dịu nhẹ phía dưới tấm kính 
-        shadowColor: 'rgba(31, 38, 135, 0.15)',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.2,
-        shadowRadius: 10,
-
-        
-        elevation: 3,
+        borderColor: 'rgba(255, 255, 255, 0.25)',
     },
 
-    settingsButton: {
-        position: 'absolute',
-        right: 20,
-        top: 50,
+    addButton: {
         width: 32,
         height: 32,
         alignItems: 'center',
-        justifyContent: 'center',     
-        borderRadius:12,
-
-        //Độ opacity và màu sắc của tấm kính mờ
-        backgroundColor: 'rgba(255, 255, 255, 0.12)', 
+        justifyContent: 'center',
+        borderRadius: 12,
+        backgroundColor: 'rgba(255, 255, 255, 0.15)',
         borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.25)',  
-
-        // Đổ bóng dịu nhẹ phía dưới tấm kính 
-        shadowColor: 'rgba(31, 38, 135, 0.15)',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.2,
-        shadowRadius: 10,
-
-        
-        elevation: 3,
+        borderColor: 'rgba(255, 255, 255, 0.25)',
+        marginLeft: 'auto',
     },
 
     avatarSection: {
@@ -867,21 +850,7 @@ const styles = StyleSheet.create({
         marginHorizontal: 0,
        
     },
-    gridIcon: { 
-        width: 32, 
-        height: 32, 
-        marginBottom: 6, 
-        resizeMode: 'contain' 
-    },
-    gridValue: { 
-        fontSize: 24, 
-        fontWeight: '800', 
-        color: '#0f172a',
-        lineHeight: 28,
-        letterSpacing: 0.2,
-        textAlign: 'center',
-    },
-    gridLabel: { 
+    gridLabel: {
         fontSize: 11, 
         color: '#64748b', 
         marginTop: 4, 
@@ -1002,6 +971,12 @@ const styles = StyleSheet.create({
         width: '100%',
     },
 
+    gridIcon: {
+        width: 25,
+        height: 25,
+        resizeMode: 'contain',
+    },
+
     gridValue: {
         fontSize: 12,
         fontWeight: '700',
@@ -1022,5 +997,288 @@ const styles = StyleSheet.create({
         top: 10,    // Cách mép trên cùng của card 10px
         right: 10,  // Cách mép bên phải của card 10px
         zIndex: 1,  // Đảm bảo icon luôn nổi lên trên cùng không bị ảnh hay chữ đè mất,
-    }
+    },
+
+    accountSettingTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#000000',
+        opacity: 0.6,
+       
+        borderBottomWidth: 1,
+        borderBottomColor: '#e5e7eb',
+        paddingBottom: 8,
+    },
+
+    accountSetting: {
+        width: '100%',
+        marginTop: 20,
+        marginBottom: 20,
+        backgroundColor: '#ffffff',
+        borderRadius: 20,
+        padding: 16,
+    
+    },
+    accountSettingItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#e5e7eb',
+    },
+
+    accountSettingLabel: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#1e293b',
+    },
+
+    accountDeleteLabel: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#ef4444', // Màu đỏ để nhấn mạnh tính nguy hiểm
+    },
+
+    accountSettingSubLabel: {
+        fontSize: 12,
+        color: '#64748b',
+        marginTop: 2,
+    },
+
+    appearenceSetting: {
+        width: '100%',
+        marginBottom: 20,
+        backgroundColor: '#ffffff',
+        borderRadius: 20,
+        padding: 16,
+    },
+
+    customToggle: {
+        width: 54,
+        height: 28,
+        borderRadius: 16,
+        backgroundColor: '#e2e8f0',
+        justifyContent: 'flex-start',
+        alignItems: 'center',
+        paddingHorizontal: 2,
+        flexDirection: 'row',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 3,
+        elevation: 2,
+    },
+
+    customToggleActive: {
+        backgroundColor: '#667eea',
+        justifyContent: 'flex-end',
+    },
+
+    customToggleThumb: {
+        width: 25,
+        height: 25,
+        borderRadius: 14,
+        backgroundColor: '#ffffff',
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 3,
+        elevation: 3,
+    },
+
+    customToggleThumbActive: {
+        backgroundColor: '#ffffff',
+    },
+
+    learningSetting: {
+        width: '100%',
+        marginBottom: 20,
+        backgroundColor: '#ffffff',
+        borderRadius: 20,
+        padding: 16,
+    },
+
+    learningGoal: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#4160ed',
+        backgroundColor: '#e0e7ff',
+        paddingVertical: 3,
+        paddingHorizontal: 8,
+        borderRadius: 12,
+        borderColor: '#c7d2fe',
+        borderWidth: 1,
+    },
+
+    card: {
+        backgroundColor: '#ffffff',
+        borderRadius: 20,
+        padding: 18,
+        marginBottom: 16,
+        // Effect đổ bóng
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.05,
+        shadowRadius: 10,
+        elevation: 3,
+    },
+    cardHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    wordGroup: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    wordText: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: '#1e293b',
+    },
+    badge: {
+        backgroundColor: '#e0e7ff',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 8,
+
+        alignContent: 'center',
+        justifyContent: 'center',
+    },
+    badgeText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#4f46e5',
+    },
+    audioButton: {
+        width: 30,
+        height: 30,
+        borderRadius: 12,
+        backgroundColor: '#a855f7',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    phoneticText: {
+        fontSize: 13,
+        color: '#64748b',
+        marginBottom: 4,
+        fontStyle: 'italic',
+    },
+    definitionText: {
+        fontSize: 14,
+        color: '#334155',
+        lineHeight: 20,
+        fontWeight: '500',
+    },
+
+    exampleText: {
+        fontSize: 13,
+        fontWeight: '500',
+        color: '#7d7f81',
+        marginTop: 4,
+        fontStyle: 'italic',
+    },
+
+    centerState: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    errorText: {
+        color: '#ef4444',
+        fontSize: 14,
+        marginBottom: 10,
+    },
+    retryBtn: {
+        backgroundColor: '#667eea',
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 8,
+    },
+    retryText: {
+        color: '#ffffff',
+        fontWeight: '600',
+    },
+
+    searchInput: {
+        flex: 1,
+        height: '100%',
+        paddingHorizontal: 10,
+        fontSize: 16,
+        fontWeight: '500',
+        color: '#e8eaed',
+    },
+
+    searchContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+        
+        backgroundColor: 'rgba(255, 255, 255, 0.20)', 
+        borderRadius: 15,
+        paddingHorizontal: 10,
+        marginTop: 15,
+        width: '90%',
+        opacity: 0.6,
+
+        height: 42,
+        verticalAlign: 'center',
+    },
+
+    filterContainer: {
+        flexDirection: 'row',
+        justifyContent: 'flex-start',
+        gap: 8,
+        width: '100%',
+        marginBottom: 10,
+    },
+
+    filterButton: {
+
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 12,
+        backgroundColor: '#e0e7ff',
+        alignItems: 'center',
+    },
+
+    selectedFilter: {
+        backgroundColor: '#4f46e5',
+    },
+
+    filterText: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#4f46e5',
+    },
+
+    selectedFilterText: {
+        color: '#ffffff',
+    },
+
+    filterIcon: {
+        height: 24,
+        width: 24,
+        paddingHorizontal: 4,
+        paddingVertical: 4,
+        backgroundColor: '#e0e7ff',
+        borderRadius: 12,
+    },
+
+    filterRow: {
+        marginTop: 10,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        width: '100%',
+    },
+
+    headerTextContainer: {
+        marginLeft: 16,
+    },
+
 });

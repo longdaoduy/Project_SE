@@ -130,7 +130,7 @@ export default function HomeScreen({ navigation }) {
 
                         <View style={styles.practiceButtonsContainer}>
                             {/* Nút Words list */}
-                            <TouchableOpacity style={styles.practiceButton} onPress={() => navigation.navigate('PracticeScreen')} activeOpacity={0.8}>
+                            <TouchableOpacity style={styles.practiceButton} onPress={() => navigation.navigate('WordlistScreen')} activeOpacity={0.8}>
                                 <View style={styles.buttonContentWrapper}>
                                     <View style={[styles.iconCircle, { backgroundColor: '#eeeffe' }]}>
                                         <Image source={require('../assets/wordlist.png')} style={styles.buttonIcon} />
@@ -192,7 +192,7 @@ export default function HomeScreen({ navigation }) {
                     </TouchableOpacity>
 
                     {/*Nút Wordlist */}
-                    <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('WordListScreen')}>
+                    <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('WordlistScreen')}>
                         <Ionicons name="book" size={20} color="#919191" opacity={0.6} />
                         <Text style={{ fontSize: 12, color: '#919191', marginTop: 4 }}>Words</Text>
                     </TouchableOpacity>
