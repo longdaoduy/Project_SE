@@ -60,10 +60,9 @@ def ensure_demo_user() -> bool:
         if e.response.status_code == 404:
             try:
                 api_post("/users", {
-                    "username": "demo_user",
+                    "full_name": "Demo User",
                     "email": "demo@smarteng.app",
                     "password": "demo1234",
-                    "display_name": "Demo User",
                 })
             except Exception:
                 pass

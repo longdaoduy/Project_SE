@@ -6,7 +6,8 @@ import SettingsScreen from './Screens/SettingScreen';
 import NotificationScreen from './Screens/NotificationScreen';
 import WordlistScreen from './Screens/WordlistScreen';
 import PracticeScreen from './Screens/PracticeScreen';
-import FlashcardScreen from './Screens/FlashcardScreen'; // <-- Thêm dòng này
+import FlashcardScreen from './Screens/FlashcardScreen';
+import AIReadingScreen from './Screens/AIReadingScreen';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 
@@ -23,7 +24,6 @@ export default function App() {
         <Stack.Screen name="Notifications" component={NotificationScreen} />
         <Stack.Screen name="WordlistScreen" component={WordlistScreen} />
         <Stack.Screen name="FlashcardScreen" component={FlashcardScreen} />
-        <Stack.Screen name="PracticeScreen" component={PracticeScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
