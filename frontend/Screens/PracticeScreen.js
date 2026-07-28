@@ -147,7 +147,7 @@ export default function PracticeScreen({ navigation }) {
                     </TouchableOpacity>
 
                     <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('AIReadingScreen')}>
-                        <Ionicons name="sparkles" size={20} color="#919191" opacity={0.3} />
+                        <Image source={require('../assets/sparkling.png')} style={{ width: 30, height: 30, resizeMode: 'contain' }} />
                         <Text style={{ fontSize: 12, color: '#919191', marginTop: 4 }}>Reading</Text>
                     </TouchableOpacity>
 
@@ -240,7 +240,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingHorizontal: 24,
 
-        marginTop: 34, // Tạo khoảng cách giữa phần header và card trắng
+        marginTop: 20, // Tạo khoảng cách giữa phần header và card trắng
         paddingTop: 10, // Tạo khoảng cách giữa phần trên của card và nội dung bên trong
     },
 

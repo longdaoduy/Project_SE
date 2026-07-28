@@ -8,7 +8,9 @@ import {
     Platform,
     Dimensions,
     TouchableOpacity,
-    ScrollView
+    ScrollView,
+    Image,
+
 } from 'react-native';
 
 import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
@@ -18,19 +20,22 @@ const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 // Dữ liệu giả lập cho Lịch sử bài đọc
 const historyData = [
-    { id: 1, title: 'The Story of the Fallen Hero', level: 'B2', time: '6 min', iconType: 'check', iconColor: '#10b981', bgColor: '#d1fae5' },
-    { id: 2, title: 'The Science of Spaced Repetition', level: 'B1', time: '6 min', iconType: 'brain', iconColor: '#8b5cf6', bgColor: '#f3e8ff' },
-    { id: 3, title: 'AI Transforming Language Learning', level: 'C1', time: '6 min', iconType: 'brain', iconColor: '#8b5cf6', bgColor: '#f3e8ff' },
+    { id: 1, title: 'The Story of the Fallen Hero', level: 'B2', topic: 'Story', time: '6 min', iconType: 'check', iconColor: '#10b981', bgColor: '#d1fae5' },
+    { id: 2, title: 'The Science of Spaced Repetition', level: 'B1', topic: 'Psychology', time: '6 min', iconType: 'brain', iconColor: '#8b5cf6', bgColor: '#f3e8ff' },
+    { id: 3, title: 'AI Transforming Language Learning', level: 'C1', topic: 'Technology', time: '5 min', iconType: 'brain', iconColor: '#8b5cf6', bgColor: '#f3e8ff' },
+    { id: 4, title: 'The Psychology of Motivation', level: 'B1', topic: 'Psychology', time: '4 min', iconType: 'brain', iconColor: '#8b5cf6', bgColor: '#f3e8ff' },
+    { id: 5, title: 'Climate Change and Future Cities', level: 'C1', topic: 'Environment', time: '6 min', iconType: 'brain', iconColor: '#8b5cf6', bgColor: '#f3e8ff' },
 ];
 
 export default function AIReadingScreen({ navigation }) {
     const [inputText, setInputText] = useState('');
     const [selectedAnswer, setSelectedAnswer] = useState(null);
 
-    // Quản lý 3 trạng thái màn hình: 'input' | 'generated' | 'history'
-    const [viewState, setViewState] = useState('input');
+    // Màn hình chính mặc định là 'history' (Danh sách bài đọc)
+    // Các trạng thái gồm: 'history' | 'input' | 'generated'
+    const [viewState, setViewState] = useState('history');
 
-    // Quản lý bộ lọc ở màn hình lịch sử
+    // Quản lý bộ lọc ở màn hình danh sách bài đọc
     const [selectedFilter, setSelectedFilter] = useState('All');
 
     const handleGenerate = () => {
@@ -60,36 +65,35 @@ export default function AIReadingScreen({ navigation }) {
             >
                 <StatusBar barStyle="light-content" />
 
-                {/* Phần Header chung cho cả 3 màn hình */}
+                {/* Phần Header */}
                 <View style={styles.headerSection}>
                     <View style={styles.headerTopRow}>
-                        {viewState !== 'input' ? (
-                            <TouchableOpacity onPress={() => setViewState('input')} style={styles.backButton}>
-                                <Ionicons name="chevron-back" size={24} color="#ffffff" />
-                            </TouchableOpacity>
-                        ) : (
-                            <View style={styles.backButtonPlaceholder} />
-                        )}
+                        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                            <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, resizeMode: 'contain' }} />
+                        </TouchableOpacity>
 
                         <View style={styles.headerTitleContainer}>
                             <View style={styles.aiBadgeRow}>
-                                <Ionicons name="sparkles" size={16} color="#fbbf24" />
-                                <Text style={styles.aiBadgeText}>AI POWERED</Text>
+                                <Image source={require('../assets/shining.png')} style={{ width: 30, height: 30, resizeMode: 'contain' }} />
+                                <Text style={styles.aiBadgeText}>AI-Generated</Text>
                             </View>
-                            <Text style={styles.appName}>Reading Generator</Text>
+                            <Text style={styles.appName}>
+                                {viewState === 'history' ? 'Reading Tests' : 'Reading Generator'}
+                            </Text>
                         </View>
 
-                        {/* Nút History chỉ hiện ở màn hình Input */}
-                        {viewState === 'input' ? (
-                            <TouchableOpacity onPress={() => setViewState('history')} style={styles.historyButton}>
-                                <Ionicons name="time-outline" size={26} color="#ffffff" />
+                        {/* Nút lọc (Filter) chỉ xuất hiện ở màn hình danh sách History */}
+                        {viewState === 'history' ? (
+                            <TouchableOpacity style={styles.filterBtnHeader}>
+                                <Ionicons name="filter" size={16} color="#ffffff" />
+                                <Text style={styles.filterBtnHeaderText}>Filter</Text>
                             </TouchableOpacity>
                         ) : (
                             <View style={styles.backButtonPlaceholder} />
                         )}
                     </View>
 
-                    {/* Bộ lọc (Filters) chỉ hiện ở màn hình History */}
+                    {/* Thanh các nút chọn Level ở màn hình History */}
                     {viewState === 'history' && (
                         <View style={styles.filterRow}>
                             {['All', 'B1', 'B2', 'C1'].map(filter => (
@@ -110,8 +114,68 @@ export default function AIReadingScreen({ navigation }) {
                 {/* Main Content Area */}
                 <View style={styles.whiteCardContainer}>
 
+                    {/* ================= MÀN HÌNH CHÍNH: DANH SÁCH BÀI ĐỌC ================= */}
+                    {viewState === 'history' && (
+                        <ScrollView contentContainerStyle={styles.scrollContentHistory} showsVerticalScrollIndicator={false}>
+                            {filteredHistory.map(item => (
+                                <View key={item.id} style={styles.historyCard}>
+                                    <View style={styles.badgeRowContainer}>
+                                        <View style={styles.levelBadgeHistory}>
+                                            <Text style={styles.levelBadgeHistoryText}>{item.level}</Text>
+                                        </View>
+                                        {item.topic && (
+                                            <View style={styles.topicBadgeHistory}>
+                                                <Text style={styles.topicBadgeHistoryText}>{item.topic}</Text>
+                                            </View>
+                                        )}
+                                    </View>
+
+                                    <View style={styles.historyCardTopRow}>
+                                        <Text style={styles.historyCardTitle}>{item.title}</Text>
+                                        <View style={[styles.historyIconCircle, { backgroundColor: item.bgColor }]}>
+                                            {item.iconType === 'brain' ? (
+                                                <Image source={require('../assets/purple_brain.png')} style={{ width: 22, height: 22, resizeMode: 'contain' }} />
+                                            ) : (
+                                                <Ionicons name="checkmark-circle-outline" size={22} color={item.iconColor} />
+                                            )}
+                                        </View>
+                                    </View>
+
+                                    <View style={styles.historyCardFooter}>
+                                        <View style={styles.timeRow}>
+                                            <Ionicons name="time-outline" size={16} color="#94a3b8" style={{ marginRight: 4 }} />
+                                            <Text style={styles.timeText}>{item.time}</Text>
+                                        </View>
+                                        <TouchableOpacity
+                                            style={styles.startReadingBtn}
+                                            onPress={() => setViewState('generated')}
+                                        >
+                                            <Text style={styles.startReadingBtnText}>Start Reading →</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+                            ))}
+
+                            {/* Banner nút bấm Generate New Article */}
+                            <TouchableOpacity
+                                style={styles.generateBanner}
+                                activeOpacity={0.85}
+                                onPress={() => setViewState('input')}
+                            >
+                                <View style={styles.bannerIconCircle}>
+                                    <Image source={require('../assets/sparkling.png')} style={{ width: 20, height: 30, resizeMode: 'contain' }} />
+                                </View>
+                                <View style={styles.bannerTextContainer}>
+                                    <Text style={styles.bannerTitle}>Generate New Article</Text>
+                                    <Text style={styles.bannerSubtitle}>AI creates a personalized reading test</Text>
+                                </View>
+                                <Ionicons name="arrow-forward" size={22} color="#ffffff" />
+                            </TouchableOpacity>
+                        </ScrollView>
+                    )}
+
+                    {/* ================= MÀN HÌNH 2: NHẬP TỪ VỰNG ================= */}
                     {viewState === 'input' && (
-                        /* ================= TRẠNG THÁI 1: NHẬP TỪ VỰNG ================= */
                         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                             <View style={styles.inputCard}>
                                 <View style={styles.cardHeaderRow}>
@@ -145,14 +209,14 @@ export default function AIReadingScreen({ navigation }) {
                             </View>
 
                             <TouchableOpacity style={styles.generateButton} activeOpacity={0.8} onPress={handleGenerate}>
-                                <Ionicons name="color-wand" size={20} color="#ffffff" style={{ marginRight: 8 }} />
+                                <Ionicons name="sparkles" size={20} color="#ffffff" style={{ marginRight: 8 }} />
                                 <Text style={styles.generateButtonText}>Generate Reading Test</Text>
                             </TouchableOpacity>
                         </ScrollView>
                     )}
 
+                    {/* ================= MÀN HÌNH 3: BÀI ĐỌC HIỂN THỊ ================= */}
                     {viewState === 'generated' && (
-                        /* ================= TRẠNG THÁI 2: HIỂN THỊ BÀI ĐỌC ================= */
                         <View style={{ flex: 1, width: '100%' }}>
                             <View style={styles.resultToolbar}>
                                 <View style={styles.wordTagsRow}>
@@ -217,47 +281,9 @@ export default function AIReadingScreen({ navigation }) {
                             </ScrollView>
                         </View>
                     )}
-
-                    {viewState === 'history' && (
-                        /* ================= TRẠNG THÁI 3: LỊCH SỬ TẠO ================= */
-                        <ScrollView contentContainerStyle={styles.scrollContentHistory} showsVerticalScrollIndicator={false}>
-                            {filteredHistory.map(item => (
-                                <View key={item.id} style={styles.historyCard}>
-                                    <View style={styles.historyCardTopRow}>
-                                        <Text style={styles.historyCardTitle}>{item.title}</Text>
-                                        <View style={[styles.historyIconCircle, { backgroundColor: item.bgColor }]}>
-                                            {item.iconType === 'brain' ? (
-                                                <FontAwesome5 name="brain" size={20} color={item.iconColor} />
-                                            ) : (
-                                                <Ionicons name="checkmark-circle-outline" size={24} color={item.iconColor} />
-                                            )}
-                                        </View>
-                                    </View>
-
-                                    <View style={styles.levelBadgeHistory}>
-                                        <Text style={styles.levelBadgeHistoryText}>{item.level}</Text>
-                                    </View>
-
-                                    <View style={styles.historyCardFooter}>
-                                        <View style={styles.timeRow}>
-                                            <Ionicons name="time-outline" size={16} color="#94a3b8" style={{ marginRight: 4 }} />
-                                            <Text style={styles.timeText}>{item.time}</Text>
-                                        </View>
-                                        <TouchableOpacity
-                                            style={styles.startReadingBtn}
-                                            onPress={() => setViewState('generated')}
-                                        >
-                                            <Text style={styles.startReadingBtnText}>Start reading</Text>
-                                            <Ionicons name="arrow-forward" size={16} color="#7c3aed" />
-                                        </TouchableOpacity>
-                                    </View>
-                                </View>
-                            ))}
-                        </ScrollView>
-                    )}
                 </View>
 
-                {/* Thanh điều hướng nhanh */}
+                {/* Thanh điều hướng nhanh dưới cùng */}
                 <View style={styles.quickNavContainer}>
                     <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('Home')}>
                         <Ionicons name="home" size={20} color="#919191" opacity={0.6} />
@@ -315,83 +341,230 @@ const styles = StyleSheet.create({
         width: '100%',
         paddingTop: Platform.OS === 'ios' ? 60 : 40,
         paddingHorizontal: 20,
-        paddingBottom: 20,
+        paddingBottom: 16,
     },
     headerTopRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
+        justifyContent: 'flex-start',
         width: '100%',
     },
     backButton: {
-        padding: 4,
+        width: 32,
+        height: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: 12,
+        backgroundColor: 'rgba(255, 255, 255, 0.15)',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.25)',
     },
     backButtonPlaceholder: {
-        width: 32, // Để cân bằng với nút back/history
+        width: 32,
     },
-    historyButton: {
-        padding: 4,
+    filterBtnHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255, 255, 255, 0.25)',
+        paddingVertical: 6,
+        paddingHorizontal: 12,
+        borderRadius: 16,
+        gap: 6,
+    },
+    filterBtnHeaderText: {
+        color: '#ffffff',
+        fontWeight: '700',
+        fontSize: 13,
     },
     headerTitleContainer: {
-        alignItems: 'center',
+        alignItems: 'flex-start', 
         flex: 1,
+        marginLeft: 16,
     },
     aiBadgeRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 4,
+        marginBottom: 2,
     },
     aiBadgeText: {
         color: '#fbbf24',
         fontSize: 12,
         fontWeight: '700',
         letterSpacing: 1,
-        marginLeft: 6,
+        marginLeft: 3,
     },
     appName: {
-        fontSize: 26,
+        fontSize: 24,
         fontWeight: '700',
         color: '#ffffff',
     },
 
-    // Style cho thanh bộ lọc của History
+    // Thanh bộ lọc chọn Level
     filterRow: {
         flexDirection: 'row',
-        marginTop: 20,
-        gap: 12,
-        justifyContent: 'center',
+        marginTop: 16,
+        gap: 10,
+        justifyContent: 'flex-start',
     },
     filterChip: {
         backgroundColor: 'rgba(255, 255, 255, 0.2)',
-        paddingVertical: 8,
-        paddingHorizontal: 20,
+        paddingVertical: 6,
+        paddingHorizontal: 18,
         borderRadius: 20,
     },
     filterChipActive: {
-        backgroundColor: 'rgba(255, 255, 255, 0.35)',
+        backgroundColor: '#ffffff',
     },
     filterChipText: {
-        color: '#e2e8f0',
+        color: '#ffffff',
         fontWeight: '700',
         fontSize: 14,
     },
     filterChipTextActive: {
-        color: '#ffffff',
+        color: '#4f46e5',
     },
 
     whiteCardContainer: {
         flex: 1,
         backgroundColor: '#F0F2FF',
-        borderTopLeftRadius: 30,
-        borderTopRightRadius: 30,
         width: '100%',
         alignItems: 'center',
+    },
+
+    // ================= STYLES LỊCH SỬ / DANH SÁCH =================
+    scrollContentHistory: {
+        paddingHorizontal: 20,
+        paddingTop: 20,
+        paddingBottom: 24,
+        width: Platform.OS === 'web' ? 400 : screenWidth,
+    },
+    historyCard: {
+        backgroundColor: '#ffffff',
+        borderRadius: 20,
+        padding: 18,
+        width: '100%',
+        marginBottom: 16,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
+        elevation: 2,
+    },
+    badgeRowContainer: {
+        flexDirection: 'row',
+        gap: 8,
+        marginBottom: 10,
+    },
+    levelBadgeHistory: {
+        backgroundColor: '#f3e8ff',
+        paddingHorizontal: 10,
+        paddingVertical: 3,
+        borderRadius: 12,
+    },
+    levelBadgeHistoryText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#8b5cf6',
+    },
+    topicBadgeHistory: {
+        backgroundColor: '#f1f5f9',
+        paddingHorizontal: 10,
+        paddingVertical: 3,
+        borderRadius: 12,
+    },
+    topicBadgeHistoryText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#64748b',
+    },
+    historyCardTopRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        marginBottom: 14,
+    },
+    historyCardTitle: {
+        fontSize: 17,
+        fontWeight: '700',
+        color: '#0f172a',
+        flex: 1,
+        paddingRight: 10,
+        lineHeight: 22,
+    },
+    historyIconCircle: {
+        width: 40,
+        height: 40,
+        borderRadius: 15,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    historyCardFooter: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingTop: 8,
+    },
+    timeRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    timeText: {
+        fontSize: 13,
+        color: '#64748b',
+        fontWeight: '500',
+    },
+    startReadingBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    startReadingBtnText: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#6366f1',
+    },
+
+    // Style cho Banner "Generate New Article" ở cuối danh sách
+    generateBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#5b4feb',
+        borderRadius: 20,
+        padding: 16,
+        marginTop: 8,
+        width: '100%',
+        shadowColor: '#5b4feb',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.25,
+        shadowRadius: 8,
+        elevation: 4,
+    },
+    bannerIconCircle: {
+        width: 44,
+        height: 44,
+        borderRadius: 17,
+        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 14,
+    },
+    bannerTextContainer: {
+        flex: 1,
+    },
+    bannerTitle: {
+        color: '#ffffff',
+        fontSize: 16,
+        fontWeight: '700',
+    },
+    bannerSubtitle: {
+        color: '#c7d2fe',
+        fontSize: 12,
+        marginTop: 2,
     },
 
     // ================= STYLES NHẬP TỪ =================
     scrollContent: {
         paddingHorizontal: 24,
-        paddingTop: 30,
+        paddingTop: 24,
         paddingBottom: 20,
         width: Platform.OS === 'web' ? 400 : screenWidth,
     },
@@ -647,85 +820,6 @@ const styles = StyleSheet.create({
     optionTextSelected: {
         color: '#4338ca',
         fontWeight: '600',
-    },
-
-    // ================= STYLES LỊCH SỬ TẠO =================
-    scrollContentHistory: {
-        paddingHorizontal: 24,
-        paddingTop: 30,
-        paddingBottom: 20,
-        width: Platform.OS === 'web' ? 400 : screenWidth,
-    },
-    historyCard: {
-        backgroundColor: '#ffffff',
-        borderRadius: 24,
-        padding: 20,
-        width: '100%',
-        marginBottom: 20,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.03,
-        shadowRadius: 10,
-        elevation: 3,
-    },
-    historyCardTopRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-        marginBottom: 12,
-    },
-    historyCardTitle: {
-        fontSize: 18,
-        fontWeight: '800',
-        color: '#0f172a',
-        flex: 1,
-        paddingRight: 15,
-        lineHeight: 24,
-    },
-    historyIconCircle: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    levelBadgeHistory: {
-        alignSelf: 'flex-start',
-        paddingHorizontal: 12,
-        paddingVertical: 4,
-        borderRadius: 16,
-        borderWidth: 1.5,
-        borderColor: '#8b5cf6',
-        marginBottom: 20,
-    },
-    levelBadgeHistoryText: {
-        fontSize: 12,
-        fontWeight: '700',
-        color: '#8b5cf6',
-    },
-    historyCardFooter: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-    },
-    timeRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    timeText: {
-        fontSize: 14,
-        color: '#64748b',
-        fontWeight: '500',
-    },
-    startReadingBtn: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    startReadingBtnText: {
-        fontSize: 14,
-        fontWeight: '700',
-        color: '#7c3aed',
-        marginRight: 6,
     },
 
     // ================= THANH ĐIỀU HƯỚNG =================

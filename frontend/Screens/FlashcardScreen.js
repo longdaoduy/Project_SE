@@ -104,7 +104,7 @@ export default function FlashcardScreen({ navigation }) {
 
                             <Text style={styles.mainWord}>Ubiquitous</Text>
 
-                            {/* Nút âm thanh nhỏ gọn (đã fix tròn và ép tâm) */}
+                            {/* Nút âm thanh nhỏ gọn */}
                             <View style={styles.phoneticRow}>
                                 <Text style={styles.phoneticText}>/juːˈbɪk.wɪ.təs/</Text>
                                 <TouchableOpacity style={styles.soundButton}>
@@ -117,13 +117,9 @@ export default function FlashcardScreen({ navigation }) {
                             <View style={styles.divider} />
 
                             {!showMeaning ? (
-                                <View style={styles.hiddenMeaningContainer}>
-                                    {/* ĐÃ XÓA NÚT LOA TO ĐÙNG Ở ĐÂY */}
-                                    <TouchableOpacity style={styles.showMeaningButton} onPress={handleShowMeaning} activeOpacity={0.8}>
-                                        <Text style={styles.showMeaningText}>Show Meaning</Text>
-                                    </TouchableOpacity>
-                                    <Text style={styles.hintText}>Think about the definition first</Text>
-                                </View>
+                                <TouchableOpacity style={styles.hiddenMeaningContainer} onPress={handleShowMeaning}>
+                                    <Text style={styles.hintText}>Tap to reveal meaning</Text>
+                                </TouchableOpacity>
                             ) : (
                                 <View style={styles.revealedMeaningContainer}>
                                     <View style={styles.meaningBox}>
@@ -142,11 +138,21 @@ export default function FlashcardScreen({ navigation }) {
                             )}
                         </View>
 
+                        {/* Thanh điều khiển dưới thẻ */}
                         {!showMeaning ? (
-                            <TouchableOpacity style={styles.skipButtonContainer} onPress={handleNextCard}>
-                                <Ionicons name="arrow-forward-circle-outline" size={32} color="#0f172a" />
-                                <Text style={styles.skipText}>Skip</Text>
-                            </TouchableOpacity>
+                            <View style={styles.actionRowContainer}>
+                                <TouchableOpacity style={styles.actionButton} onPress={handleShowMeaning} activeOpacity={0.7}>
+                                    <Ionicons name="eye-outline" size={20} color="#5b65d6" />
+                                    <Text style={styles.actionText}>Reveal answer</Text>
+                                </TouchableOpacity>
+
+                                <View style={styles.verticalDivider} />
+
+                                <TouchableOpacity style={styles.actionButton} onPress={handleNextCard} activeOpacity={0.7}>
+                                    <Ionicons name="play-skip-forward-outline" size={18} color="#64748b" />
+                                    <Text style={[styles.actionText, { color: '#64748b' }]}>Skip</Text>
+                                </TouchableOpacity>
+                            </View>
                         ) : (
                             <View style={styles.assessmentContainer}>
                                 <TouchableOpacity style={[styles.assessButton, { backgroundColor: '#fee2e2' }]} onPress={handleNextCard}>
@@ -242,7 +248,6 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         borderRadius: 12,
         backgroundColor: 'rgba(255, 255, 255, 0.15)',
-
         borderWidth: 1,
         borderColor: 'rgba(255, 255, 255, 0.25)',
     },
@@ -251,9 +256,8 @@ const styles = StyleSheet.create({
         height: 32,
         alignItems: 'center',
         justifyContent: 'center',
-        borderRadius: 15,
+        borderRadius: 12,
         backgroundColor: 'rgba(255, 255, 255, 0.15)',
-
         borderWidth: 1,
         borderColor: 'rgba(255, 255, 255, 0.25)',
     },
@@ -313,8 +317,6 @@ const styles = StyleSheet.create({
     whiteCardContainer: {
         flex: 1,
         backgroundColor: '#F0F2FF',
-        borderTopLeftRadius: 30,
-        borderTopRightRadius: 30,
         width: '100%',
         alignItems: 'center',
         position: 'relative',
@@ -353,7 +355,7 @@ const styles = StyleSheet.create({
     },
     flashcard: {
         backgroundColor: '#ffffff',
-        borderRadius: 24,
+        borderRadius: 30,
         padding: 24,
         width: '100%',
         minHeight: 350,
@@ -362,6 +364,8 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.05,
         shadowRadius: 15,
         elevation: 4,
+
+
     },
     cardHeader: {
         flexDirection: 'row',
@@ -423,40 +427,38 @@ const styles = StyleSheet.create({
     },
     hiddenMeaningContainer: {
         alignItems: 'center',
-        marginTop: 10,
-    },
-    showMeaningButton: {
-        backgroundColor: '#8b5cf6',
-        width: '100%',
-        paddingVertical: 16,
-        borderRadius: 20,
-        alignItems: 'center',
-        shadowColor: '#8b5cf6',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-        elevation: 5,
-        marginTop: 20, // Thêm margin top để bù đắp khoảng trống của nút loa vừa xóa
-    },
-    showMeaningText: {
-        color: '#ffffff',
-        fontSize: 18,
-        fontWeight: '700',
+        justifyContent: 'center',
+        paddingVertical: 30,
     },
     hintText: {
-        marginTop: 16,
         color: '#94a3b8',
-        fontSize: 13,
-    },
-    skipButtonContainer: {
-        marginTop: 30,
-        alignItems: 'center',
-    },
-    skipText: {
         fontSize: 14,
-        fontWeight: '700',
-        color: '#0f172a',
-        marginTop: 4,
+        fontWeight: '500',
+    },
+    /* Styling mới cho hàng nút điều khiển dưới flashcard */
+    actionRowContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 24,
+        gap: 20,
+    },
+    actionButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+    },
+    actionText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#5b65d6',
+    },
+    verticalDivider: {
+        width: 1,
+        height: 16,
+        backgroundColor: '#cbd5e1',
     },
     revealedMeaningContainer: {
         marginTop: 5,
