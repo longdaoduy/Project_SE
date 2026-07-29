@@ -290,19 +290,19 @@ export default function AIReadingScreen({ navigation }) {
                         <Text style={{ fontSize: 12, color: '#919191', marginTop: 4 }}>Home</Text>
                     </TouchableOpacity>
 
-                    <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('WordListScreen')}>
-                        <Ionicons name="book" size={20} color="#919191" opacity={0.6} />
-                        <Text style={{ fontSize: 12, color: '#919191', marginTop: 4 }}>Words</Text>
-                    </TouchableOpacity>
-
                     <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('PracticeScreen')}>
                         <Ionicons name="albums" size={20} color="#919191" opacity={0.6} />
                         <Text style={{ fontSize: 12, color: '#919191', marginTop: 4 }}>Cards</Text>
                     </TouchableOpacity>
 
+                    <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('WordlistScreen')}>
+                        <Ionicons name="book" size={20} color="#919191" opacity={0.6} />
+                        <Text style={{ fontSize: 12, color: '#919191', marginTop: 4 }}>Words</Text>
+                    </TouchableOpacity>
+
                     <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }}>
                         <Ionicons name="sparkles" size={20} color="#667eea" opacity={1} />
-                        <Text style={{ fontSize: 12, color: '#667eea', marginTop: 4 }}>Read</Text>
+                        <Text style={{ fontSize: 12, color: '#667eea', marginTop: 4 }}>Reading</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('VocabQuizScreen')}>

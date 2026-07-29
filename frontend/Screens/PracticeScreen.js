@@ -141,13 +141,13 @@ export default function PracticeScreen({ navigation }) {
                         <Text style={{ fontSize: 12, color: '#667eea', marginTop: 4 }}>Cards</Text>
                     </TouchableOpacity>
 
-                    <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('WordListScreen')}>
+                    <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('WordlistScreen')}>
                         <Ionicons name="book" size={20} color="#919191" opacity={0.6} />
                         <Text style={{ fontSize: 12, color: '#919191', marginTop: 4 }}>Words</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('AIReadingScreen')}>
-                        <Image source={require('../assets/sparkling.png')} style={{ width: 30, height: 30, resizeMode: 'contain' }} />
+                        <Ionicons name="sparkles" size={20} color="#919191" opacity={0.6} />
                         <Text style={{ fontSize: 12, color: '#919191', marginTop: 4 }}>Reading</Text>
                     </TouchableOpacity>
 

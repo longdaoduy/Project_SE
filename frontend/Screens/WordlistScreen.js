@@ -30,6 +30,14 @@ export default function WordlistScreen({navigation}) {
 
     const [selectedFilter, setSelectedFilter] = useState('all'); // 'all', 'studied', 'unstudied'
 
+    const [viewState, setViewState] = useState('list'); // 'list' hoặc 'grid'
+
+    const [selectedWordType, setSelectedWordType] = useState(null); // 'noun', 'verb', 'adjective', 'adverb', 'phrase'
+
+    const handleFilterChange = (filter) => {
+        setSelectedFilter(filter);
+    };
+
     const fetchVocabularies = async () => {
         try {
             // Sử dụng dữ liệu mẫu cho đến khi có backend
@@ -62,6 +70,13 @@ export default function WordlistScreen({navigation}) {
         // Tích hợp expo-av: Audio.Sound.createAsync({ uri: audioUrl })
         console.log('Playing audio for:', word, audioUrl);
     };
+
+    //Loc từ vựng dựa trên searchQuery và selectedFilter
+    const filteredVocabularies = vocabularies.filter((item) => {
+        const matchesSearch = item.word.toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesFilter = selectedFilter === 'all' || item.wordStatus === selectedFilter;
+        return matchesSearch && matchesFilter;
+    });
 
     //Render card từ vựng
     const renderVocabularyCard = ({item}) => 
@@ -139,83 +154,196 @@ export default function WordlistScreen({navigation}) {
             >
                 {/* Thanh trạng thái màu sáng */}
                 <StatusBar barStyle="light-content" />
-
-                <View style={styles.headerSection}>
-                    {/*Nút back*/}
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, marginBottom: 0, resizeMode: 'contain' }} />
-                    </TouchableOpacity>
-                    <View style={styles.headerTextContainer}>
-                        <Text style={styles.appName}>My Vocabulary</Text>
-                        <Text style={styles.appSubtitle}>Manage and practice your words</Text>
-                    </View>
-
-                    <TouchableOpacity style={styles.addButton} onPress={() => navigation.navigate('AddWordScreen')}>
-                        <Ionicons name="add" size={20} color="#ffffff" />
-                    </TouchableOpacity>
-
-                </View>
-
-                {/*Ô tìm kiếm từ vựng*/}
-                <View style={{ width: '100%', paddingHorizontal: 20 , flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: 15 }}>
-                    <View style={styles.searchContainer}>
-                        <Ionicons name="search" size={20} color="#e4e7ec" style={{marginLeft: 3 }} />
-                        <TextInput
-                            placeholder="Search vocabulary..."
-                            style={styles.searchInput}
-                            value={searchQuery}
-                            onChangeText={(text) => setSearchQuery(text)}
-                            clearButtonMode="while-editing" //Nút xóa nhanh trên iOS
-                        />
-                    </View>
-                </View>
-
-                <ScrollView contentContainerStyle={styles.scrollContainer} 
-                showsVerticalScrollIndicator={false}>
-                    
-                    <View style={styles.whiteCardContainer}>
-                        {/*Lọc theo All, Studied, Unstudied*/}
-                        <View style={styles.filterRow}>
-                            
-                            <View style={styles.filterContainer}>
-                                <TouchableOpacity 
-                                    style={[styles.filterButton, selectedFilter === 'all' && styles.selectedFilter]}
-                                    onPress={() => setSelectedFilter('all')}
-                                >
-                                    <Text style={[styles.filterText, selectedFilter === 'all' && styles.selectedFilterText]}>
-                                    All
-                                    </Text>
-                                </TouchableOpacity>
-
-                                <TouchableOpacity 
-                                    style={[styles.filterButton, selectedFilter === 'studied' && styles.selectedFilter]}
-                                    onPress={() => setSelectedFilter('studied')}
-                                >
-                                    <Text style={[styles.filterText, selectedFilter === 'studied' && styles.selectedFilterText]}>
-                                    Studied
-                                    </Text>
-                                </TouchableOpacity>
-
-                                <TouchableOpacity 
-                                    style={[styles.filterButton, selectedFilter === 'unstudied' && styles.selectedFilter]}
-                                    onPress={() => setSelectedFilter('unstudied')}
-                                >
-                                    <Text style={[styles.filterText, selectedFilter === 'unstudied' && styles.selectedFilterText]}>
-                                    Unstudied
-                                    </Text>
-                                </TouchableOpacity>
+                {viewState === 'list' && (
+                    <>
+                        <View style={styles.headerSection}>
+                            {/*Nút back*/}
+                            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                                <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, marginBottom: 0, resizeMode: 'contain' }} />
+                            </TouchableOpacity>
+                            <View style={styles.headerTextContainer}>
+                                <Text style={styles.appName}>My Vocabulary</Text>
+                                <Text style={styles.appSubtitle}>Manage and practice your words</Text>
                             </View>
-                            
+
+                            <TouchableOpacity style={styles.addButton} onPress={() => setViewState('add')}>
+                                <Ionicons name="add" size={20} color="#ffffff" />
+                            </TouchableOpacity>
                         </View>
 
-                        <FlatList
-                            style={{ width: '100%', marginTop: 10 }}
-                            data={wordlist}
-                            renderItem={renderVocabularyCard}
-                            keyExtractor={(item) => item.id.toString()}
-                        />
-                    </View>
-                </ScrollView>
+                        {/*Ô tìm kiếm từ vựng*/}
+                        <View style={{ width: '100%', paddingHorizontal: 20 , flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: 15 }}>
+                            <View style={styles.searchContainer}>
+                                <Ionicons name="search" size={20} color="#e4e7ec" style={{marginLeft: 3 }} />
+                                <TextInput
+                                    placeholder="Search vocabulary..."
+                                    style={styles.searchInput}
+                                    value={searchQuery}
+                                    onChangeText={(text) => setSearchQuery(text)}
+                                    clearButtonMode="while-editing" //Nút xóa nhanh trên iOS
+                                />
+                            </View>
+                        </View>
+
+                        <ScrollView contentContainerStyle={styles.scrollContainer} 
+                        showsVerticalScrollIndicator={false}>
+                            
+                            <View style={styles.whiteCardContainer}>
+                                {/*Lọc theo All, Studied, Unstudied*/}
+                                <View style={styles.filterRow}>
+                                    
+                                    <View style={styles.filterContainer}>
+                                        <TouchableOpacity 
+                                            style={[styles.filterButton, selectedFilter === 'all' && styles.selectedFilter]}
+                                            onPress={() => handleFilterChange('all')}
+                                        >
+                                            <Text style={[styles.filterText, selectedFilter === 'all' && styles.selectedFilterText]}>
+                                            All
+                                            </Text>
+                                        </TouchableOpacity>
+
+                                        <TouchableOpacity 
+                                            style={[styles.filterButton, selectedFilter === 'studied' && styles.selectedFilter]}
+                                            onPress={() => handleFilterChange('studied')}
+                                        >
+                                            <Text style={[styles.filterText, selectedFilter === 'studied' && styles.selectedFilterText]}>
+                                            Studied
+                                            </Text>
+                                        </TouchableOpacity>
+
+                                        <TouchableOpacity 
+                                            style={[styles.filterButton, selectedFilter === 'unstudied' && styles.selectedFilter]}
+                                            onPress={() => handleFilterChange('unstudied')}
+                                        >
+                                            <Text style={[styles.filterText, selectedFilter === 'unstudied' && styles.selectedFilterText]}>
+                                            Unstudied
+                                            </Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                    
+                                </View>
+
+                                <FlatList
+                                    style={{ width: '100%', marginTop: 10 }}
+                                    data={filteredVocabularies}
+                                    renderItem={renderVocabularyCard}
+                                    keyExtractor={(item) => item.id.toString()}
+                                />
+                            </View>
+                        </ScrollView>
+                    </>
+                )}
+
+                {viewState === 'add' && (
+                    <>
+                        <View style={styles.headerSection}>
+                            <TouchableOpacity onPress={() => setViewState('list')} style={styles.backButton}>
+                                <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, marginBottom: 0, resizeMode: 'contain' }} />
+                            </TouchableOpacity>
+                            <View style={styles.headerTextContainer}>
+                                <Text style={styles.appName}>Add Vocabulary</Text>
+                                <Text style={styles.appSubtitle}>Add new words to your list</Text>
+                            </View>
+                        </View>
+
+                        <ScrollView contentContainerStyle={styles.scrollContainer} 
+                        showsVerticalScrollIndicator={false}>
+                            <View style={styles.whiteCardContainer}>
+
+                                <View style={styles.addWordContainer}>
+                                    <Text style={styles.addWordContainerTitle}>WORD / PHRASE</Text>
+                                    <View style={styles.addWordInputContainer}>
+                                        <TextInput
+                                            placeholder="Enter word or phrase"
+                                            style={styles.addWordInput}
+                                        />
+                                    </View>
+
+                                    <Text style={styles.addWordContainerTitle}>PHONETIC</Text>
+                                    <View style={styles.addWordInputContainer}>
+                                        <TextInput
+                                            placeholder="eg: /ˈwɜːd/"
+                                            style={styles.addWordInput}
+                                        />
+                                    </View>
+
+                                    <Text style={styles.addWordContainerTitle}>VIETNAMESE MEANING</Text>
+                                    <View style={styles.addWordInputContainer}>
+                                        <TextInput 
+                                            placeholder="Enter Vietnamese meaning"
+                                            style={styles.addWordInput} 
+                                        />
+                                    </View>
+
+                                    <Text style={styles.addWordContainerTitle}>ENGLISH DEFINITION</Text>
+                                    <View style={styles.addWordInputContainer}>
+                                        <TextInput
+                                            placeholder="Enter English definition"
+                                            style={styles.addWordInput}
+                                        />
+                                    </View>
+
+                                    <Text style={styles.addWordContainerTitle}>EXAMPLE SENTENCE</Text>
+                                    <View style={styles.addWordInputContainer}>
+                                        <TextInput
+                                            placeholder="Enter example sentence"
+                                            style={styles.addWordInput}
+                                        />
+                                    </View>
+
+                                    <Text style={styles.addWordContainerTitle}>TYPE</Text>
+                                    <View style={styles.wordTypeButtonContainer}>
+                                        <TouchableOpacity style={[styles.wordTypeButton, selectedWordType === 'noun' && styles.wordTypeButtonSelected]} 
+                                            onPress={() => setSelectedWordType('noun')}
+                                            >
+                                            <Text style={[styles.wordTypeButtonText, selectedWordType === 'noun' && 
+                                                styles.wordTypeButtonTextSelected]}>
+                                                    Noun
+                                            </Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity style={[styles.wordTypeButton, selectedWordType === 'verb' && styles.wordTypeButtonSelected]} 
+                                            onPress={() => setSelectedWordType('verb')}
+                                            >
+                                            <Text style={[styles.wordTypeButtonText, selectedWordType === 'verb' && 
+                                                styles.wordTypeButtonTextSelected]}>
+                                                    Verb
+                                            </Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity style={[styles.wordTypeButton, selectedWordType === 'adjective' && styles.wordTypeButtonSelected]} 
+                                            onPress={() => setSelectedWordType('adjective')}
+                                            >
+                                            <Text style={[styles.wordTypeButtonText, selectedWordType === 'adjective' && 
+                                                styles.wordTypeButtonTextSelected]}>
+                                                    Adj
+                                            </Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity style={[styles.wordTypeButton, selectedWordType === 'adverb' && styles.wordTypeButtonSelected]} 
+                                            onPress={() => setSelectedWordType('adverb')}
+                                            >
+                                            <Text style={[styles.wordTypeButtonText, selectedWordType === 'adverb' && 
+                                                styles.wordTypeButtonTextSelected]}>
+                                                    Adv
+                                            </Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity style={[styles.wordTypeButton, selectedWordType === 'phrase' && styles.wordTypeButtonSelected]} 
+                                            onPress={() => setSelectedWordType('phrase')}
+                                            >
+                                            <Text style={[styles.wordTypeButtonText, selectedWordType === 'phrase' && 
+                                                styles.wordTypeButtonTextSelected]}>
+                                                    Phrase
+                                            </Text>
+                                        </TouchableOpacity>
+                                    </View>
+
+                                    {/*Nút thêm từ vựng*/}
+                                    <TouchableOpacity style={styles.addWordButton}>
+                                        <Text style={styles.addWordButtonText}>Add Word</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </ScrollView>
+                    </>
+                )}
 
                 {/*Thanh điều hướng nhanh đến các màn hình khác*/}
                 <View style={styles.quickNavContainer}>
@@ -297,6 +425,7 @@ const styles = StyleSheet.create({
         width: '100%',
         paddingTop: Platform.OS === 'ios' ? 60 : 40, // Chừa khoảng trống an toàn cho tai thỏ điện thoại
         paddingHorizontal: 20,
+        paddingBottom: 20,
     },
     appName: {
         fontSize: 26,
@@ -320,7 +449,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingHorizontal: 24,
 
-        marginTop: 5, // Tạo khoảng cách giữa phần header và card trắng
         paddingTop: 10, // Tạo khoảng cách giữa phần trên của card và nội dung bên trong
     },
 
@@ -1221,7 +1349,7 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(255, 255, 255, 0.20)', 
         borderRadius: 15,
         paddingHorizontal: 10,
-        marginTop: 15,
+        marginTop: -5,
         width: '90%',
         opacity: 0.6,
 
@@ -1280,5 +1408,82 @@ const styles = StyleSheet.create({
     headerTextContainer: {
         marginLeft: 16,
     },
+    
+    addWordContainer: {
+        backgroundColor: '#ffffff',
+        borderRadius: 20,
+        padding: 16,
+        width: '100%',
+        marginTop: 20,
+        paddingHorizontal: 30,
+        paddingVertical: 20,
+    },
 
+    addWordContainerTitle: {
+        fontSize: 20,
+        fontWeight: '600',
+        color: '#919191',
+        marginBottom: 8,
+    },
+
+    addWordInput: {
+        fontSize: 16,
+        color: '#919191',
+        fontWeight: '500',
+    },
+
+    addWordInputContainer: {
+        backgroundColor: '#f0f2ff',
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 12,
+        marginBottom: 12,
+    },
+
+    wordTypeButton: {
+        backgroundColor: '#f0f2ff',
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#e0e7ff',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 8,
+        paddingHorizontal: 10,
+    },
+
+    wordTypeButtonText: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#4f46e5',
+    },
+
+    wordTypeButtonSelected: {
+        backgroundColor: '#4f46e5',
+    },
+
+    wordTypeButtonTextSelected: {
+        color: '#ffffff',
+    },
+
+    wordTypeButtonContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        width: '100%',
+        marginBottom: 12,
+        paddingHorizontal: 4,
+        gap: 8, // Khoảng cách giữa các nút loại từ
+    },
+
+    addWordButton: {
+        backgroundColor: '#4f46e5',
+        borderRadius: 12,
+        paddingVertical: 12,
+        alignItems: 'center',
+        marginTop: 10,
+    },
+    addWordButtonText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#ffffff',
+    },
 });
