@@ -9,30 +9,28 @@ import {
     Platform,
     Dimensions,
     TouchableOpacity,
-    Image
+    Image,
+    Alert,
 } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useData } from '../context/DataContext';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 export default function PracticeScreen({ navigation }) {
+    const { decks, deleteDeck } = useData();
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedFilter, setSelectedFilter] = useState('All');
 
     const filters = ['All', 'Daily', 'Business'];
 
-    const mockDecks = [
-        {
-            id: '1',
-            title: 'Academic Vocabulary',
-            level: 'Beginner',
-            currentWords: 0,
-            totalWords: 10,
-            progress: 0,
-        },
-    ];
+    const filteredDecks = decks.filter((deck) => {
+        const matchesSearch = deck.title.toLowerCase().includes(searchQuery.toLowerCase());
+        if (selectedFilter === 'All') return matchesSearch;
+        return matchesSearch && deck.level === selectedFilter;
+    });
 
     return (
         <View style={styles.webWrapper}>
@@ -91,7 +89,14 @@ export default function PracticeScreen({ navigation }) {
                             ))}
                         </View>
 
-                        {mockDecks.map((item) => (
+                        {filteredDecks.length === 0 ? (
+                            <View style={styles.emptyContainer}>
+                                <Ionicons name="albums-outline" size={48} color="#94a3b8" />
+                                <Text style={styles.emptyText}>No decks found</Text>
+                                <Text style={styles.emptySubText}>Create a new deck to get started</Text>
+                            </View>
+                        ) : (
+                        filteredDecks.map((item) => (
                             <View key={item.id} style={styles.deckCard}>
                                 <View style={styles.deckHeader}>
                                     <View style={styles.deckIconContainer}>
@@ -103,6 +108,17 @@ export default function PracticeScreen({ navigation }) {
                                             <Text style={styles.badgeText}>{item.level}</Text>
                                         </View>
                                     </View>
+                                    <TouchableOpacity
+                                        onPress={() => {
+                                            Alert.alert('Delete Deck', `Delete "${item.title}"?`, [
+                                                { text: 'Cancel', style: 'cancel' },
+                                                { text: 'Delete', style: 'destructive', onPress: () => deleteDeck(item.id) },
+                                            ]);
+                                        }}
+                                        style={styles.deleteButton}
+                                    >
+                                        <Ionicons name="trash-outline" size={16} color="#ef4444" />
+                                    </TouchableOpacity>
                                 </View>
 
                                 <View style={styles.progressInfo}>
@@ -119,13 +135,13 @@ export default function PracticeScreen({ navigation }) {
                                 <TouchableOpacity
                                     style={styles.startButton}
                                     activeOpacity={0.8}
-                                    onPress={() => navigation.navigate('FlashcardScreen')}
+                                    onPress={() => navigation.navigate('FlashcardScreen', { deckId: item.id })}
                                 >
                                     <Ionicons name="play-outline" size={16} color="#ffffff" />
                                     <Text style={styles.startButtonText}>START LEARNING</Text>
                                 </TouchableOpacity>
                             </View>
-                        ))}
+                        )))}
                     </View>
                 </ScrollView>
 
@@ -381,6 +397,32 @@ const styles = StyleSheet.create({
         color: '#ffffff',
         fontSize: 14,
         fontWeight: '700',
+    },
+    emptyContainer: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 40,
+        width: '100%',
+    },
+    emptyText: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#64748b',
+        marginTop: 12,
+    },
+    emptySubText: {
+        fontSize: 13,
+        color: '#94a3b8',
+        marginTop: 4,
+    },
+    deleteButton: {
+        width: 28,
+        height: 28,
+        borderRadius: 8,
+        backgroundColor: '#fef2f2',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: 8,
     },
     quickNavContainer: {
         backgroundColor: '#ffffff',
