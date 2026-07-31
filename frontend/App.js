@@ -13,6 +13,7 @@ import QuizMultipleChoice from './Screens/QuizMultipleChoice';
 import QuizFillInBlank from './Screens/QuizFillInBlank';
 import QuizMatching from './Screens/QuizMatching';
 import QuizSpeedRound from './Screens/QuizSpeedRound';
+import RegisterScreen from './Screens/RegisterScreen';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { DataProvider } from './context/DataContext';
@@ -38,6 +39,7 @@ export default function App() {
           <Stack.Screen name="QuizFillInBlank" component={QuizFillInBlank} />
           <Stack.Screen name="QuizMatching" component={QuizMatching} />
           <Stack.Screen name="QuizSpeedRound" component={QuizSpeedRound} />
+          <Stack.Screen name="Register" component={RegisterScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </DataProvider>

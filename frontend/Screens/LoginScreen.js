@@ -116,7 +116,7 @@ export default function LoginScreen({navigation}) {
                         {/* Nút đăng ký */}
                         <View style={{ flexDirection: 'row', marginTop: 10 }}>
                             <Text style={{ color: '#666' , fontSize: 16}}>Don't have an account? </Text>
-                            <TouchableOpacity>
+                            <TouchableOpacity onPress={() => navigation.navigate('Register')}>
                                 <Text style={{ color: '#667eea', fontWeight: '600' }}>Sign Up for free</Text>
                             </TouchableOpacity>
                         </View>
