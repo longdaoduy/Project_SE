@@ -20,6 +20,8 @@ const LEVELS = [
     { id: 'A2', title: 'Elementary A2', sub: 'Basic conversation' },
     { id: 'B1', title: 'Intermediate B1', sub: 'Everyday topics' },
     { id: 'B2', title: 'Upper-intermediate B2', sub: 'Complex discussion' },
+    { id: 'C1', title: 'Advanced C1', sub: 'Fluent and nuanced' },
+    { id: 'C2', title: 'Proficient C2', sub: 'Near-native mastery' },
 ];
 
 const GOALS = [
@@ -277,41 +279,48 @@ export default function RegisterScreen({ navigation }) {
                                 <Text style={styles.questionSub}>
                                     We’ll personalize your learning path.
                                 </Text>
-
-                                {LEVELS.map((level) => {
+                                <View style={{ marginTop: 12, maxHeight: 320 }}>
+                                <ScrollView 
+                                    showsVerticalScrollIndicator={false}
+                                    contentContainerStyle={{ paddingVertical: 4, paddingHorizontal: 2 }} // Tránh bị cấn shadow/border
+                                >
+                                    {LEVELS.map((level) => {
                                     const selected = formData.level === level.id;
                                     return (
                                         <TouchableOpacity
-                                            key={level.id}
-                                            style={[
-                                                styles.levelCard,
-                                                selected && styles.selectedLevelCard,
-                                            ]}
-                                            activeOpacity={0.7}
-                                            onPress={() => updateForm('level', level.id)}
+                                        key={level.id}
+                                        style={[
+                                            styles.levelCard,
+                                            selected && styles.selectedLevelCard,
+                                        ]}
+                                        activeOpacity={0.7}
+                                        onPress={() => updateForm('level', level.id)}
                                         >
-                                            <View style={styles.levelTextWrap}>
-                                                <Text
-                                                    style={[
-                                                        styles.levelTitle,
-                                                        selected && styles.selectedText,
-                                                    ]}
-                                                >
-                                                    {level.title}
-                                                </Text>
-                                                <Text style={styles.levelSub}>{level.sub}</Text>
-                                            </View>
-                                            <View
-                                                style={[
-                                                    styles.radio,
-                                                    selected && styles.radioActive,
-                                                ]}
+                                        <View style={styles.levelTextWrap}>
+                                            <Text
+                                            style={[
+                                                styles.levelTitle,
+                                                selected && styles.selectedText,
+                                            ]}
                                             >
-                                                {selected && <View style={styles.radioInner} />}
-                                            </View>
+                                            {level.title}
+                                            </Text>
+                                            <Text style={styles.levelSub}>{level.sub}</Text>
+                                        </View>
+
+                                        <View
+                                            style={[
+                                            styles.radio,
+                                            selected && styles.radioActive,
+                                            ]}
+                                        >
+                                            {selected && <View style={styles.radioInner} />}
+                                        </View>
                                         </TouchableOpacity>
                                     );
-                                })}
+                                    })}
+                                </ScrollView>
+                                </View>
                             </View>
                         )}
 
