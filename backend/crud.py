@@ -291,19 +291,17 @@ def get_user_statistics(db: Session, user_id: int) -> models.UserStatistics | No
 def _update_statistics_after_flashcard(
     db: Session, user_id: int, cards_reviewed: int
 ) -> None:
-    """Increment total_flashcards and total_words after a flashcard session."""
     stats = get_user_statistics(db, user_id)
     if stats:
         stats.total_flashcards += 1
         stats.total_words += cards_reviewed
-        stats.total_xp += cards_reviewed * 2   # 2 XP per card reviewed
-        db.commit()
+        stats.total_xp += cards_reviewed * 2
+        # No commit here – caller is responsible for the transaction boundary
 
 
 def _update_statistics_after_quiz(
     db: Session, user_id: int, score: float, accuracy: float
 ) -> None:
-    """Increment total_quizzes and recompute average_score."""
     stats = get_user_statistics(db, user_id)
     if stats:
         prev_total = stats.total_quizzes
@@ -311,8 +309,7 @@ def _update_statistics_after_quiz(
         stats.average_score = round(
             (stats.average_score * prev_total + accuracy) / stats.total_quizzes, 2
         )
-        stats.total_xp += int(score) * 5       # 5 XP per correct answer
-        db.commit()
+        stats.total_xp += int(score) * 5
 
 
 def _update_statistics_after_reading(
@@ -320,8 +317,7 @@ def _update_statistics_after_reading(
 ) -> None:
     stats = get_user_statistics(db, user_id)
     if stats:
-        stats.total_xp += int(accuracy // 10) * 3   # 3 XP per 10% accuracy
-        db.commit()
+        stats.total_xp += int(accuracy // 10) * 3
 
 
 # ============================================================
@@ -365,20 +361,27 @@ def complete_flashcard_session(
     db: Session, session: models.FlashcardSession
 ) -> models.FlashcardSession:
     """Mark completed → write learning_history + update statistics."""
+    if session.is_completed:
+        return session  # idempotent – already done
     session.is_completed = True
     session.completed_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(session)
+    # Do NOT commit here – caller (update_flashcard_progress) owns the transaction
+    # when called from the SRS path.  We flush so the timestamp is visible,
+    # and let the outer commit persist everything atomically.
+    db.flush()
 
-    # ── side-effects ──────────────────────────────────────────────────────────
-    record_learning_history(
-        db,
-        user_id=session.user_id,
-        activity_type="Flashcard",
-        activity_id=session.session_id,
-        duration=None,
-    )
-    _update_statistics_after_flashcard(db, session.user_id, session.cards_reviewed)
+    # ── side-effects (each opens its own commit) ──────────────────────────────
+    try:
+        record_learning_history(
+            db,
+            user_id=session.user_id,
+            activity_type="Flashcard",
+            activity_id=session.session_id,
+            duration=None,
+        )
+        _update_statistics_after_flashcard(db, session.user_id, session.cards_reviewed)
+    except Exception:
+        pass  # never block the main flow for stats errors
     return session
 
 
@@ -420,9 +423,10 @@ def update_flashcard_progress(
             sess = progress.session
             sess.cards_reviewed = min(sess.cards_reviewed + 1, sess.total_cards)
             if sess.cards_reviewed >= sess.total_cards:
+                # complete_flashcard_session uses flush (no commit), safe here
                 complete_flashcard_session(db, sess)
-                return progress   # session already committed above
 
+    # Single commit for progress + any session changes above
     db.commit()
     db.refresh(progress)
     return progress
@@ -544,10 +548,7 @@ def submit_quiz_answer(
 
 
 def calculate_quiz_score(db: Session, quiz: models.Quiz) -> models.Quiz:
-    """
-    Tally answers, persist score/accuracy, mark completed.
-    Side-effects: record_learning_history + update statistics.
-    """
+    """Tally answers, persist score/accuracy, mark completed."""
     questions = (
         db.query(models.QuizQuestion)
         .filter(models.QuizQuestion.quiz_id == quiz.quiz_id)
@@ -560,20 +561,26 @@ def calculate_quiz_score(db: Session, quiz: models.Quiz) -> models.Quiz:
     quiz.accuracy = round((correct / total) * 100, 2) if total else 0.0
     quiz.is_completed = True
     quiz.completed_at = datetime.now(timezone.utc)
+
+    # side-effects – queue changes before single commit
+    _update_statistics_after_quiz(db, quiz.user_id, quiz.score, quiz.accuracy)
+
     db.commit()
     db.refresh(quiz)
     _ = quiz.questions   # eager-load while session open
 
-    # ── side-effects ──────────────────────────────────────────────────────────
-    record_learning_history(
-        db,
-        user_id=quiz.user_id,
-        activity_type="Quiz",
-        activity_id=quiz.quiz_id,
-        score=quiz.score,
-        accuracy=quiz.accuracy,
-    )
-    _update_statistics_after_quiz(db, quiz.user_id, quiz.score, quiz.accuracy)
+    # history written after commit (its own transaction)
+    try:
+        record_learning_history(
+            db,
+            user_id=quiz.user_id,
+            activity_type="Quiz",
+            activity_id=quiz.quiz_id,
+            score=quiz.score,
+            accuracy=quiz.accuracy,
+        )
+    except Exception:
+        pass
     return quiz
 
 
@@ -670,18 +677,22 @@ def calculate_ai_reading_score(db: Session, reading: models.AIReading) -> models
     reading.accuracy = round((correct / total) * 100, 2) if total else 0.0
     reading.is_completed = True
     reading.completed_at = datetime.now(timezone.utc)
+
+    _update_statistics_after_reading(db, reading.user_id, reading.accuracy)
+
     db.commit()
     db.refresh(reading)
-    _ = reading.comprehension_questions   # eager-load
+    _ = reading.comprehension_questions
 
-    # ── side-effects ──────────────────────────────────────────────────────────
-    record_learning_history(
-        db,
-        user_id=reading.user_id,
-        activity_type="AI Reading",
-        activity_id=reading.reading_id,
-        score=reading.score,
-        accuracy=reading.accuracy,
-    )
-    _update_statistics_after_reading(db, reading.user_id, reading.accuracy)
+    try:
+        record_learning_history(
+            db,
+            user_id=reading.user_id,
+            activity_type="AI Reading",
+            activity_id=reading.reading_id,
+            score=reading.score,
+            accuracy=reading.accuracy,
+        )
+    except Exception:
+        pass
     return reading

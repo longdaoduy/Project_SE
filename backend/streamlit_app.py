@@ -50,25 +50,23 @@ def topic_map(topics: list[dict]) -> dict[str, int]:
 # ── Ensure demo user exists ───────────────────────────────────────────────────
 def ensure_demo_user() -> bool:
     """
-    Try to verify/create the demo user.
+    Verify demo user exists; create if missing.
     Returns True if backend is reachable, False otherwise.
     """
     try:
-        api_get(f"/users/{DEMO_USER_ID}")
-        return True
-    except requests.HTTPError as e:
-        if e.response.status_code == 404:
-            try:
-                api_post("/users", {
-                    "full_name": "Demo User",
-                    "email": "demo@smarteng.app",
-                    "password": "demo1234",
-                })
-            except Exception:
-                pass
+        resp = requests.get(f"{api_base}/users/{DEMO_USER_ID}", timeout=5)
+        if resp.status_code == 200:
+            return True
+        if resp.status_code == 404:
+            # Try to create with the current schema
+            r = requests.post(f"{api_base}/users", json={
+                "full_name": "Demo User",
+                "email": "demo@smarteng.app",
+                "password": "demo1234",
+            }, timeout=10)
+            return r.status_code in (200, 201, 400)  # 400 = already exists = fine
         return True
     except Exception:
-        # Backend not running yet – handled gracefully in each tab
         return False
 
 
@@ -227,18 +225,20 @@ with tab_flash:
                 st.write("How well did you remember it?")
                 r_col1, r_col2, r_col3, r_col4 = st.columns(4)
 
-                def _rate(rating: str):
-                    pid = st.session_state.fc_progress_ids.get(card["word_id"])
+                # Capture card/idx/pid NOW via default args to avoid closure issues
+                _cur_word_id = card["word_id"]
+                _cur_pid = st.session_state.fc_progress_ids.get(_cur_word_id)
+                _cur_idx = idx
+
+                def _rate(rating: str, word_id=_cur_word_id, pid=_cur_pid, cur_idx=_cur_idx):
                     if pid:
                         try:
                             api_patch(f"/flashcard-progress/{pid}", {"difficulty_rating": rating})
                         except Exception:
                             pass
-                    st.session_state.fc_ratings[card["word_id"]] = rating
-                    # advance
-                    next_idx = idx + 1
-                    if next_idx >= len(cards):
-                        # Complete session on backend
+                    st.session_state.fc_ratings[word_id] = rating
+                    next_idx = cur_idx + 1
+                    if next_idx >= len(st.session_state.fc_cards):
                         sid = st.session_state.fc_session_id
                         if sid:
                             try:
@@ -306,24 +306,36 @@ with tab_quiz:
         qz_n = st.number_input("# of questions", 3, 20, 5, key="qz_n")
 
     def _build_quiz_questions(words: list[dict], n: int) -> list[dict]:
-        """Build multiple-choice questions locally from the word list."""
+        """Build multiple-choice questions from the word list."""
         if len(words) < 4:
             return []
-        random.shuffle(words)
-        chosen = words[:n]
+        # Deduplicate by meaning_vi to avoid identical options
+        seen_meanings: set[str] = set()
+        unique_words = []
+        for w in words:
+            m = w["meaning_vi"].strip()
+            if m not in seen_meanings:
+                seen_meanings.add(m)
+                unique_words.append(w)
+        if len(unique_words) < 4:
+            return []
+
+        random.shuffle(unique_words)
+        chosen = unique_words[:n]
         questions = []
         for w in chosen:
-            # correct answer = meaning_vi
-            correct = w["meaning_vi"]
-            # distractors: 3 other meanings from remaining words
-            others = [x["meaning_vi"] for x in words if x["word_id"] != w["word_id"]]
-            distractors = random.sample(others, min(3, len(others)))
+            correct = w["meaning_vi"].strip()
+            # distractors: pick from the rest, guaranteed distinct meanings
+            pool = [x["meaning_vi"].strip() for x in unique_words if x["word_id"] != w["word_id"]]
+            distractors = random.sample(pool, min(3, len(pool)))
             options = distractors[:3] + [correct]
             random.shuffle(options)
-            correct_letter = ["A", "B", "C", "D"][options.index(correct)]
+            # safe index: correct always present once
+            correct_idx = options.index(correct)
+            correct_letter = ["A", "B", "C", "D"][correct_idx]
             questions.append({
                 "word": w,
-                "question_text": f'Which definition best matches the word "{w["word"]}"?',
+                "question_text": f'Which definition best matches "{w["word"]}"?',
                 "option_a": options[0],
                 "option_b": options[1],
                 "option_c": options[2],
@@ -453,15 +465,7 @@ with tab_quiz:
             if st.button("🏁 Submit Quiz & See Results", type="primary", key="qz_submit"):
                 try:
                     result = api_post(f"/quizzes/{st.session_state.qz_quiz_id}/submit", {})
-                    # Reload with questions details
-                    full = api_get(f"/quizzes/{result['quiz_id']}")
-                    # fetch questions separately
-                    full["questions"] = [
-                        api_get(f"/quiz-questions/{q['question_id']}")
-                        if False else q        # questions already in session_state
-                        for q in st.session_state.qz_questions
-                    ]
-                    # Re-fetch each question to get is_correct
+                    # Re-fetch each question to get is_correct populated
                     detailed_qs = []
                     for q in st.session_state.qz_questions:
                         try:

@@ -15,12 +15,22 @@ import hashlib
 from typing import List
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from . import crud, models, schemas
 from .database import SessionLocal, engine
 
 app = FastAPI(title="SmartEng API", version="3.0.0")
+
+# ── CORS – allow all origins so Expo web / mobile simulators can reach the API ──
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],          # tighten in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.on_event("startup")
