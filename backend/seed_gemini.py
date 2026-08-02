@@ -138,7 +138,79 @@ def generate_words_for_topic(topic: str, count: int = 30) -> list[dict]:
         print(f"❌ Lỗi khi gọi AI cho chủ đề {topic}: {e}")
         return []
 
-def seed_database() -> None:
+def generate_reading_passage(vocabulary: str, topic: str | None = None, difficulty: str | None = None) -> str:
+    """
+    FR8 – Generate an AI reading passage that embeds the given vocabulary words.
+    Returns the passage text only (questions generated separately).
+    """
+    topic_hint = f" related to the topic '{topic}'" if topic else ""
+    level_hint = f" at {difficulty} English level" if difficulty else ""
+
+    prompt = (
+        f"You are an English language teacher. "
+        f"Write a coherent English reading passage{topic_hint}{level_hint} "
+        f"that naturally uses ALL of the following vocabulary words: {vocabulary}. "
+        f"The passage should be 200-300 words, educational, and engaging. "
+        f"Output ONLY the passage text with no extra commentary."
+    )
+    try:
+        return call_openrouter(prompt)
+    except Exception as e:
+        return (
+            f"[AI passage generation failed: {e}] "
+            f"Vocabulary: {vocabulary}"
+        )
+
+
+def generate_comprehension_questions(passage: str, vocabulary: str, count: int = 4) -> list[dict]:
+    """
+    FR8 – Generate multiple-choice comprehension questions for a reading passage.
+    Returns a list of dicts with keys:
+      question_text, option_a, option_b, option_c, option_d, correct_option
+    """
+    prompt = f"""
+        You are an English comprehension question writer.
+        Given the reading passage below, generate exactly {count} multiple-choice comprehension questions.
+
+        PASSAGE:
+        {passage}
+
+        VOCABULARY USED: {vocabulary}
+
+        Requirements:
+        - Each question must test understanding of the passage or vocabulary in context.
+        - Provide exactly 4 options labeled A, B, C, D.
+        - Output ONLY a valid JSON array, no extra text.
+        - Each element must have these exact keys:
+        "question_text", "option_a", "option_b", "option_c", "option_d", "correct_option"
+        - "correct_option" must be one of: "A", "B", "C", "D"
+
+        Example format:
+        [
+        {{
+            "question_text": "What does 'ubiquitous' mean in the passage?",
+            "option_a": "Rare and hard to find",
+            "option_b": "Present everywhere at once",
+            "option_c": "Expensive and luxurious",
+            "option_d": "Old and outdated",
+            "correct_option": "B"
+        }}
+        ]
+        """
+    try:
+        response_text = call_openrouter(prompt)
+        questions = parse_json_block(response_text)
+        # Validate structure
+        valid = []
+        for q in questions:
+            if all(k in q for k in ("question_text", "option_a", "option_b", "option_c", "option_d", "correct_option")):
+                if q["correct_option"] in ("A", "B", "C", "D"):
+                    valid.append(q)
+        return valid
+    except Exception as e:
+        print(f"❌ Error generating comprehension questions: {e}")
+        return []
+    
     models.Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
@@ -165,7 +237,7 @@ def seed_database() -> None:
                     ),
                 )
             print(f"Seeded topic: {topic.topic_name}")
-# ... code lưu từ vựng vào DB ở trên ...
+            # ... code lưu từ vựng vào DB ở trên ...
             print(f"Seeded topic: {topic.topic_name}")
             
             # Thêm dòng này để API có thời gian nghỉ
