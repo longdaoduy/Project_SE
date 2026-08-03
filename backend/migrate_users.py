@@ -2,19 +2,48 @@
 Migration: align the live `users` table on Aiven with the new ORM schema.
 Uses INFORMATION_SCHEMA checks instead of ADD COLUMN IF NOT EXISTS
 (compatible with MySQL 5.7+).
+
+Database connection info is read from backend/.env (see backend/.env.example).
 """
 
+import os
 import ssl
 import sys
-import pymysql
+from pathlib import Path
 
-SSL_CTX = ssl.create_default_context(cafile="ca.pem")
-SSL_CTX.check_hostname = False
-SSL_CTX.verify_mode = ssl.CERT_NONE
+import pymysql
+from dotenv import load_dotenv
+
+# Load biến môi trường từ backend/.env
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = int(os.getenv("DB_PORT", "3306"))
+DB_USER = os.getenv("DB_USER", "root")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_NAME = os.getenv("DB_NAME", "defaultdb")
+DB_SSL_CA = os.getenv("DB_SSL_CA", "ca.pem")
+
+DB_USE_SSL = os.getenv("DB_USE_SSL", "1") == "1"
+
+if DB_USE_SSL:
+    SSL_CTX = ssl.create_default_context(cafile=DB_SSL_CA)
+    SSL_CTX.check_hostname = False
+    SSL_CTX.verify_mode = ssl.CERT_NONE
+    connect_kwargs = {"ssl": SSL_CTX}
+else:
+    connect_kwargs = {}
 
 conn = pymysql.connect(
-
+    host=DB_HOST,
+    port=DB_PORT,
+    user=DB_USER,
+    password=DB_PASSWORD,
+    database=DB_NAME,
+    **connect_kwargs,
+    charset="utf8mb4",
 )
+
 cur = conn.cursor()
 
 

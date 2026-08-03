@@ -558,7 +558,7 @@ export default function AIReadingScreen({ navigation }) {
             <Text style={styles.quickNavText}>Home</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.quickNavBtn} onPress={() => navigation.navigate('PracticeScreen')}>
+          <TouchableOpacity style={styles.quickNavBtn} onPress={() => navigation.navigate('FlashcardScreen')}>
             <Ionicons name="albums" size={20} color="#919191" />
             <Text style={styles.quickNavText}>Cards</Text>
           </TouchableOpacity>

@@ -5,7 +5,6 @@ import ProfileScreen from './Screens/ProfileScreen';
 import SettingsScreen from './Screens/SettingScreen';
 import NotificationScreen from './Screens/NotificationScreen';
 import WordlistScreen from './Screens/WordlistScreen';
-import PracticeScreen from './Screens/PracticeScreen';
 import FlashcardScreen from './Screens/FlashcardScreen';
 import AIReadingScreen from './Screens/AIReadingScreen';
 import VocabQuizScreen from './Screens/VocabQuizScreen';
@@ -32,7 +31,6 @@ export default function App() {
           <Stack.Screen name="Notifications" component={NotificationScreen} />
           <Stack.Screen name="WordlistScreen" component={WordlistScreen} />
           <Stack.Screen name="FlashcardScreen" component={FlashcardScreen} />
-          <Stack.Screen name="PracticeScreen" component={PracticeScreen} />
           <Stack.Screen name="AIReadingScreen" component={AIReadingScreen} />
           <Stack.Screen name="VocabQuizScreen" component={VocabQuizScreen} />
           <Stack.Screen name="QuizMultipleChoice" component={QuizMultipleChoice} />

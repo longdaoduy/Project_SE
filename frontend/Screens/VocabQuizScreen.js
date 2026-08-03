@@ -9,12 +9,19 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useData } from '../context/DataContext';
 import { getUserStats } from '../api';
 
+const TOPICS_PER_PAGE = 5;
+
 export default function VocabQuizScreen({ navigation }) {
   const { userId, topics, topicsLoading, loadTopics } = useData();
 
   const [selectedTopic,  setSelectedTopic]  = useState(null);
   const [selectedMode,   setSelectedMode]   = useState('mc');
   const [viewState,      setViewState]      = useState('select_deck'); // 'select_deck' | 'select_mode'
+
+  // Topic list paging / collapse (same pattern as FlashcardScreen)
+  const [topicsExpanded,      setTopicsExpanded]      = useState(true);
+  const [visibleTopicsCount,  setVisibleTopicsCount]  = useState(TOPICS_PER_PAGE);
+  const visibleTopics = topics.slice(0, visibleTopicsCount);
 
   const [userStats,      setUserStats]      = useState(null);
   const [statsLoading,   setStatsLoading]   = useState(true);
@@ -130,7 +137,20 @@ export default function VocabQuizScreen({ navigation }) {
 
               {/* Topic list */}
               <View style={styles.sectionBlock}>
-                <Text style={styles.sectionTitle}>Choose a Topic</Text>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.sectionTitle}>Choose a Topic</Text>
+                  <TouchableOpacity
+                    style={styles.sectionToggleBtn}
+                    activeOpacity={0.7}
+                    onPress={() => setTopicsExpanded((prev) => !prev)}
+                  >
+                    <Ionicons
+                      name={topicsExpanded ? 'chevron-up' : 'chevron-down'}
+                      size={18}
+                      color="#16A487"
+                    />
+                  </TouchableOpacity>
+                </View>
 
                 {topicsLoading ? (
                   <ActivityIndicator size="large" color="#16A487" style={{ marginTop: 20 }} />
@@ -140,26 +160,41 @@ export default function VocabQuizScreen({ navigation }) {
                     <Text style={styles.emptyText}>No topics available</Text>
                     <Text style={styles.emptySubText}>Start the backend and seed the database</Text>
                   </View>
-                ) : (
-                  topics.map((topic) => (
-                    <TouchableOpacity
-                      key={topic.topic_id}
-                      style={[
-                        styles.deckCard,
-                        selectedTopic?.topic_id === topic.topic_id && styles.deckCardActive,
-                      ]}
-                      onPress={() => handleSelectTopic(topic)}
-                    >
-                      <View style={styles.deckCardLeft}>
-                        <View style={[styles.deckIcon, { backgroundColor: '#E3D5FF' }]}>
-                          <Ionicons name="clipboard-outline" size={20} color="#5500FF" />
+                ) : topicsExpanded ? (
+                  <>
+                    {visibleTopics.map((topic) => (
+                      <TouchableOpacity
+                        key={topic.topic_id}
+                        style={[
+                          styles.deckCard,
+                          selectedTopic?.topic_id === topic.topic_id && styles.deckCardActive,
+                        ]}
+                        onPress={() => handleSelectTopic(topic)}
+                      >
+                        <View style={styles.deckCardLeft}>
+                          <View style={[styles.deckIcon, { backgroundColor: '#E3D5FF' }]}>
+                            <Ionicons name="clipboard-outline" size={20} color="#5500FF" />
+                          </View>
+                          <Text style={styles.deckTitle}>{topic.topic_name}</Text>
                         </View>
-                        <Text style={styles.deckTitle}>{topic.topic_name}</Text>
-                      </View>
-                      <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
-                    </TouchableOpacity>
-                  ))
-                )}
+                        <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+                      </TouchableOpacity>
+                    ))}
+
+                    {topics.length > visibleTopics.length && (
+                      <TouchableOpacity
+                        style={styles.showMoreBtn}
+                        activeOpacity={0.8}
+                        onPress={() => setVisibleTopicsCount((prev) => prev + TOPICS_PER_PAGE)}
+                      >
+                        <Ionicons name="chevron-down" size={16} color="#16A487" />
+                        <Text style={styles.showMoreText}>
+                          Show more ({topics.length - visibleTopics.length} remaining)
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </>
+                ) : null}
               </View>
             </View>
           </ScrollView>
@@ -251,7 +286,11 @@ const styles = StyleSheet.create({
   statsValue: { fontSize: 16, fontWeight: '700', color: '#1e293b' },
   statsLabel: { fontSize: 12, color: '#64748b', marginTop: 2 },
   sectionBlock: { width: '100%', marginTop: 20 },
+  sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: '#334155', marginBottom: 12 },
+  sectionToggleBtn: { width: 32, height: 32, borderRadius: 12, backgroundColor: '#d9f5ef', alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  showMoreBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#ffffff', paddingVertical: 12, borderRadius: 16, borderWidth: 1.5, borderColor: '#99e3d5', gap: 6, marginTop: 2 },
+  showMoreText: { fontSize: 14, fontWeight: '700', color: '#16A487' },
   emptyContainer: { alignItems: 'center', paddingVertical: 30, backgroundColor: '#ffffff', borderRadius: 16, width: '100%' },
   emptyText: { fontSize: 16, fontWeight: '700', color: '#64748b', marginTop: 12 },
   emptySubText: { fontSize: 13, color: '#94a3b8', marginTop: 4 },

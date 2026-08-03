@@ -141,7 +141,7 @@ export default function HomeScreen({ navigation }) {
                             </TouchableOpacity>
 
                             {/* Nút Flashcards */}
-                            <TouchableOpacity style={styles.practiceButton} onPress={() => navigation.navigate('PracticeScreen')} activeOpacity={0.8}>
+                            <TouchableOpacity style={styles.practiceButton} onPress={() => navigation.navigate('FlashcardScreen')} activeOpacity={0.8}>
                                 <View style={styles.buttonContentWrapper}>
                                     <View style={[styles.iconCircle, { backgroundColor: '#e6f9f3' }]}>
                                         <Image source={require('../assets/flashcard.png')} style={styles.buttonIcon} />
@@ -186,7 +186,7 @@ export default function HomeScreen({ navigation }) {
                     </TouchableOpacity>
 
                     {/*Nút card */}
-                    <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('PracticeScreen')}>
+                    <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('FlashcardScreen')}>
                         <Ionicons name="albums" size={20} color="#919191" opacity={0.6} />
                         <Text style={{ fontSize: 12, color: '#919191', marginTop: 4 }}>Cards</Text>
                     </TouchableOpacity>

@@ -5,3 +5,6 @@ pymysql
 python-dotenv
 streamlit
 requests
+email-validator
+pydantic[email]
+cryptography

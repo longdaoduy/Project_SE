@@ -9,3 +9,15 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+
+# Environment secrets – only commit .env.example, never .env
+*.env
+.env
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# SSL cert (contains connection info)
+ca.pem
+backend/ca.pem
