@@ -1,7 +1,7 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, TextInput, View, StatusBar, Platform,
-  TouchableOpacity, ScrollView, Image, ActivityIndicator, Alert,
+  TouchableOpacity, ScrollView, Image, ActivityIndicator, Alert, Animated
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -11,6 +11,7 @@ import {
   createFlashcardSession, completeFlashcardSession,
   createFlashcardProgress, updateFlashcardProgress,
 } from '../api';
+import * as Speech from 'expo-speech';
 
 const CARDS_PER_SESSION = 15;
 const TOPICS_PER_PAGE = 5;
@@ -21,32 +22,39 @@ export default function FlashcardScreen({ navigation }) {
   // ── Screen navigation state ─────────────────────────────────────────────────
   // viewState: 'select' (choose deck / list) | 'add' (create deck form)
   // phase:     'select' | 'study' | 'done'
-  const [viewState,      setViewState]      = useState('select');
-  const [phase,          setPhase]          = useState('select');
-  const [selectedTopic,  setSelectedTopic]  = useState(null);
+  const [viewState, setViewState] = useState('select');
+  const [phase, setPhase] = useState('select');
+  const [selectedTopic, setSelectedTopic] = useState(null);
   const [selectedLocalDeck, setSelectedLocalDeck] = useState(null);
 
   // ── Deck search / filter (for user-created decks) ───────────────────────────
-  const [searchQuery,       setSearchQuery]       = useState('');
-  const [selectedFilter,    setSelectedFilter]    = useState('All');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedFilter, setSelectedFilter] = useState('All');
   const [visibleTopicsCount, setVisibleTopicsCount] = useState(TOPICS_PER_PAGE);
-  const [topicsExpanded,    setTopicsExpanded]    = useState(true);
+  const [topicsExpanded, setTopicsExpanded] = useState(true);
 
   // ── Add-deck form state ─────────────────────────────────────────────────────
-  const [deckTitle,       setDeckTitle]       = useState('');
-  const [description,     setDescription]     = useState('');
+  const [deckTitle, setDeckTitle] = useState('');
+  const [description, setDescription] = useState('');
   const [showDescription, setShowDescription] = useState(false);
-  const [termRows,        setTermRows]        = useState([{ id: 1, term: '', definition: '' }]);
+  const [termRows, setTermRows] = useState([{ id: 1, term: '', definition: '' }]);
 
   // ── Flashcard session state ─────────────────────────────────────────────────
-  const [cards,         setCards]         = useState([]);
-  const [progressIds,   setProgressIds]   = useState({}); // word_id → progress_id
-  const [sessionId,     setSessionId]     = useState(null);
-  const [currentIndex,  setCurrentIndex]  = useState(0);
-  const [showMeaning,   setShowMeaning]   = useState(false);
-  const [ratings,       setRatings]       = useState({}); // word_id → rating
-  const [loading,       setLoading]       = useState(false);
-  const [error,         setError]         = useState('');
+  const [cards, setCards] = useState([]);
+  const [progressIds, setProgressIds] = useState({}); // word_id → progress_id
+  const [sessionId, setSessionId] = useState(null);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [showMeaning, setShowMeaning] = useState(false);
+  const [ratings, setRatings] = useState({}); // word_id → rating
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  // ── Hiệu ứng lật thẻ 3D ───────────────────────────────────────────────────
+  const flipAnim = useRef(new Animated.Value(0)).current;
+  const flipInterpolate = flipAnim.interpolate({
+    inputRange: [0, 90],
+    outputRange: ['0deg', '90deg']
+  });
 
   useEffect(() => {
     if (topics.length === 0) loadTopics();
@@ -166,14 +174,14 @@ export default function FlashcardScreen({ navigation }) {
   // ── Start local session (user-created deck) ─────────────────────────────────
   const startLocalSession = useCallback((deck) => {
     const words = (deck.terms || []).map((t, i) => ({
-      word_id:       `local-${deck.id}-${i}`,
-      word:          t.term,
-      meaning_vi:    t.definition,
+      word_id: `local-${deck.id}-${i}`,
+      word: t.term,
+      meaning_vi: t.definition,
       part_of_speech: '',
-      phonetic:      '',
-      example_en:    '',
-      example_vi:    '',
-      topic_id:      null,
+      phonetic: '',
+      example_en: '',
+      example_vi: '',
+      topic_id: null,
     }));
     if (!words.length) {
       Alert.alert('Empty Deck', 'This deck has no terms yet.');
@@ -191,21 +199,40 @@ export default function FlashcardScreen({ navigation }) {
   }, []);
 
   // ── Flip card ────────────────────────────────────────────────────────────────
+  // ── Flip card (Có hiệu ứng) ──────────────────────────────────────────────────
   const handleFlip = useCallback(async () => {
     if (showMeaning) return;
-    setShowMeaning(true);
+
+    // Bước 1: Xoay thẻ 90 độ (úp thẻ xuống)
+    Animated.timing(flipAnim, {
+      toValue: 90,
+      duration: 150,
+      useNativeDriver: true,
+    }).start(() => {
+      // Bước 2: Khi thẻ đang ngang (không nhìn thấy), đổi nội dung
+      setShowMeaning(true);
+
+      // Bước 3: Xoay thẻ trở về 0 độ (ngửa mặt sau lên)
+      Animated.timing(flipAnim, {
+        toValue: 0,
+        duration: 150,
+        useNativeDriver: true,
+      }).start();
+    });
+
+    // Code gọi API lưu tiến độ (giữ nguyên của bạn)
     const card = cards[currentIndex];
-    const pid  = progressIds[card.word_id];
+    const pid = progressIds[card.word_id];
     if (pid) {
       try { await updateFlashcardProgress(pid, { is_flipped: true }); }
       catch (e) { console.warn('flip progress:', e.message); }
     }
-  }, [showMeaning, cards, currentIndex, progressIds]);
+  }, [showMeaning, cards, currentIndex, progressIds, flipAnim]);
 
   // ── Rate & advance ───────────────────────────────────────────────────────────
   const handleRate = useCallback(async (rating) => {
     const card = cards[currentIndex];
-    const pid  = progressIds[card.word_id];
+    const pid = progressIds[card.word_id];
     const newRatings = { ...ratings, [card.word_id]: rating };
     setRatings(newRatings);
 
@@ -231,6 +258,13 @@ export default function FlashcardScreen({ navigation }) {
     else if (selectedTopic) startSession(selectedTopic);
   };
 
+  // ── Phát âm từ vựng (Text-to-Speech) ─────────────────────────────────────────
+  const handleSpeak = useCallback((textToSpeak) => {
+    Speech.speak(textToSpeak, {
+      language: 'en-US', // Giọng Anh-Mỹ
+      rate: 0.9,         // Đọc chậm lại một xíu cho dễ nghe
+    });
+  }, []);
   // ── Progress metrics ─────────────────────────────────────────────────────────
   const reviewed = currentIndex;
   const remaining = cards.length - currentIndex;
@@ -547,10 +581,10 @@ export default function FlashcardScreen({ navigation }) {
 
   // ══ DONE VIEW (phase = 'done') ═══════════════════════════════════════════════
   if (phase === 'done') {
-    const again  = Object.values(ratings).filter(r => r === 'again').length;
-    const hard   = Object.values(ratings).filter(r => r === 'hard').length;
-    const good   = Object.values(ratings).filter(r => r === 'good').length;
-    const easy   = Object.values(ratings).filter(r => r === 'easy').length;
+    const again = Object.values(ratings).filter(r => r === 'again').length;
+    const hard = Object.values(ratings).filter(r => r === 'hard').length;
+    const good = Object.values(ratings).filter(r => r === 'good').length;
+    const easy = Object.values(ratings).filter(r => r === 'easy').length;
 
     return (
       <View style={s.wrapper}>
@@ -576,10 +610,10 @@ export default function FlashcardScreen({ navigation }) {
 
             <View style={s.ratingRow}>
               {[
-                { label: 'Again', count: again,  color: '#ef4444', bg: '#fee2e2' },
-                { label: 'Hard',  count: hard,   color: '#f97316', bg: '#ffedd5' },
-                { label: 'Good',  count: good,   color: '#3b82f6', bg: '#dbeafe' },
-                { label: 'Easy',  count: easy,   color: '#22c55e', bg: '#dcfce7' },
+                { label: 'Again', count: again, color: '#ef4444', bg: '#fee2e2' },
+                { label: 'Hard', count: hard, color: '#f97316', bg: '#ffedd5' },
+                { label: 'Good', count: good, color: '#3b82f6', bg: '#dbeafe' },
+                { label: 'Easy', count: easy, color: '#22c55e', bg: '#dcfce7' },
               ].map((item) => (
                 <View key={item.label} style={[s.ratingCard, { backgroundColor: item.bg }]}>
                   <Text style={[s.ratingCount, { color: item.color }]}>{item.count}</Text>
@@ -653,7 +687,10 @@ export default function FlashcardScreen({ navigation }) {
         {/* Card area */}
         <View style={s.card}>
           <ScrollView contentContainerStyle={{ paddingBottom: 20 }} showsVerticalScrollIndicator={false}>
-            <View style={s.flashcard}>
+
+            {/* THAY ĐỔI QUAN TRỌNG NHẤT Ở DÒNG NÀY: View thành Animated.View */}
+            <Animated.View style={[s.flashcard, { transform: [{ perspective: 1000 }, { rotateY: flipInterpolate }] }]}>
+
               {/* Tags */}
               <View style={s.cardHeader}>
                 <View style={s.tags}>
@@ -670,10 +707,23 @@ export default function FlashcardScreen({ navigation }) {
               <Text style={s.mainWord}>{card.word}</Text>
 
               {/* Phonetic */}
+              {/* Phonetic */}
               <View style={s.phoneticRow}>
                 {card.phonetic ? (
                   <Text style={s.phoneticText}>/{card.phonetic}/</Text>
                 ) : null}
+
+                {/* NÚT LOA VỪA ĐƯỢC THÊM VÀO ĐÂY */}
+                <TouchableOpacity
+                  onPress={() => handleSpeak(card.word)}
+                  style={{ padding: 4, marginLeft: 2 }}
+                >
+                  <Ionicons name="volume-high" size={20} color="#5b65d6" />
+                </TouchableOpacity>
+
+                {/* Khoảng trống để đẩy Loại từ (pos) sang phải */}
+                <View style={{ flex: 1 }} />
+
                 {card.part_of_speech ? (
                   <Text style={s.pos}>{card.part_of_speech}</Text>
                 ) : null}
@@ -703,8 +753,7 @@ export default function FlashcardScreen({ navigation }) {
                   ) : null}
                 </View>
               )}
-            </View>
-
+            </Animated.View>
             {/* Action row */}
             {!showMeaning ? (
               <View style={[s.actionRow, s.actionRowCentered]}>
@@ -729,9 +778,9 @@ export default function FlashcardScreen({ navigation }) {
               <View style={s.ratingButtons}>
                 {[
                   { key: 'again', label: 'Again', color: '#ef4444', bg: '#fee2e2' },
-                  { key: 'hard',  label: 'Hard',  color: '#f97316', bg: '#ffedd5' },
-                  { key: 'good',  label: 'Good',  color: '#3b82f6', bg: '#dbeafe' },
-                  { key: 'easy',  label: 'Easy',  color: '#22c55e', bg: '#dcfce7' },
+                  { key: 'hard', label: 'Hard', color: '#f97316', bg: '#ffedd5' },
+                  { key: 'good', label: 'Good', color: '#3b82f6', bg: '#dbeafe' },
+                  { key: 'easy', label: 'Easy', color: '#22c55e', bg: '#dcfce7' },
                 ].map((item) => (
                   <TouchableOpacity
                     key={item.key}
@@ -756,11 +805,11 @@ export default function FlashcardScreen({ navigation }) {
 // ── Shared bottom nav ─────────────────────────────────────────────────────────
 function BottomNav({ navigation, active }) {
   const items = [
-    { icon: 'home',             label: 'Home',    screen: 'Home'            },
-    { icon: 'albums',           label: 'Cards',   screen: 'FlashcardScreen' },
-    { icon: 'book',             label: 'Words',   screen: 'WordlistScreen'  },
-    { icon: 'sparkles',         label: 'Reading', screen: 'AIReadingScreen' },
-    { icon: 'checkmark-circle', label: 'Quiz',    screen: 'VocabQuizScreen' },
+    { icon: 'home', label: 'Home', screen: 'Home' },
+    { icon: 'albums', label: 'Cards', screen: 'FlashcardScreen' },
+    { icon: 'book', label: 'Words', screen: 'WordlistScreen' },
+    { icon: 'sparkles', label: 'Reading', screen: 'AIReadingScreen' },
+    { icon: 'checkmark-circle', label: 'Quiz', screen: 'VocabQuizScreen' },
   ];
   return (
     <View style={s.bottomNav}>
@@ -783,8 +832,8 @@ function BottomNav({ navigation, active }) {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  wrapper:      { flex: 1, backgroundColor: Platform.OS === 'web' ? '#f0f2f5' : 'transparent', justifyContent: 'center', alignItems: 'center' },
-  phone:        { width: Platform.OS === 'web' ? 400 : '100%', height: Platform.OS === 'web' ? 800 : '100%', borderRadius: Platform.OS === 'web' ? 35 : 0, overflow: 'hidden' },
+  wrapper: { flex: 1, backgroundColor: Platform.OS === 'web' ? '#f0f2f5' : 'transparent', justifyContent: 'center', alignItems: 'center' },
+  phone: { width: Platform.OS === 'web' ? 400 : '100%', height: Platform.OS === 'web' ? 800 : '100%', borderRadius: Platform.OS === 'web' ? 35 : 0, overflow: 'hidden' },
 
   // Header (left-aligned, consistent with other feature screens)
   headerSection: { flexDirection: 'column', alignItems: 'stretch', width: '100%', paddingTop: Platform.OS === 'ios' ? 60 : 40, paddingHorizontal: 20, paddingBottom: 16 },
@@ -807,28 +856,28 @@ const s = StyleSheet.create({
   addIconButton: { width: 32, height: 32, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.15)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' },
 
   // Session header (study/done)
-  header:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: Platform.OS === 'ios' ? 60 : 40, paddingHorizontal: 20, paddingBottom: 12 },
-  iconBtn:      { width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.15)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' },
-  headerSub:    { color: '#cbd5e1', fontSize: 11, fontWeight: '600', letterSpacing: 0.5 },
-  headerTitle:  { fontSize: 16, fontWeight: '700', color: '#ffffff', marginTop: 2 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: Platform.OS === 'ios' ? 60 : 40, paddingHorizontal: 20, paddingBottom: 12 },
+  iconBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.15)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' },
+  headerSub: { color: '#cbd5e1', fontSize: 11, fontWeight: '600', letterSpacing: 0.5 },
+  headerTitle: { fontSize: 16, fontWeight: '700', color: '#ffffff', marginTop: 2 },
   progressSection: { paddingHorizontal: 24, marginBottom: 14 },
-  progressRow:  { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-  progressLabel:{ color: '#ffffff', fontSize: 12, fontWeight: '500' },
-  progressBg:   { height: 6, backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 3, overflow: 'hidden' },
+  progressRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+  progressLabel: { color: '#ffffff', fontSize: 12, fontWeight: '500' },
+  progressBg: { height: 6, backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: 6, backgroundColor: '#fbbf24', borderRadius: 3 },
-  pillsRow:     { flexDirection: 'row', justifyContent: 'center', gap: 10, marginBottom: 8, paddingHorizontal: 20 },
-  pill:         { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ffffff', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, gap: 5 },
-  pillText:     { fontSize: 12, color: '#1e293b' },
-  card:         { flex: 1, backgroundColor: '#F0F2FF', width: '100%', paddingHorizontal: 20, paddingTop: 16 },
+  pillsRow: { flexDirection: 'row', justifyContent: 'center', gap: 10, marginBottom: 8, paddingHorizontal: 20 },
+  pill: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ffffff', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, gap: 5 },
+  pillText: { fontSize: 12, color: '#1e293b' },
+  card: { flex: 1, backgroundColor: '#F0F2FF', width: '100%', paddingHorizontal: 20, paddingTop: 16 },
   scrollContainer: { flexGrow: 1 },
   sectionTitle: { fontSize: 18, fontWeight: '700', color: '#1e293b', marginBottom: 12, marginTop: 4 },
-  emptyBox:     { alignItems: 'center', paddingVertical: 24, backgroundColor: '#ffffff', borderRadius: 16, marginBottom: 12 },
-  emptyText:    { fontSize: 16, fontWeight: '600', color: '#64748b', marginTop: 10 },
+  emptyBox: { alignItems: 'center', paddingVertical: 24, backgroundColor: '#ffffff', borderRadius: 16, marginBottom: 12 },
+  emptyText: { fontSize: 16, fontWeight: '600', color: '#64748b', marginTop: 10 },
   emptySubText: { fontSize: 13, color: '#94a3b8', marginTop: 4 },
-  topicRow:     { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ffffff', padding: 14, borderRadius: 16, marginBottom: 10, borderWidth: 1.5, borderColor: '#e2e8f0' },
-  topicIcon:    { width: 36, height: 36, borderRadius: 10, backgroundColor: '#ede9fe', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  topicName:    { flex: 1, fontSize: 14, fontWeight: '600', color: '#1e293b' },
-  showMoreBtn:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#ffffff', paddingVertical: 12, borderRadius: 16, borderWidth: 1.5, borderColor: '#c7d2fe', gap: 6, marginTop: 2 },
+  topicRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ffffff', padding: 14, borderRadius: 16, marginBottom: 10, borderWidth: 1.5, borderColor: '#e2e8f0' },
+  topicIcon: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#ede9fe', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  topicName: { flex: 1, fontSize: 14, fontWeight: '600', color: '#1e293b' },
+  showMoreBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#ffffff', paddingVertical: 12, borderRadius: 16, borderWidth: 1.5, borderColor: '#c7d2fe', gap: 6, marginTop: 2 },
   showMoreText: { fontSize: 14, fontWeight: '700', color: '#5b65d6' },
 
   // Filters (user-created decks)
@@ -856,47 +905,47 @@ const s = StyleSheet.create({
   startButtonText: { color: '#ffffff', fontSize: 14, fontWeight: '700' },
 
   // Flashcard
-  flashcard:    { backgroundColor: '#ffffff', borderRadius: 24, padding: 22, marginBottom: 16 },
-  cardHeader:   { marginBottom: 14 },
-  tags:         { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  tag:          { paddingVertical: 3, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: '#93c5fd' },
-  tagText:      { fontSize: 10, color: '#2563eb', fontWeight: '600' },
-  mainWord:     { fontSize: 32, fontWeight: '800', color: '#0f172a', marginBottom: 8 },
-  phoneticRow:  { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 },
+  flashcard: { backgroundColor: '#ffffff', borderRadius: 24, padding: 22, marginBottom: 16 },
+  cardHeader: { marginBottom: 14 },
+  tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  tag: { paddingVertical: 3, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: '#93c5fd' },
+  tagText: { fontSize: 10, color: '#2563eb', fontWeight: '600' },
+  mainWord: { fontSize: 32, fontWeight: '800', color: '#0f172a', marginBottom: 8 },
+  phoneticRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 },
   phoneticText: { fontSize: 15, color: '#475569' },
-  pos:          { fontSize: 13, color: '#64748b', fontStyle: 'italic' },
-  divider:      { height: 1, backgroundColor: '#e2e8f0', marginVertical: 16 },
-  hiddenBox:    { alignItems: 'center', paddingVertical: 24, gap: 8 },
-  hintText:     { color: '#94a3b8', fontSize: 14 },
-  meaningBox:   { backgroundColor: '#e0f2fe', padding: 14, borderRadius: 14, marginBottom: 14 },
-  meaningText:  { fontSize: 15, color: '#0f172a', lineHeight: 22 },
-  exampleBox:   { paddingHorizontal: 2 },
-  exLabel:      { fontSize: 13, color: '#3b82f6', fontWeight: '700', marginBottom: 4 },
-  exText:       { fontSize: 14, color: '#475569', fontStyle: 'italic', lineHeight: 20 },
-  exViText:     { fontSize: 13, color: '#64748b', marginTop: 4, lineHeight: 18 },
+  pos: { fontSize: 13, color: '#64748b', fontStyle: 'italic' },
+  divider: { height: 1, backgroundColor: '#e2e8f0', marginVertical: 16 },
+  hiddenBox: { alignItems: 'center', paddingVertical: 24, gap: 8 },
+  hintText: { color: '#94a3b8', fontSize: 14 },
+  meaningBox: { backgroundColor: '#e0f2fe', padding: 14, borderRadius: 14, marginBottom: 14 },
+  meaningText: { fontSize: 15, color: '#0f172a', lineHeight: 22 },
+  exampleBox: { paddingHorizontal: 2 },
+  exLabel: { fontSize: 13, color: '#3b82f6', fontWeight: '700', marginBottom: 4 },
+  exText: { fontSize: 14, color: '#475569', fontStyle: 'italic', lineHeight: 20 },
+  exViText: { fontSize: 13, color: '#64748b', marginTop: 4, lineHeight: 18 },
 
   // Action row (study view: centered actions; add-deck view: spaced rows)
-  actionRow:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingVertical: 8 },
+  actionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingVertical: 8 },
   actionRowCentered: { justifyContent: 'center', gap: 20 },
-  actionBtn:    { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 8 },
-  actionText:   { fontSize: 14, fontWeight: '600', color: '#5b65d6' },
-  vDivider:     { width: 1, height: 16, backgroundColor: '#cbd5e1' },
-  ratingButtons:{ flexDirection: 'row', gap: 8, marginTop: 12, marginBottom: 8 },
-  rateBtn:      { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: 14, gap: 5 },
-  rateDot:      { width: 8, height: 8, borderRadius: 4 },
-  rateLabel:    { fontSize: 12, fontWeight: '700' },
+  actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 8 },
+  actionText: { fontSize: 14, fontWeight: '600', color: '#5b65d6' },
+  vDivider: { width: 1, height: 16, backgroundColor: '#cbd5e1' },
+  ratingButtons: { flexDirection: 'row', gap: 8, marginTop: 12, marginBottom: 8 },
+  rateBtn: { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: 14, gap: 5 },
+  rateDot: { width: 8, height: 8, borderRadius: 4 },
+  rateLabel: { fontSize: 12, fontWeight: '700' },
 
   // Done screen
-  doneCircle:   { alignItems: 'center', marginBottom: 12 },
-  doneTitle:    { fontSize: 22, fontWeight: '800', color: '#1e293b', textAlign: 'center' },
-  doneSub:      { fontSize: 14, color: '#64748b', textAlign: 'center', marginBottom: 20 },
-  ratingRow:    { flexDirection: 'row', gap: 8, width: '100%', marginBottom: 24 },
-  ratingCard:   { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: 14 },
-  ratingCount:  { fontSize: 20, fontWeight: '800' },
-  ratingLabel:  { fontSize: 12, fontWeight: '600', marginTop: 2 },
-  restartBtn:   { flexDirection: 'row', backgroundColor: '#5b65d6', paddingVertical: 15, borderRadius: 16, alignItems: 'center', justifyContent: 'center', width: '100%', marginBottom: 12 },
-  restartText:  { color: '#ffffff', fontSize: 15, fontWeight: '700' },
-  backLink:     { alignItems: 'center', paddingVertical: 8 },
+  doneCircle: { alignItems: 'center', marginBottom: 12 },
+  doneTitle: { fontSize: 22, fontWeight: '800', color: '#1e293b', textAlign: 'center' },
+  doneSub: { fontSize: 14, color: '#64748b', textAlign: 'center', marginBottom: 20 },
+  ratingRow: { flexDirection: 'row', gap: 8, width: '100%', marginBottom: 24 },
+  ratingCard: { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: 14 },
+  ratingCount: { fontSize: 20, fontWeight: '800' },
+  ratingLabel: { fontSize: 12, fontWeight: '600', marginTop: 2 },
+  restartBtn: { flexDirection: 'row', backgroundColor: '#5b65d6', paddingVertical: 15, borderRadius: 16, alignItems: 'center', justifyContent: 'center', width: '100%', marginBottom: 12 },
+  restartText: { color: '#ffffff', fontSize: 15, fontWeight: '700' },
+  backLink: { alignItems: 'center', paddingVertical: 8 },
   backLinkText: { color: '#5b65d6', fontWeight: '600', fontSize: 14 },
 
   // Add-deck form
@@ -921,7 +970,7 @@ const s = StyleSheet.create({
   fabAddTerm: { position: 'absolute', right: 20, bottom: 24, width: 56, height: 56, borderRadius: 28, backgroundColor: '#5C5CFF', alignItems: 'center', justifyContent: 'center', shadowColor: '#5C5CFF', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 6 },
 
   // Bottom nav
-  bottomNav:    { backgroundColor: '#ffffff', flexDirection: 'row', width: '100%' },
-  navItem:      { flex: 1, alignItems: 'center', paddingVertical: 12 },
-  navLabel:     { fontSize: 11, color: '#919191', marginTop: 3 },
+  bottomNav: { backgroundColor: '#ffffff', flexDirection: 'row', width: '100%' },
+  navItem: { flex: 1, alignItems: 'center', paddingVertical: 12 },
+  navLabel: { fontSize: 11, color: '#919191', marginTop: 3 },
 });
