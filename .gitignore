@@ -1,5 +1,6 @@
 # VS Code
 .vscode/
+.venv/
 .history/
 *.code-workspace
 
