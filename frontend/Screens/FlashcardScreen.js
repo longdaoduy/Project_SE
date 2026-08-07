@@ -654,7 +654,9 @@ export default function FlashcardScreen({ navigation }) {
             <Text style={s.headerSub}>{selectedTopic?.topic_name?.toUpperCase()}</Text>
             <Text style={s.headerTitle}>Session</Text>
           </View>
-          <View style={s.iconBtn} />
+          <TouchableOpacity style={s.addIconButton}>
+            <Ionicons name="settings-outline" size={20} color="#ffffff" />
+          </TouchableOpacity>
         </View>
 
         {/* Progress bar */}
