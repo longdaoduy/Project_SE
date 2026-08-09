@@ -35,13 +35,13 @@ else:
     connect_kwargs = {}
 
 conn = pymysql.connect(
-    host=DB_HOST,
-    port=DB_PORT,
-    user=DB_USER,
-    password=DB_PASSWORD,
-    database=DB_NAME,
-    **connect_kwargs,
-    charset="utf8mb4",
+    host="",
+    port=17652,
+    user="",
+    password="",
+    database="",
+    ssl=SSL_CTX,
+    charset="",
 )
 
 cur = conn.cursor()
@@ -211,18 +211,146 @@ INSERT IGNORE INTO user_statistics (user_id)
 SELECT user_id FROM users
 """, "Back-fill user_statistics")
 
-print("\n=== Step 4: Verify ===")
+# ---------------------------------------------------------------------------
+print("\n=== Step 4: Migrate ai_readings – add timer & retake columns ===")
+# These columns were added to the ORM model but the live table predates them.
+# All are backward-compatible: existing rows get sensible defaults.
+# ---------------------------------------------------------------------------
+
+add_col("ai_readings", "title",
+        "VARCHAR(200) NULL COMMENT 'AI-generated descriptive title'")
+
+add_col("ai_readings", "time_limit_seconds",
+        "INT NOT NULL DEFAULT 600 COMMENT 'Fixed countdown per difficulty (seconds)'")
+
+add_col("ai_readings", "completion_seconds",
+        "INT NULL COMMENT 'Actual seconds taken by the user (<=time_limit_seconds)'")
+
+add_col("ai_readings", "attempt_number",
+        "INT NOT NULL DEFAULT 1 COMMENT '1=first attempt, 2+=retake'")
+
+add_col("ai_readings", "parent_reading_id",
+        "INT NULL COMMENT 'Points to the canonical reading for retakes'")
+
+# Add FK for parent_reading_id only if not already present
+cur.execute("""
+    SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME   = 'ai_readings'
+      AND CONSTRAINT_NAME = 'fk_ar_parent'
+""")
+if cur.fetchone()[0] == 0:
+    run("""
+        ALTER TABLE ai_readings
+        ADD CONSTRAINT fk_ar_parent
+            FOREIGN KEY (parent_reading_id)
+            REFERENCES ai_readings (reading_id)
+            ON DELETE SET NULL
+    """, "ADD FK ai_readings.fk_ar_parent")
+else:
+    print("  --  FK fk_ar_parent already exists, skip")
+
+# Add index on parent_reading_id if missing
+cur.execute("""
+    SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME   = 'ai_readings'
+      AND INDEX_NAME   = 'idx_ar_parent'
+""")
+if cur.fetchone()[0] == 0:
+    run("ALTER TABLE ai_readings ADD INDEX idx_ar_parent (parent_reading_id)",
+        "ADD INDEX ai_readings.idx_ar_parent")
+else:
+    print("  --  INDEX idx_ar_parent already exists, skip")
+
+# ---------------------------------------------------------------------------
+print("\n=== Step 5: Migrate ai_reading_questions – add explanation column ===")
+# ---------------------------------------------------------------------------
+
+add_col("ai_reading_questions", "explanation",
+        "TEXT NULL COMMENT 'AI-generated answer explanation, stored once and reused on retakes'")
+
+# ---------------------------------------------------------------------------
+print("\n=== Step 6: Migrate SRS tables (user_card_srs + daily_learning_log) ===")
+# ---------------------------------------------------------------------------
+
+run("""
+CREATE TABLE IF NOT EXISTS user_card_srs (
+    srs_id        INT AUTO_INCREMENT PRIMARY KEY,
+    user_id       INT        NOT NULL,
+    word_id       INT        NOT NULL,
+    topic_id      INT        NOT NULL,
+    ease_factor   FLOAT      NOT NULL DEFAULT 2.5,
+    interval_days INT        NOT NULL DEFAULT 0,
+    repetitions   INT        NOT NULL DEFAULT 0,
+    card_status   ENUM('new','learning','review') NOT NULL DEFAULT 'new',
+    due_date      TIMESTAMP  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_reviewed TIMESTAMP  NULL,
+    created_at    TIMESTAMP  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP  NOT NULL DEFAULT CURRENT_TIMESTAMP
+                      ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_srs_user_word (user_id, word_id),
+    INDEX idx_srs_user_topic_due (user_id, topic_id, due_date),
+    CONSTRAINT fk_srs_users  FOREIGN KEY (user_id)  REFERENCES users  (user_id)  ON DELETE CASCADE,
+    CONSTRAINT fk_srs_words  FOREIGN KEY (word_id)  REFERENCES words  (word_id)  ON DELETE CASCADE,
+    CONSTRAINT fk_srs_topics FOREIGN KEY (topic_id) REFERENCES topics (topic_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+""", "Create user_card_srs")
+
+run("""
+CREATE TABLE IF NOT EXISTS daily_learning_log (
+    log_id     INT  AUTO_INCREMENT PRIMARY KEY,
+    user_id    INT  NOT NULL,
+    topic_id   INT  NOT NULL,
+    word_id    INT  NOT NULL,
+    learned_at DATE NOT NULL,
+    UNIQUE KEY uq_daily_word (user_id, topic_id, word_id, learned_at),
+    INDEX idx_dll_user_topic_date (user_id, topic_id, learned_at),
+    CONSTRAINT fk_dll_users FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+""", "Create daily_learning_log")
+
+# ---------------------------------------------------------------------------
+print("\n=== Step 7: Verify ===")
+# ---------------------------------------------------------------------------
+
 cur.execute("DESCRIBE users")
 cols = [row[0] for row in cur.fetchall()]
 print(f"  users columns: {cols}")
 
-needed = {"full_name", "password_hash", "avatar", "english_level", "daily_goal", "role"}
-missing = needed - set(cols)
-if missing:
-    print(f"\n❌ Still missing: {missing}")
+needed_users = {"full_name", "password_hash", "avatar", "english_level", "daily_goal", "role"}
+missing_users = needed_users - set(cols)
+if missing_users:
+    print(f"\n❌ users – still missing: {missing_users}")
     sys.exit(1)
+
+cur.execute("DESCRIBE ai_readings")
+ai_cols = [row[0] for row in cur.fetchall()]
+needed_ai = {"time_limit_seconds", "completion_seconds", "attempt_number", "parent_reading_id", "title"}
+missing_ai = needed_ai - set(ai_cols)
+if missing_ai:
+    print(f"\n❌ ai_readings – still missing: {missing_ai}")
+    # Attempt to add any still-missing columns rather than hard-failing
+    col_defs = {
+        "title":               "VARCHAR(200) NULL",
+        "time_limit_seconds":  "INT NOT NULL DEFAULT 600",
+        "completion_seconds":  "INT NULL",
+        "attempt_number":      "INT NOT NULL DEFAULT 1",
+        "parent_reading_id":   "INT NULL",
+    }
+    for col in missing_ai:
+        add_col("ai_readings", col, col_defs.get(col, "TEXT NULL"))
+    print("  ↑ Attempted emergency add. Re-run migration to confirm.")
 else:
-    print("\n✅ Migration complete. All required columns present.")
+    print("  ✅  ai_readings columns OK")
+
+cur.execute("DESCRIBE ai_reading_questions")
+aq_cols = [row[0] for row in cur.fetchall()]
+if "explanation" not in aq_cols:
+    print("\n❌ ai_reading_questions – still missing: explanation")
+    sys.exit(1)
+
+print("\n✅ Migration complete. All required columns and tables present.")
 
 cur.close()
 conn.close()

@@ -73,6 +73,31 @@ export const createFlashcardProgress = (sessionId, wordId) =>
 export const updateFlashcardProgress = (progressId, payload) =>
   patch(`/flashcard-progress/${progressId}`, payload);
 
+// ─── SRS (Spaced Repetition System) ──────────────────────────────────────────
+
+/**
+ * Fetch the study queue for a topic:
+ * { review_cards, new_cards, daily_learned, daily_limit, daily_remaining }
+ * review_cards come first (already due), then new_cards (introduced today).
+ */
+export const getFlashcardQueue = (userId, topicId) =>
+  get('/flashcards/queue', { user_id: userId, topic_id: topicId });
+
+/**
+ * Submit a difficulty rating for one card.
+ * rating: 'again' | 'hard' | 'good' | 'easy'
+ * Returns updated SRS state: { srs_id, ease_factor, interval_days, due_date, … }
+ */
+export const submitSRSRating = (userId, wordId, topicId, rating) =>
+  post('/flashcards/srs-rating', { user_id: userId, word_id: wordId, topic_id: topicId, rating });
+
+/**
+ * Get today's learning status for a topic (used on the deck-select screen).
+ * Returns: { daily_learned, daily_limit, daily_remaining, due_review_count }
+ */
+export const getDailyStatus = (userId, topicId) =>
+  get('/flashcards/daily-status', { user_id: userId, topic_id: topicId });
+
 // ─── Users / Stats ────────────────────────────────────────────────────────────
 
 export const getUserStats = (userId) =>
@@ -201,6 +226,11 @@ export function buildFillQuestions(words, count) {
 
 // ─── AI Reading ───────────────────────────────────────────────────────────────
 
+/**
+ * Generate a new AI reading test.
+ * topic_param is optional – pass null and the AI picks context freely.
+ * difficulty_param: 'A1'|'A2'|'B1'|'B2'|'C1'|'C2' (also drives time_limit_seconds).
+ */
 export const generateAIReading = (userId, vocabulary, topicParam = null, difficultyParam = null) =>
   post('/ai-readings', {
     user_id:          userId,
@@ -215,11 +245,28 @@ export const getAIReading = (readingId) =>
 export const getUserAIReadings = (userId, limit = 20) =>
   get(`/users/${userId}/ai-readings`, { limit });
 
+/**
+ * Submit all answers at once with elapsed time.
+ * answers: { [question_id]: 'A'|'B'|'C'|'D' }
+ * completionSeconds: how many seconds elapsed (capped server-side at time_limit)
+ * This is called both on manual submit and on timer expiry.
+ */
+export const submitAIReading = (readingId, answers, completionSeconds = 0) =>
+  post(`/ai-readings/${readingId}/submit`, {
+    answers: answers,
+    completion_seconds: completionSeconds,
+  });
+
+/**
+ * Retake an existing test – same passage and questions, reset answers and timer.
+ * Returns a new AIReading object (different reading_id, same content).
+ */
+export const retakeAIReading = (readingId, userId) =>
+  post(`/ai-readings/${readingId}/retake`, { user_id: userId });
+
+// Legacy per-question answer (kept for backward compat but no longer used by AIReadingScreen)
 export const submitAIAnswer = (questionId, userAnswer) =>
   patch(`/ai-reading-questions/${questionId}/answer`, { user_answer: userAnswer });
-
-export const submitAIReading = (readingId) =>
-  post(`/ai-readings/${readingId}/submit`, {});
 
 // ─── Words (add to topic) ─────────────────────────────────────────────────────
 

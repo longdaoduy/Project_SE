@@ -10,10 +10,10 @@ Groups:
   FR8 – AI Reading   (AIReading, AIReadingQuestion)
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta, date
 
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from . import models, schemas
 
@@ -479,6 +479,245 @@ def list_starred_words(
     )
 
 
+# ── SRS – Spaced Repetition System ────────────────────────────────────────────
+
+DAILY_NEW_LIMIT = 15
+
+# SM-2 quality scores per button
+_QUALITY: dict[str, int] = {"again": 0, "hard": 1, "good": 3, "easy": 5}
+
+
+def _apply_srs(srs: models.UserCardSRS, rating: str) -> models.UserCardSRS:
+    """
+    Update SM-2 SRS parameters in-place.
+    Returns the same object (caller must commit).
+    """
+    now = datetime.now(timezone.utc)
+    q = _QUALITY[rating]
+
+    if rating == "again":
+        # Completely forgot → reset streak, show again in 10 minutes
+        srs.repetitions = 0
+        srs.interval_days = 0
+        srs.due_date = now + timedelta(minutes=10)
+        srs.card_status = "learning"
+
+    elif rating == "hard":
+        # Remembered with difficulty → small interval, ease penalty
+        srs.ease_factor = max(1.3, round(srs.ease_factor - 0.15, 4))
+        srs.repetitions = max(0, srs.repetitions - 1)
+        interval = max(1, int(srs.interval_days * 1.2) if srs.interval_days > 0 else 1)
+        srs.interval_days = interval
+        srs.due_date = now + timedelta(days=interval)
+        srs.card_status = "review"
+
+    elif rating == "good":
+        # Standard SM-2 progression
+        if srs.repetitions == 0:
+            srs.interval_days = 1
+        elif srs.repetitions == 1:
+            srs.interval_days = 3
+        else:
+            srs.interval_days = max(1, round(srs.interval_days * srs.ease_factor))
+        # EF' = EF + (0.1 – (5–q)*(0.08 + (5–q)*0.02))
+        ef_delta = 0.1 - (5 - q) * (0.08 + (5 - q) * 0.02)
+        srs.ease_factor = max(1.3, min(3.0, round(srs.ease_factor + ef_delta, 4)))
+        srs.repetitions += 1
+        srs.due_date = now + timedelta(days=srs.interval_days)
+        srs.card_status = "review"
+
+    elif rating == "easy":
+        # Very easy → big interval boost, ease bonus
+        if srs.repetitions == 0:
+            srs.interval_days = 4
+        else:
+            srs.interval_days = max(1, round(srs.interval_days * srs.ease_factor * 1.3))
+        srs.ease_factor = max(1.3, min(3.0, round(srs.ease_factor + 0.15, 4)))
+        srs.repetitions += 1
+        srs.due_date = now + timedelta(days=srs.interval_days)
+        srs.card_status = "review"
+
+    srs.last_reviewed = now
+    return srs
+
+
+def get_or_create_srs(
+    db: Session, user_id: int, word_id: int, topic_id: int
+) -> models.UserCardSRS:
+    """Return existing SRS record or create a fresh one."""
+    srs = (
+        db.query(models.UserCardSRS)
+        .filter(
+            models.UserCardSRS.user_id == user_id,
+            models.UserCardSRS.word_id == word_id,
+        )
+        .first()
+    )
+    if srs:
+        return srs
+    srs = models.UserCardSRS(user_id=user_id, word_id=word_id, topic_id=topic_id)
+    db.add(srs)
+    db.flush()
+    return srs
+
+
+def apply_srs_rating(
+    db: Session, user_id: int, word_id: int, topic_id: int, rating: str
+) -> models.UserCardSRS:
+    """Rate a card, update SRS params, persist. Returns updated record."""
+    srs = get_or_create_srs(db, user_id, word_id, topic_id)
+    _apply_srs(srs, rating)
+    db.commit()
+    db.refresh(srs)
+    return srs
+
+
+def get_daily_status(
+    db: Session, user_id: int, topic_id: int
+) -> dict:
+    """Return daily learning stats for a (user, topic) pair."""
+    today = date.today()
+    learned_today = (
+        db.query(func.count(models.DailyLearningLog.log_id))
+        .filter(
+            models.DailyLearningLog.user_id == user_id,
+            models.DailyLearningLog.topic_id == topic_id,
+            models.DailyLearningLog.learned_at == today,
+        )
+        .scalar() or 0
+    )
+    now = datetime.now(timezone.utc)
+    due_review_count = (
+        db.query(func.count(models.UserCardSRS.srs_id))
+        .filter(
+            models.UserCardSRS.user_id == user_id,
+            models.UserCardSRS.topic_id == topic_id,
+            models.UserCardSRS.card_status.in_(["review", "learning"]),
+            models.UserCardSRS.due_date <= now,
+        )
+        .scalar() or 0
+    )
+    return {
+        "topic_id": topic_id,
+        "daily_learned": learned_today,
+        "daily_limit": DAILY_NEW_LIMIT,
+        "daily_remaining": max(0, DAILY_NEW_LIMIT - learned_today),
+        "due_review_count": due_review_count,
+    }
+
+
+def build_session_queue(
+    db: Session, user_id: int, topic_id: int
+) -> dict:
+    """
+    Build the ordered card queue for a flashcard session.
+
+    Priority:
+      1. Due review / learning cards  (sorted by due_date ASC, shown first)
+      2. New cards up to the remaining daily limit
+
+    Returns a dict with:
+      review_cards   – Word objects due for review
+      new_cards      – Word objects being introduced today
+      daily_learned  – new words already introduced today
+      daily_limit    – cap constant
+      daily_remaining– slots left for new words today
+    """
+    now = datetime.now(timezone.utc)
+    today = date.today()
+
+    # ── 1. Due review / learning cards ────────────────────────────────────────
+    due_srs = (
+        db.query(models.UserCardSRS)
+        .options(joinedload(models.UserCardSRS.word))
+        .filter(
+            models.UserCardSRS.user_id == user_id,
+            models.UserCardSRS.topic_id == topic_id,
+            models.UserCardSRS.card_status.in_(["review", "learning"]),
+            models.UserCardSRS.due_date <= now,
+        )
+        .order_by(models.UserCardSRS.due_date.asc())
+        .all()
+    )
+    review_cards = [srs.word for srs in due_srs if srs.word is not None]
+
+    # ── 2. Daily-limit check ───────────────────────────────────────────────────
+    learned_today = (
+        db.query(func.count(models.DailyLearningLog.log_id))
+        .filter(
+            models.DailyLearningLog.user_id == user_id,
+            models.DailyLearningLog.topic_id == topic_id,
+            models.DailyLearningLog.learned_at == today,
+        )
+        .scalar() or 0
+    )
+    remaining_slots = max(0, DAILY_NEW_LIMIT - learned_today)
+
+    # ── 3. New words not yet seen by this user in this topic ──────────────────
+    new_cards: list[models.Word] = []
+    if remaining_slots > 0:
+        seen_word_ids_subq = (
+            db.query(models.UserCardSRS.word_id)
+            .filter(
+                models.UserCardSRS.user_id == user_id,
+                models.UserCardSRS.topic_id == topic_id,
+            )
+            .subquery()
+        )
+        new_words = (
+            db.query(models.Word)
+            .filter(
+                models.Word.topic_id == topic_id,
+                models.Word.word_id.notin_(seen_word_ids_subq),
+            )
+            .order_by(models.Word.word_id.asc())
+            .limit(remaining_slots)
+            .all()
+        )
+
+        # Register each new word in SRS + daily log
+        for word in new_words:
+            # SRS record (status = 'new', due now so it appears immediately)
+            srs = models.UserCardSRS(
+                user_id=user_id,
+                word_id=word.word_id,
+                topic_id=topic_id,
+                card_status="new",
+                due_date=now,
+            )
+            db.add(srs)
+            # Daily log (ignore duplicate key if client retries)
+            existing_log = (
+                db.query(models.DailyLearningLog)
+                .filter(
+                    models.DailyLearningLog.user_id == user_id,
+                    models.DailyLearningLog.topic_id == topic_id,
+                    models.DailyLearningLog.word_id == word.word_id,
+                    models.DailyLearningLog.learned_at == today,
+                )
+                .first()
+            )
+            if not existing_log:
+                db.add(models.DailyLearningLog(
+                    user_id=user_id,
+                    topic_id=topic_id,
+                    word_id=word.word_id,
+                    learned_at=today,
+                ))
+
+        db.commit()
+        new_cards = new_words
+        learned_today += len(new_words)
+
+    return {
+        "review_cards": review_cards,
+        "new_cards": new_cards,
+        "daily_learned": learned_today,
+        "daily_limit": DAILY_NEW_LIMIT,
+        "daily_remaining": max(0, DAILY_NEW_LIMIT - learned_today),
+    }
+
+
 # ============================================================
 # FR3 – Quiz / Test
 # ============================================================
@@ -592,13 +831,23 @@ def create_ai_reading(
     db: Session,
     payload: schemas.AIReadingCreate,
     generated_passage: str,
+    title: str | None = None,
 ) -> models.AIReading:
+    # Derive time limit from difficulty if not explicitly set
+    difficulty_limits = {"A1": 600, "A2": 600, "B1": 720, "B2": 900, "C1": 1080, "C2": 1200}
+    time_limit = payload.time_limit_seconds
+    if payload.difficulty_param and payload.difficulty_param in difficulty_limits:
+        time_limit = difficulty_limits[payload.difficulty_param]
+
     reading = models.AIReading(
         user_id=payload.user_id,
         input_vocabulary=payload.input_vocabulary,
         topic_param=payload.topic_param,
         difficulty_param=payload.difficulty_param,
         generated_passage=generated_passage,
+        title=title,
+        time_limit_seconds=time_limit,
+        attempt_number=1,
     )
     db.add(reading)
     db.commit()
@@ -606,23 +855,43 @@ def create_ai_reading(
     return reading
 
 
+def _ensure_title(reading: "models.AIReading") -> "models.AIReading":
+    """
+    Guarantee reading.title is always a non-empty string.
+    Called after every fetch so the API never returns null/generic titles.
+    Does NOT write back to DB — purely in-memory for the response.
+    """
+    if reading and not reading.title:
+        # Build a fallback from vocabulary + difficulty
+        vocab_words = [w.strip().capitalize()
+                       for w in (reading.input_vocabulary or '').split(',')][:3]
+        base = ' · '.join(vocab_words) if vocab_words else 'Reading Test'
+        level = reading.difficulty_param or ''
+        reading.title = f"{base} ({level})" if level else base
+    return reading
+
+
 def get_ai_reading(db: Session, reading_id: int) -> models.AIReading | None:
-    return (
+    reading = (
         db.query(models.AIReading)
         .filter(models.AIReading.reading_id == reading_id)
         .first()
     )
+    return _ensure_title(reading) if reading else None
 
 
 def list_ai_readings(
     db: Session, user_id: int, limit: int = 20, offset: int = 0
 ) -> list[models.AIReading]:
-    return (
+    readings = (
         db.query(models.AIReading)
         .filter(models.AIReading.user_id == user_id)
         .order_by(models.AIReading.generated_at.desc())
         .offset(offset).limit(limit).all()
     )
+    for r in readings:
+        _ensure_title(r)
+    return readings
 
 
 def add_ai_reading_question(
@@ -696,3 +965,149 @@ def calculate_ai_reading_score(db: Session, reading: models.AIReading) -> models
     except Exception:
         pass
     return reading
+
+
+def submit_ai_reading_with_answers(
+    db: Session,
+    reading: models.AIReading,
+    answers: dict[int, str],
+    completion_seconds: int,
+    generate_explanations_fn,        # callable from seed_gemini
+) -> models.AIReading:
+    """
+    One-shot submit: record answers, score, generate explanations (first attempt only),
+    mark completed, write history.
+    """
+    if reading.is_completed:
+        db.refresh(reading)
+        _ = reading.comprehension_questions
+        return reading
+
+    questions = (
+        db.query(models.AIReadingQuestion)
+        .filter(models.AIReadingQuestion.reading_id == reading.reading_id)
+        .all()
+    )
+
+    # 1. Record answers
+    for q in questions:
+        ans = answers.get(q.question_id)
+        if ans:
+            q.user_answer = ans
+            q.is_correct = ans == q.correct_option
+
+    # 2. Score
+    correct = sum(1 for q in questions if q.is_correct)
+    total = len(questions)
+    reading.score = float(correct)
+    reading.accuracy = round((correct / total) * 100, 2) if total else 0.0
+    reading.is_completed = True
+    reading.completion_seconds = min(completion_seconds, reading.time_limit_seconds)
+    reading.completed_at = datetime.now(timezone.utc)
+    db.flush()
+
+    # 3. Generate explanations (only when not already present – covers first attempt)
+    needs_explanation = [q for q in questions if not q.explanation]
+    if needs_explanation:
+        try:
+            q_dicts = [
+                {
+                    "question_text": q.question_text,
+                    "option_a": q.option_a,
+                    "option_b": q.option_b,
+                    "option_c": q.option_c,
+                    "option_d": q.option_d,
+                    "correct_option": q.correct_option,
+                }
+                for q in needs_explanation
+            ]
+            explanations = generate_explanations_fn(reading.generated_passage, q_dicts)
+            for q, expl in zip(needs_explanation, explanations):
+                q.explanation = expl
+        except Exception as exc:
+            print(f"⚠️  Explanation generation failed: {exc}")
+
+    # 4. Stats + history
+    _update_statistics_after_reading(db, reading.user_id, reading.accuracy)
+    db.commit()
+    db.refresh(reading)
+    _ = reading.comprehension_questions
+
+    try:
+        record_learning_history(
+            db,
+            user_id=reading.user_id,
+            activity_type="AI Reading",
+            activity_id=reading.reading_id,
+            score=reading.score,
+            accuracy=reading.accuracy,
+        )
+    except Exception:
+        pass
+    return reading
+
+
+def retake_ai_reading(
+    db: Session,
+    original_reading_id: int,
+    user_id: int,
+) -> models.AIReading:
+    """
+    Create a new AIReading row that reuses the same passage as the original.
+    New question rows are cloned (correct_option preserved, user_answer/is_correct cleared,
+    explanation copied so the AI is NOT called again).
+    Returns the new reading (not yet completed).
+    """
+    original = get_ai_reading(db, original_reading_id)
+    if not original:
+        raise ValueError(f"Reading {original_reading_id} not found")
+
+    # Determine which reading holds the canonical questions
+    # (parent_reading_id is set only on retakes; if None this IS the original)
+    canonical_id = original.parent_reading_id or original.reading_id
+
+    canonical = get_ai_reading(db, canonical_id)
+    if not canonical:
+        raise ValueError(f"Canonical reading {canonical_id} not found")
+
+    # Count previous attempts for this user on this canonical reading
+    prev_attempts = (
+        db.query(models.AIReading)
+        .filter(
+            models.AIReading.user_id == user_id,
+            (models.AIReading.reading_id == canonical_id) |
+            (models.AIReading.parent_reading_id == canonical_id),
+        )
+        .count()
+    )
+
+    new_reading = models.AIReading(
+        user_id=user_id,
+        input_vocabulary=canonical.input_vocabulary,
+        topic_param=canonical.topic_param,
+        difficulty_param=canonical.difficulty_param,
+        generated_passage=canonical.generated_passage,
+        time_limit_seconds=canonical.time_limit_seconds,
+        attempt_number=prev_attempts + 1,
+        parent_reading_id=canonical_id,
+    )
+    db.add(new_reading)
+    db.flush()   # get new reading_id
+
+    # Clone questions (reset user state, keep explanations)
+    for q in canonical.comprehension_questions:
+        db.add(models.AIReadingQuestion(
+            reading_id=new_reading.reading_id,
+            question_text=q.question_text,
+            option_a=q.option_a,
+            option_b=q.option_b,
+            option_c=q.option_c,
+            option_d=q.option_d,
+            correct_option=q.correct_option,
+            explanation=q.explanation,   # reuse; no AI call
+        ))
+
+    db.commit()
+    db.refresh(new_reading)
+    _ = new_reading.comprehension_questions
+    return new_reading

@@ -8,6 +8,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useData } from '../context/DataContext';
 import {
   getRandomWords,
+  getFlashcardQueue,
+  submitSRSRating,
+  getDailyStatus,
   createFlashcardSession, completeFlashcardSession,
   createFlashcardProgress, updateFlashcardProgress,
 } from '../api';
@@ -45,9 +48,23 @@ export default function FlashcardScreen({ navigation }) {
   const [sessionId, setSessionId] = useState(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [showMeaning, setShowMeaning] = useState(false);
-  const [ratings, setRatings] = useState({}); // word_id → rating
+  const [ratings, setRatings] = useState({}); // word_id → final rating (hard/good/easy)
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // ── Per-card session tracking ─────────────────────────────────────────────────
+  // cardStats: { [word_id]: { again_count, last_option, flagged_difficult } }
+  //   again_count      – how many times "Again" was pressed this session (resets on success)
+  //   last_option      – most recent rating selected ('again'|'hard'|'good'|'easy')
+  //   flagged_difficult– true if card was EVER rated again OR hard (before final success)
+  const [cardStats, setCardStats] = useState({});
+  // cardStore: { [word_id]: word } – keeps word objects after they leave the queue
+  const [cardStore, setCardStore] = useState({});
+
+  // ── SRS / daily-limit state ──────────────────────────────────────────────────
+  const [topicDailyStatus, setTopicDailyStatus] = useState({});
+  const [cardTypes, setCardTypes] = useState({});
+  const [srsResults, setSrsResults] = useState({});
 
   // ── Hiệu ứng lật thẻ 3D ───────────────────────────────────────────────────
   const flipAnim = useRef(new Animated.Value(0)).current;
@@ -59,6 +76,22 @@ export default function FlashcardScreen({ navigation }) {
   useEffect(() => {
     if (topics.length === 0) loadTopics();
   }, []);
+
+  // Load daily status for all visible topics so we can show badges
+  useEffect(() => {
+    if (!userId || topics.length === 0) return;
+    const loadStatuses = async () => {
+      const results = {};
+      for (const topic of topics) {
+        try {
+          const status = await getDailyStatus(userId, topic.topic_id);
+          results[topic.topic_id] = status;
+        } catch (_) { /* ignore per-topic errors */ }
+      }
+      setTopicDailyStatus(results);
+    };
+    loadStatuses();
+  }, [userId, topics]);
 
   // ── Deck search/filter derived values ────────────────────────────────────────
   const deckFilters = ['All', ...Array.from(new Set(decks.map((d) => d.level)))];
@@ -139,29 +172,58 @@ export default function FlashcardScreen({ navigation }) {
     navigation.goBack();
   };
 
-  // ── Start session (backend topic) ────────────────────────────────────────────
+  // ── Start session (backend topic) – now uses SRS queue ───────────────────────
   const startSession = useCallback(async (topic) => {
     try {
       setLoading(true);
       setError('');
-      const words = await getRandomWords(topic.topic_id, CARDS_PER_SESSION);
-      if (!words.length) throw new Error('No words found for this topic.');
 
-      const session = await createFlashcardSession(userId, topic.topic_id, words.length);
+      // Fetch SRS-ordered queue from backend
+      const queue = await getFlashcardQueue(userId, topic.topic_id);
 
-      // Pre-create a progress record for each card
-      const pIds = {};
-      for (const w of words) {
-        const prog = await createFlashcardProgress(session.session_id, w.word_id);
-        pIds[w.word_id] = prog.progress_id;
+      // Combine: review cards first, then new cards
+      const allCards = [...queue.review_cards, ...queue.new_cards];
+
+      if (!allCards.length) {
+        // Nothing to study: no reviews due and daily limit reached
+        setError(
+          queue.daily_remaining === 0
+            ? `You've reached the daily limit of ${queue.daily_limit} new words for this topic. Come back tomorrow!`
+            : 'No cards available for this topic yet.'
+        );
+        return;
       }
 
-      setCards(words);
+      // Build card-type map so UI can badge Review vs New
+      const types = {};
+      queue.review_cards.forEach(w => { types[w.word_id] = 'review'; });
+      queue.new_cards.forEach(w => { types[w.word_id] = 'new'; });
+      setCardTypes(types);
+
+      // Create a backend session (for history tracking)
+      const session = await createFlashcardSession(userId, topic.topic_id, allCards.length);
+
+      // Pre-create progress records (kept for backward-compat flip tracking)
+      const pIds = {};
+      for (const w of allCards) {
+        try {
+          const prog = await createFlashcardProgress(session.session_id, w.word_id);
+          pIds[w.word_id] = prog.progress_id;
+        } catch (_) { /* non-critical */ }
+      }
+
+      setCards(allCards);
       setProgressIds(pIds);
       setSessionId(session.session_id);
       setCurrentIndex(0);
       setShowMeaning(false);
       setRatings({});
+      setSrsResults({});
+      setCardStats({});
+      // Pre-populate cardStore so done screen can look up word objects
+      const store = {};
+      allCards.forEach(w => { store[w.word_id] = w; });
+      setCardStore(store);
       setSelectedTopic(topic);
       setPhase('study');
     } catch (e) {
@@ -193,6 +255,10 @@ export default function FlashcardScreen({ navigation }) {
     setCurrentIndex(0);
     setShowMeaning(false);
     setRatings({});
+    setCardStats({});
+    const store = {};
+    words.forEach(w => { store[w.word_id] = w; });
+    setCardStore(store);
     setSelectedTopic({ topic_id: deck.id, topic_name: deck.title });
     setSelectedLocalDeck(deck);
     setPhase('study');
@@ -229,34 +295,111 @@ export default function FlashcardScreen({ navigation }) {
     }
   }, [showMeaning, cards, currentIndex, progressIds, flipAnim]);
 
-  // ── Rate & advance ───────────────────────────────────────────────────────────
+  // ── Rate & advance – full session tracking + SRS ────────────────────────────
   const handleRate = useCallback(async (rating) => {
     const card = cards[currentIndex];
     const pid = progressIds[card.word_id];
-    const newRatings = { ...ratings, [card.word_id]: rating };
-    setRatings(newRatings);
+    const wid = card.word_id;
 
+    // ── Update per-card session stats ─────────────────────────────────────────
+    setCardStats(prev => {
+      const existing = prev[wid] || { again_count: 0, last_option: null, flagged_difficult: false };
+      if (rating === 'again') {
+        return {
+          ...prev,
+          [wid]: {
+            again_count: existing.again_count + 1,
+            last_option: 'again',
+            flagged_difficult: true,      // once flagged, stays flagged for done screen
+          },
+        };
+      } else {
+        // Hard/Good/Easy → reset again_count, keep flagged if previously flagged
+        return {
+          ...prev,
+          [wid]: {
+            again_count: 0,               // RESET per spec
+            last_option: rating,
+            flagged_difficult: existing.flagged_difficult || rating === 'hard',
+          },
+        };
+      }
+    });
+
+    // ── Legacy flip-progress (keeps session history) ──────────────────────────
     if (pid) {
       try { await updateFlashcardProgress(pid, { difficulty_rating: rating }); }
       catch (e) { console.warn('rate progress:', e.message); }
     }
 
-    const next = currentIndex + 1;
-    if (next >= cards.length) {
-      // complete session (backend sessions only; local sessions skip)
+    // ── SRS rating (backend) ──────────────────────────────────────────────────
+    if (selectedTopic && card.topic_id !== undefined) {
+      try {
+        const topicId = card.topic_id ?? selectedTopic.topic_id;
+        const srsResult = await submitSRSRating(userId, card.word_id, topicId, rating);
+        setSrsResults(prev => ({ ...prev, [wid]: srsResult }));
+      } catch (e) { console.warn('srs rating:', e.message); }
+    }
+
+    // ── Queue management ──────────────────────────────────────────────────────
+    if (rating === 'again') {
+      // Move card to end; do NOT record a final rating
+      const rest = cards.slice(currentIndex + 1);
+      setCards(rest.length > 0 ? [...rest, card] : [card]);
+      setCurrentIndex(0);
+      setShowMeaning(false);
+      flipAnim.setValue(0);
+      return;
+    }
+
+    // Hard / Good / Easy → card leaves the queue, record final rating
+    setRatings(prev => ({ ...prev, [wid]: rating }));
+    const remainingCards = cards.slice(currentIndex + 1);
+
+    if (remainingCards.length === 0) {
       try { if (sessionId) await completeFlashcardSession(sessionId); }
       catch (e) { console.warn('complete session:', e.message); }
       setPhase('done');
     } else {
-      setCurrentIndex(next);
+      setCards(remainingCards);
+      setCurrentIndex(0);
       setShowMeaning(false);
+      flipAnim.setValue(0);
     }
-  }, [cards, currentIndex, progressIds, ratings, sessionId]);
+  }, [cards, currentIndex, progressIds, ratings, sessionId, selectedTopic, userId, flipAnim]);
 
   const handleRestart = () => {
     if (selectedLocalDeck) startLocalSession(selectedLocalDeck);
     else if (selectedTopic) startSession(selectedTopic);
   };
+
+  // ── Start focused session (only flagged-difficult cards) ─────────────────────
+  const startFocusedSession = useCallback(() => {
+    const difficultWords = Object.entries(cardStats)
+      .filter(([, st]) => st.flagged_difficult)
+      .map(([wid]) => cardStore[wid])
+      .filter(Boolean);
+
+    if (!difficultWords.length) {
+      Alert.alert('No difficult cards', 'All cards were answered correctly!');
+      return;
+    }
+
+    // Reuse startLocalSession-style setup (no backend queue call needed)
+    const store = {};
+    difficultWords.forEach(w => { store[w.word_id] = w; });
+
+    setCards(difficultWords);
+    setProgressIds({});          // no new backend progress rows for focused mode
+    setCurrentIndex(0);
+    setShowMeaning(false);
+    setRatings({});
+    setCardStats({});
+    setCardStore(store);
+    setSrsResults({});
+    // Keep selectedTopic & sessionId so SRS ratings still post
+    setPhase('study');
+  }, [cardStats, cardStore]);
 
   // ── Phát âm từ vựng (Text-to-Speech) ─────────────────────────────────────────
   const handleSpeak = useCallback((textToSpeak) => {
@@ -266,9 +409,13 @@ export default function FlashcardScreen({ navigation }) {
     });
   }, []);
   // ── Progress metrics ─────────────────────────────────────────────────────────
-  const reviewed = currentIndex;
-  const remaining = cards.length - currentIndex;
-  const progressPct = cards.length > 0 ? (reviewed / cards.length) * 100 : 0;
+  // "reviewed" = words that received a final rating (hard/good/easy, not again)
+  const reviewed = Object.keys(ratings).length;
+  // "remaining" = cards still in the queue (including any re-queued "again" cards)
+  const remaining = cards.length;
+  // total = reviewed + remaining, keeps the bar anchored to total work done
+  const totalCards = reviewed + remaining;
+  const progressPct = totalCards > 0 ? (reviewed / totalCards) * 100 : 0;
 
   // ══ ADD DECK VIEW (viewState = 'add') ════════════════════════════════════════
   if (phase === 'select' && viewState === 'add') {
@@ -550,7 +697,31 @@ export default function FlashcardScreen({ navigation }) {
                         <View style={s.topicIcon}>
                           <Ionicons name="albums-outline" size={20} color="#5b65d6" />
                         </View>
-                        <Text style={s.topicName} numberOfLines={1}>{topic.topic_name}</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={s.topicName} numberOfLines={1}>{topic.topic_name}</Text>
+                          {/* SRS daily-status badges */}
+                          {topicDailyStatus[topic.topic_id] && (() => {
+                            const st = topicDailyStatus[topic.topic_id];
+                            return (
+                              <View style={s.srsStatusRow}>
+                                {st.due_review_count > 0 && (
+                                  <View style={s.srsBadgeReview}>
+                                    <Text style={s.srsBadgeText}>🔄 {st.due_review_count} due</Text>
+                                  </View>
+                                )}
+                                {st.daily_remaining > 0 ? (
+                                  <View style={s.srsBadgeNew}>
+                                    <Text style={s.srsBadgeText}>✨ {st.daily_remaining} new</Text>
+                                  </View>
+                                ) : (
+                                  <View style={s.srsBadgeDone}>
+                                    <Text style={s.srsBadgeText}>✅ limit reached</Text>
+                                  </View>
+                                )}
+                              </View>
+                            );
+                          })()}
+                        </View>
                         <Ionicons name="play-circle" size={24} color="#5b65d6" />
                       </TouchableOpacity>
                     ))}
@@ -581,36 +752,58 @@ export default function FlashcardScreen({ navigation }) {
 
   // ══ DONE VIEW (phase = 'done') ═══════════════════════════════════════════════
   if (phase === 'done') {
-    const again = Object.values(ratings).filter(r => r === 'again').length;
     const hard = Object.values(ratings).filter(r => r === 'hard').length;
     const good = Object.values(ratings).filter(r => r === 'good').length;
     const easy = Object.values(ratings).filter(r => r === 'easy').length;
+
+    // Cards flagged as difficult (ever rated again OR hard during session)
+    const difficultCards = Object.entries(cardStats)
+      .filter(([, st]) => st.flagged_difficult)
+      .map(([wid, st]) => ({
+        word: cardStore[wid],
+        again_count: st.again_count,      // 0 if user eventually succeeded (reset)
+        final_rating: ratings[wid] || 'again',
+      }))
+      .filter(c => c.word);
+
+    // Next-review schedule from SRS
+    const dueToday    = Object.values(srsResults).filter(r => r.interval_days === 0).length;
+    const dueTomorrow = Object.values(srsResults).filter(r => r.interval_days === 1).length;
+    const dueLater    = Object.values(srsResults).filter(r => r.interval_days > 1).length;
 
     return (
       <View style={s.wrapper}>
         <LinearGradient colors={['#4c3b7a', '#5b65d6']} style={s.phone}>
           <StatusBar barStyle="light-content" />
-          <View style={s.header}>
-            <TouchableOpacity onPress={() => setPhase('select')} style={s.iconBtn}>
-              <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, resizeMode: 'contain' }} />
-            </TouchableOpacity>
-            <View style={{ flex: 1, alignItems: 'center' }}>
-              <Text style={s.headerSub}>{selectedTopic?.topic_name?.toUpperCase()}</Text>
-              <Text style={s.headerTitle}>Session Complete!</Text>
+
+          {/* Header – same pattern as select/study screens */}
+          <View style={s.headerSection}>
+            <View style={s.headerTopRow}>
+              <TouchableOpacity onPress={() => setPhase('select')} style={s.backButton}>
+                <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, resizeMode: 'contain' }} />
+              </TouchableOpacity>
+              <View style={s.headerTextContainer}>
+                <Text style={s.appName}>Session Complete!</Text>
+                <Text style={s.subTitleText}>{selectedTopic?.topic_name}</Text>
+              </View>
+              <View style={{ width: 32 }} />
             </View>
-            <View style={{ width: 32 }} />
           </View>
 
-          <View style={[s.card, { paddingTop: 30 }]}>
+          {/* Body – same #F0F2FF card background as select/study screens */}
+          <View style={s.card}>
+          <ScrollView contentContainerStyle={s.doneScroll} showsVerticalScrollIndicator={false}>
+
+            {/* ── Summary circle ── */}
             <View style={s.doneCircle}>
               <Ionicons name="checkmark-circle" size={56} color="#22c55e" />
             </View>
-            <Text style={s.doneTitle}>{cards.length} cards reviewed</Text>
+            <Text style={s.doneTitle}>{reviewed} cards reviewed</Text>
             <Text style={s.doneSub}>{selectedTopic?.topic_name}</Text>
 
+            {/* ── Rating breakdown pills ── */}
             <View style={s.ratingRow}>
               {[
-                { label: 'Again', count: again, color: '#ef4444', bg: '#fee2e2' },
                 { label: 'Hard', count: hard, color: '#f97316', bg: '#ffedd5' },
                 { label: 'Good', count: good, color: '#3b82f6', bg: '#dbeafe' },
                 { label: 'Easy', count: easy, color: '#22c55e', bg: '#dcfce7' },
@@ -622,13 +815,54 @@ export default function FlashcardScreen({ navigation }) {
               ))}
             </View>
 
-            <TouchableOpacity style={s.restartBtn} onPress={handleRestart}>
+            {/* ── Difficult cards list ── */}
+            {difficultCards.length > 0 && (
+              <View style={s.difficultSection}>
+                <View style={s.difficultHeader}>
+                  <Ionicons name="warning-outline" size={16} color="#ef4444" />
+                  <Text style={s.difficultTitle}>
+                    {difficultCards.length} difficult word{difficultCards.length > 1 ? 's' : ''}
+                  </Text>
+                </View>
+
+                {difficultCards.map(({ word, again_count }) => {
+                  const isStillHard = ratings[word.word_id] === 'hard' || !ratings[word.word_id];
+                  return (
+                    <View key={word.word_id} style={[s.difficultCard, isStillHard && s.difficultCardHighlight]}>
+                      <View style={s.difficultCardLeft}>
+                        <Text style={s.difficultWord}>{word.word}</Text>
+                        {word.phonetic ? (
+                          <Text style={s.difficultPhonetic}>/{word.phonetic}/</Text>
+                        ) : null}
+                        <Text style={s.difficultMeaning} numberOfLines={2}>{word.meaning_vi}</Text>
+                      </View>
+                      {again_count > 0 && (
+                        <View style={s.againBadge}>
+                          <Text style={s.againBadgeText}>↩ ×{again_count}</Text>
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
+            {/* ── Action buttons ── */}
+            {difficultCards.length > 0 && (
+              <TouchableOpacity style={s.focusBtn} onPress={startFocusedSession} activeOpacity={0.85}>
+                <Ionicons name="flash-outline" size={18} color="#ffffff" style={{ marginRight: 8 }} />
+                <Text style={s.focusBtnText}>Practice Difficult Cards ({difficultCards.length})</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity style={s.restartBtn} onPress={handleRestart} activeOpacity={0.85}>
               <Ionicons name="reload" size={18} color="#ffffff" style={{ marginRight: 8 }} />
               <Text style={s.restartText}>Study Again</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setPhase('select')} style={s.backLink}>
               <Text style={s.backLinkText}>Choose another deck</Text>
             </TouchableOpacity>
+          </ScrollView>
           </View>
 
           <BottomNav navigation={navigation} active="FlashcardScreen" />
@@ -674,15 +908,15 @@ export default function FlashcardScreen({ navigation }) {
         <View style={s.pillsRow}>
           <View style={s.pill}>
             <Ionicons name="book-outline" size={14} color="#0f172a" />
-            <Text style={s.pillText}>New <Text style={{ fontWeight: '700' }}>{cards.length - Object.keys(ratings).length}</Text></Text>
+            <Text style={s.pillText}>Left <Text style={{ fontWeight: '700' }}>{remaining}</Text></Text>
           </View>
           <View style={s.pill}>
             <Ionicons name="copy-outline" size={14} color="#0f172a" />
-            <Text style={s.pillText}>Done <Text style={{ fontWeight: '700' }}>{Object.keys(ratings).length}</Text></Text>
+            <Text style={s.pillText}>Done <Text style={{ fontWeight: '700' }}>{reviewed}</Text></Text>
           </View>
           <View style={s.pill}>
             <Ionicons name="star-outline" size={14} color="#eab308" />
-            <Text style={s.pillText}>Total <Text style={{ fontWeight: '700' }}>{cards.length}</Text></Text>
+            <Text style={s.pillText}>Total <Text style={{ fontWeight: '700' }}>{totalCards}</Text></Text>
           </View>
         </View>
 
@@ -701,6 +935,16 @@ export default function FlashcardScreen({ navigation }) {
                   ) : null}
                   {card.topic_id ? (
                     <View style={s.tag}><Text style={s.tagText}>#{card.topic_id}</Text></View>
+                  ) : null}
+                  {/* SRS card-type badge */}
+                  {cardTypes[card.word_id] === 'review' ? (
+                    <View style={[s.tag, { backgroundColor: '#dbeafe', borderColor: '#93c5fd' }]}>
+                      <Text style={[s.tagText, { color: '#1d4ed8' }]}>🔄 Review</Text>
+                    </View>
+                  ) : cardTypes[card.word_id] === 'new' ? (
+                    <View style={[s.tag, { backgroundColor: '#dcfce7', borderColor: '#86efac' }]}>
+                      <Text style={[s.tagText, { color: '#15803d' }]}>✨ New</Text>
+                    </View>
                   ) : null}
                 </View>
               </View>
@@ -975,4 +1219,42 @@ const s = StyleSheet.create({
   bottomNav: { backgroundColor: '#ffffff', flexDirection: 'row', width: '100%' },
   navItem: { flex: 1, alignItems: 'center', paddingVertical: 12 },
   navLabel: { fontSize: 11, color: '#919191', marginTop: 3 },
+
+  // SRS status badges on topic rows
+  srsStatusRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 3 },
+  srsBadgeReview: { backgroundColor: '#dbeafe', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8 },
+  srsBadgeNew: { backgroundColor: '#dcfce7', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8 },
+  srsBadgeDone: { backgroundColor: '#f1f5f9', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8 },
+  srsBadgeText: { fontSize: 10, fontWeight: '600', color: '#334155' },
+
+  // SRS next-review schedule box (done screen)
+  srsScheduleBox: { backgroundColor: '#f8fafc', borderRadius: 16, padding: 14, width: '100%', marginBottom: 16, borderWidth: 1, borderColor: '#e2e8f0' },
+  srsScheduleTitle: { fontSize: 13, fontWeight: '700', color: '#475569', marginBottom: 10, textAlign: 'center' },
+  srsScheduleRow: { flexDirection: 'row', justifyContent: 'space-around' },
+  srsScheduleItem: { alignItems: 'center', gap: 2 },
+  srsScheduleCount: { fontSize: 22, fontWeight: '800' },
+  srsScheduleLabel: { fontSize: 11, color: '#64748b', fontWeight: '600' },
+
+  // Done screen scroll container
+  doneScroll: { paddingBottom: 24, alignItems: 'center' },
+
+  // Difficult cards section
+  difficultSection: { width: '100%', marginBottom: 16 },
+  difficultHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
+  difficultTitle: { fontSize: 14, fontWeight: '700', color: '#ef4444' },
+  difficultCard: { backgroundColor: '#ffffff', borderRadius: 14, padding: 14, marginBottom: 8, flexDirection: 'row', alignItems: 'flex-start', borderWidth: 1.5, borderColor: '#e2e8f0' },
+  difficultCardHighlight: { borderColor: '#fca5a5', backgroundColor: '#fff7f7' },
+  difficultCardLeft: { flex: 1, marginRight: 10 },
+  difficultWord: { fontSize: 16, fontWeight: '700', color: '#0f172a', marginBottom: 2 },
+  difficultPhonetic: { fontSize: 12, color: '#64748b', marginBottom: 3 },
+  difficultMeaning: { fontSize: 12, color: '#475569', lineHeight: 17 },
+  difficultCardRight: { alignItems: 'flex-end', gap: 5 },
+  againBadge: { backgroundColor: '#fee2e2', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  againBadgeText: { fontSize: 11, fontWeight: '700', color: '#dc2626' },
+  finalRatingBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
+  finalRatingText: { fontSize: 12, fontWeight: '700' },
+
+  // Focused practice button
+  focusBtn: { flexDirection: 'row', backgroundColor: '#ef4444', paddingVertical: 14, borderRadius: 16, alignItems: 'center', justifyContent: 'center', width: '100%', marginBottom: 10 },
+  focusBtnText: { color: '#ffffff', fontSize: 14, fontWeight: '700' },
 });

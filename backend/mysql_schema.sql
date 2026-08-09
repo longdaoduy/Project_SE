@@ -180,6 +180,50 @@ CREATE TABLE IF NOT EXISTS starred_words (
 ) ENGINE=InnoDB;
 
 -- --------------------------------------------------------------------------
+-- FR2 – user_card_srs  (per-user, per-word SRS state – persists across sessions)
+-- --------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_card_srs (
+    srs_id        INT AUTO_INCREMENT PRIMARY KEY,
+    user_id       INT        NOT NULL,
+    word_id       INT        NOT NULL,
+    topic_id      INT        NOT NULL,
+
+    -- SM-2 algorithm fields
+    ease_factor   FLOAT      NOT NULL DEFAULT 2.5,
+    interval_days INT        NOT NULL DEFAULT 0,
+    repetitions   INT        NOT NULL DEFAULT 0,
+
+    -- Scheduling
+    card_status   ENUM('new','learning','review') NOT NULL DEFAULT 'new',
+    due_date      TIMESTAMP  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_reviewed TIMESTAMP  NULL,
+
+    created_at    TIMESTAMP  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP  NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uq_srs_user_word (user_id, word_id),
+    INDEX idx_srs_user_topic_due (user_id, topic_id, due_date),
+    CONSTRAINT fk_srs_users  FOREIGN KEY (user_id)  REFERENCES users  (user_id)  ON DELETE CASCADE,
+    CONSTRAINT fk_srs_words  FOREIGN KEY (word_id)  REFERENCES words  (word_id)  ON DELETE CASCADE,
+    CONSTRAINT fk_srs_topics FOREIGN KEY (topic_id) REFERENCES topics (topic_id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- --------------------------------------------------------------------------
+-- FR2 – daily_learning_log  (tracks new-word introductions per topic per day)
+-- --------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS daily_learning_log (
+    log_id      INT  AUTO_INCREMENT PRIMARY KEY,
+    user_id     INT  NOT NULL,
+    topic_id    INT  NOT NULL,
+    word_id     INT  NOT NULL,
+    learned_at  DATE NOT NULL,
+
+    UNIQUE KEY uq_daily_word (user_id, topic_id, word_id, learned_at),
+    INDEX idx_dll_user_topic_date (user_id, topic_id, learned_at),
+    CONSTRAINT fk_dll_users FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- --------------------------------------------------------------------------
 -- FR3 – quizzes / quiz_questions
 -- --------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS quizzes (
@@ -223,19 +267,31 @@ CREATE TABLE IF NOT EXISTS quiz_questions (
 -- FR8 – ai_readings / ai_reading_questions
 -- --------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS ai_readings (
-    reading_id         INT AUTO_INCREMENT PRIMARY KEY,
-    user_id            INT          NOT NULL,
-    input_vocabulary   TEXT         NOT NULL,
-    topic_param        VARCHAR(200) NULL,
-    difficulty_param   VARCHAR(50)  NULL,
-    generated_passage  TEXT         NOT NULL,
-    score              FLOAT        NULL,
-    accuracy           FLOAT        NULL,
-    is_completed       TINYINT(1)   NOT NULL DEFAULT 0,
-    generated_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    completed_at       TIMESTAMP    NULL,
+    reading_id           INT AUTO_INCREMENT PRIMARY KEY,
+    user_id              INT          NOT NULL,
+    input_vocabulary     TEXT         NOT NULL,
+    topic_param          VARCHAR(200) NULL,
+    difficulty_param     VARCHAR(50)  NULL,
+    generated_passage    TEXT         NOT NULL,
+    title                VARCHAR(200) NULL,
+    score                FLOAT        NULL,
+    accuracy             FLOAT        NULL,
+    is_completed         TINYINT(1)   NOT NULL DEFAULT 0,
+
+    -- Timer
+    time_limit_seconds   INT          NOT NULL DEFAULT 600,
+    completion_seconds   INT          NULL,
+
+    -- Retake linkage
+    attempt_number       INT          NOT NULL DEFAULT 1,
+    parent_reading_id    INT          NULL,
+
+    generated_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at         TIMESTAMP    NULL,
     INDEX idx_ar_user_id (user_id),
-    CONSTRAINT fk_ar_users FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE
+    INDEX idx_ar_parent  (parent_reading_id),
+    CONSTRAINT fk_ar_users  FOREIGN KEY (user_id)          REFERENCES users      (user_id)  ON DELETE CASCADE,
+    CONSTRAINT fk_ar_parent FOREIGN KEY (parent_reading_id) REFERENCES ai_readings (reading_id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS ai_reading_questions (
@@ -249,6 +305,7 @@ CREATE TABLE IF NOT EXISTS ai_reading_questions (
     correct_option ENUM('A','B','C','D') NOT NULL,
     user_answer    ENUM('A','B','C','D') NULL,
     is_correct     TINYINT(1) NULL,
+    explanation    TEXT       NULL,          -- generated once on first submission, reused on retakes
     INDEX idx_arq_reading_id (reading_id),
     CONSTRAINT fk_arq_readings FOREIGN KEY (reading_id) REFERENCES ai_readings (reading_id) ON DELETE CASCADE
 ) ENGINE=InnoDB;

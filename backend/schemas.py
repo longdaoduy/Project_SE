@@ -237,6 +237,48 @@ class StarredWordRead(BaseModel):
     word: WordRead | None = None
 
 
+# ── SRS (Spaced Repetition System) ───────────────────────────────────────────
+
+class SRSRatingRequest(BaseModel):
+    """Submitted after the user rates a card (Again/Hard/Good/Easy)."""
+    user_id: int
+    word_id: int
+    topic_id: int
+    rating: Literal["again", "hard", "good", "easy"]
+
+
+class SRSCardRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    srs_id: int
+    user_id: int
+    word_id: int
+    topic_id: int
+    ease_factor: float
+    interval_days: int
+    repetitions: int
+    card_status: str
+    due_date: datetime | None = None
+    last_reviewed: datetime | None = None
+
+
+class SessionQueueResponse(BaseModel):
+    """Returned by GET /flashcards/queue – ordered list ready for the UI."""
+    review_cards: list[WordRead]   # due review/learning cards, shown first
+    new_cards: list[WordRead]      # new cards introduced today
+    daily_learned: int             # how many new words already introduced today
+    daily_limit: int               # cap (default 15)
+    daily_remaining: int           # slots left for new words today
+
+
+class DailyStatusResponse(BaseModel):
+    """Lightweight status check (shown on the topic select screen)."""
+    topic_id: int
+    daily_learned: int
+    daily_limit: int
+    daily_remaining: int
+    due_review_count: int          # cards currently due for review
+
+
 # ============================================================
 # FR3 – Quiz / Test
 # ============================================================
@@ -319,6 +361,12 @@ class AIReadingCreate(BaseModel):
     )
     topic_param: str | None = Field(default=None, max_length=200)
     difficulty_param: str | None = Field(default=None, max_length=50)
+    time_limit_seconds: int = Field(default=600, ge=60, le=3600)
+
+
+class AIReadingRetakeRequest(BaseModel):
+    """Retake an existing test – reuses passage + questions, resets answers."""
+    user_id: int
 
 
 class AIReadingQuestionCreate(BaseModel):
@@ -335,6 +383,12 @@ class AIReadingAnswerSubmit(BaseModel):
     user_answer: Literal["A", "B", "C", "D"]
 
 
+class AIReadingSubmitRequest(BaseModel):
+    """Submit answers + elapsed time in one call."""
+    answers: dict[int, Literal["A", "B", "C", "D"]]   # {question_id: answer}
+    completion_seconds: int = Field(default=0, ge=0)
+
+
 class AIReadingQuestionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     question_id: int
@@ -347,6 +401,7 @@ class AIReadingQuestionRead(BaseModel):
     correct_option: str
     user_answer: str | None = None
     is_correct: bool | None = None
+    explanation: str | None = None
 
 
 class AIReadingRead(BaseModel):
@@ -357,9 +412,14 @@ class AIReadingRead(BaseModel):
     topic_param: str | None = None
     difficulty_param: str | None = None
     generated_passage: str
+    title: str | None = None
     score: float | None = None
     accuracy: float | None = None
     is_completed: bool
+    time_limit_seconds: int
+    completion_seconds: int | None = None
+    attempt_number: int
+    parent_reading_id: int | None = None
     generated_at: datetime | None = None
     completed_at: datetime | None = None
     comprehension_questions: list[AIReadingQuestionRead] = []

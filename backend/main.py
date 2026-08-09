@@ -33,9 +33,59 @@ app.add_middleware(
 )
 
 
+from sqlalchemy import inspect, text
+
 @app.on_event("startup")
 def on_startup() -> None:
     models.Base.metadata.create_all(bind=engine)
+    _auto_migrate_columns()
+
+
+def _auto_migrate_columns() -> None:
+    """
+    Add any columns that exist in the ORM model but are missing from the live DB.
+    Runs automatically on every startup — safe to call multiple times (idempotent).
+    This bridges the gap between model changes and unrun manual migrations.
+    """
+    inspector = inspect(engine)
+
+    # ── ai_readings missing columns ──────────────────────────────────────────
+    ai_cols = {c["name"] for c in inspector.get_columns("ai_readings")}
+    missing_ai: dict[str, str] = {
+        "title":               "VARCHAR(200) NULL",
+        "time_limit_seconds":  "INT NOT NULL DEFAULT 600",
+        "completion_seconds":  "INT NULL",
+        "attempt_number":      "INT NOT NULL DEFAULT 1",
+        "parent_reading_id":   "INT NULL",
+    }
+    with engine.connect() as conn:
+        for col, definition in missing_ai.items():
+            if col not in ai_cols:
+                try:
+                    conn.execute(text(
+                        f"ALTER TABLE ai_readings ADD COLUMN `{col}` {definition}"
+                    ))
+                    conn.commit()
+                    print(f"  [auto-migrate] ADD ai_readings.{col}")
+                except Exception as exc:
+                    print(f"  [auto-migrate] SKIP ai_readings.{col}: {exc}")
+
+    # ── ai_reading_questions missing columns ─────────────────────────────────
+    aq_cols = {c["name"] for c in inspector.get_columns("ai_reading_questions")}
+    missing_aq: dict[str, str] = {
+        "explanation": "TEXT NULL",
+    }
+    with engine.connect() as conn:
+        for col, definition in missing_aq.items():
+            if col not in aq_cols:
+                try:
+                    conn.execute(text(
+                        f"ALTER TABLE ai_reading_questions ADD COLUMN `{col}` {definition}"
+                    ))
+                    conn.commit()
+                    print(f"  [auto-migrate] ADD ai_reading_questions.{col}")
+                except Exception as exc:
+                    print(f"  [auto-migrate] SKIP ai_reading_questions.{col}: {exc}")
 
 
 def get_db():
@@ -365,6 +415,62 @@ def list_starred_words(
     return crud.list_starred_words(db, user_id, limit=limit, offset=offset)
 
 
+# ── SRS Endpoints ─────────────────────────────────────────────────────────────
+
+@app.get("/flashcards/queue", response_model=schemas.SessionQueueResponse, tags=["flashcards"])
+def get_flashcard_queue(
+    user_id: int = Query(..., ge=1),
+    topic_id: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    """
+    Build and return the study queue for a (user, topic):
+      - Due review/learning cards first (sorted by due_date ASC)
+      - New cards up to the daily limit (default 15/topic/day)
+    Registers new cards in user_card_srs + daily_learning_log automatically.
+    """
+    if not crud.get_user_by_id(db, user_id):
+        raise HTTPException(404, "User not found")
+    if not crud.get_topic_by_id(db, topic_id):
+        raise HTTPException(404, "Topic not found")
+    return crud.build_session_queue(db, user_id=user_id, topic_id=topic_id)
+
+
+@app.post("/flashcards/srs-rating", response_model=schemas.SRSCardRead, tags=["flashcards"])
+def rate_flashcard(payload: schemas.SRSRatingRequest, db: Session = Depends(get_db)):
+    """
+    Submit a difficulty rating (again/hard/good/easy) for a card.
+    Updates SM-2 parameters and schedules the next review date.
+    """
+    if not crud.get_user_by_id(db, payload.user_id):
+        raise HTTPException(404, "User not found")
+    if not crud.get_word_by_id(db, payload.word_id):
+        raise HTTPException(404, "Word not found")
+    return crud.apply_srs_rating(
+        db,
+        user_id=payload.user_id,
+        word_id=payload.word_id,
+        topic_id=payload.topic_id,
+        rating=payload.rating,
+    )
+
+
+@app.get("/flashcards/daily-status", response_model=schemas.DailyStatusResponse, tags=["flashcards"])
+def get_daily_status(
+    user_id: int = Query(..., ge=1),
+    topic_id: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    """
+    Return today's learning progress for a (user, topic):
+      daily_learned, daily_limit, daily_remaining, due_review_count
+    Used by the topic-select screen to show lock banners and badges.
+    """
+    if not crud.get_user_by_id(db, user_id):
+        raise HTTPException(404, "User not found")
+    return crud.get_daily_status(db, user_id=user_id, topic_id=topic_id)
+
+
 # ============================================================
 # FR3 – Quiz / Test
 # ============================================================
@@ -448,11 +554,18 @@ def submit_quiz(quiz_id: int, db: Session = Depends(get_db)):
 
 @app.post("/ai-readings", response_model=schemas.AIReadingRead, tags=["ai-reading"])
 def create_ai_reading(payload: schemas.AIReadingCreate, db: Session = Depends(get_db)):
-    """Generate passage + comprehension questions, persist everything."""
+    """
+    Generate a reading passage + exactly 5 comprehension questions + a descriptive title.
+    Topic is optional; difficulty drives time_limit_seconds automatically.
+    """
     if not crud.get_user_by_id(db, payload.user_id):
         raise HTTPException(404, "User not found")
 
-    from .seed_gemini import generate_reading_passage, generate_comprehension_questions
+    from .seed_gemini import (
+        generate_reading_passage,
+        generate_comprehension_questions,
+        generate_test_title,
+    )
 
     try:
         generated_passage = generate_reading_passage(
@@ -465,13 +578,26 @@ def create_ai_reading(payload: schemas.AIReadingCreate, db: Session = Depends(ge
             f"[Passage generation failed: {exc}] Vocabulary: {payload.input_vocabulary}"
         )
 
-    reading = crud.create_ai_reading(db, payload, generated_passage=generated_passage)
+    # Generate a descriptive title (non-blocking; falls back to vocab-based label)
+    title = None
+    try:
+        title = generate_test_title(
+            passage=generated_passage,
+            vocabulary=payload.input_vocabulary,
+            difficulty=payload.difficulty_param,
+        )
+    except Exception:
+        pass
+
+    reading = crud.create_ai_reading(
+        db, payload, generated_passage=generated_passage, title=title
+    )
 
     try:
         for q in generate_comprehension_questions(
             passage=generated_passage,
             vocabulary=payload.input_vocabulary,
-            count=4,
+            count=5,           # always exactly 5 questions
         ):
             crud.add_ai_reading_question(
                 db,
@@ -491,6 +617,58 @@ def create_ai_reading(payload: schemas.AIReadingCreate, db: Session = Depends(ge
     db.refresh(reading)
     _ = reading.comprehension_questions
     return reading
+
+
+@app.post("/ai-readings/{reading_id}/submit", response_model=schemas.AIReadingRead, tags=["ai-reading"])
+def submit_ai_reading(
+    reading_id: int,
+    payload: schemas.AIReadingSubmitRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Submit all answers at once with elapsed time.
+    Generates per-question explanations (AI call) on first submission only.
+    Auto-submission when timer expires sends the same request from the frontend.
+    """
+    reading = crud.get_ai_reading(db, reading_id)
+    if not reading:
+        raise HTTPException(404, "Reading not found")
+    if reading.is_completed:
+        # Idempotent – return already-scored result
+        db.refresh(reading)
+        _ = reading.comprehension_questions
+        return reading
+
+    from .seed_gemini import generate_explanations
+
+    return crud.submit_ai_reading_with_answers(
+        db,
+        reading=reading,
+        answers={int(k): v for k, v in payload.answers.items()},
+        completion_seconds=payload.completion_seconds,
+        generate_explanations_fn=generate_explanations,
+    )
+
+
+@app.post("/ai-readings/{reading_id}/retake", response_model=schemas.AIReadingRead, tags=["ai-reading"])
+def retake_ai_reading(
+    reading_id: int,
+    payload: schemas.AIReadingRetakeRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Create a new attempt using the exact same passage and questions.
+    Resets user answers and timer. Does NOT call the AI again.
+    Explanations from the original attempt are copied to the new attempt rows.
+    """
+    if not crud.get_user_by_id(db, payload.user_id):
+        raise HTTPException(404, "User not found")
+    if not crud.get_ai_reading(db, reading_id):
+        raise HTTPException(404, "Reading not found")
+    try:
+        return crud.retake_ai_reading(db, original_reading_id=reading_id, user_id=payload.user_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.get("/ai-readings/{reading_id}", response_model=schemas.AIReadingRead, tags=["ai-reading"])
@@ -524,24 +702,3 @@ def add_ai_reading_question(
     payload.reading_id = reading_id
     return crud.add_ai_reading_question(db, payload)
 
-
-@app.patch("/ai-reading-questions/{question_id}/answer", response_model=schemas.AIReadingQuestionRead, tags=["ai-reading"])
-def answer_ai_reading_question(
-    question_id: int,
-    payload: schemas.AIReadingAnswerSubmit,
-    db: Session = Depends(get_db),
-):
-    q = crud.get_ai_reading_question(db, question_id)
-    if not q:
-        raise HTTPException(404, "Question not found")
-    return crud.submit_ai_reading_answer(db, q, payload)
-
-
-@app.post("/ai-readings/{reading_id}/submit", response_model=schemas.AIReadingRead, tags=["ai-reading"])
-def submit_ai_reading(reading_id: int, db: Session = Depends(get_db)):
-    reading = crud.get_ai_reading(db, reading_id)
-    if not reading:
-        raise HTTPException(404, "Reading not found")
-    if reading.is_completed:
-        raise HTTPException(400, "Reading test already submitted")
-    return crud.calculate_ai_reading_score(db, reading)
