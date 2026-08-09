@@ -8,3 +8,4 @@ requests
 email-validator
 pydantic[email]
 cryptography
+PyJWT==2.9.0

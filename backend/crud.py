@@ -86,6 +86,17 @@ def get_random_words(db: Session, limit: int = 10, topic_id: int | None = None) 
     return q.order_by(func.rand()).limit(limit).all()
 
 
+def _duration_minutes(start, end) -> int | None:
+    """Compute elapsed minutes between two datetime values safely."""
+    if not start or not end:
+        return None
+    if hasattr(start, 'tzinfo') and start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if hasattr(end, 'tzinfo') and end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    return max(0, int((end - start).total_seconds() // 60))
+
+
 # ============================================================
 # FR1 – User Management
 # ============================================================
@@ -142,6 +153,20 @@ def update_user(db: Session, user: models.User, payload: schemas.UserUpdate) -> 
     return user
 
 
+def change_user_password(db: Session, user: models.User, new_hashed_password: str) -> models.User:
+    user.password_hash = new_hashed_password
+    user.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def delete_user_account(db: Session, user: models.User) -> None:
+    """Permanently remove the user and all dependent records via ORM cascades."""
+    db.delete(user)
+    db.commit()
+
+
 # ── UserSession ───────────────────────────────────────────────────────────────
 
 def create_user_session(
@@ -161,12 +186,28 @@ def create_user_session(
 
 
 def invalidate_user_session(db: Session, session_id: int) -> bool:
-    """Mark a session as inactive (logout)."""
+    """Mark a session inactive and close its latest successful login log."""
     s = db.query(models.UserSession).filter(models.UserSession.session_id == session_id).first()
     if not s:
         return False
+    if not s.is_active:
+        return True
+    now = datetime.now(timezone.utc)
     s.is_active = False
-    s.logout_time = datetime.now(timezone.utc)
+    s.logout_time = now
+    # Also stamp logout_time on the matching login log entry
+    log = (
+        db.query(models.LoginLog)
+        .filter(
+            models.LoginLog.user_id == s.user_id,
+            models.LoginLog.login_status == "Success",
+            models.LoginLog.logout_time.is_(None),
+        )
+        .order_by(models.LoginLog.login_time.desc())
+        .first()
+    )
+    if log:
+        log.logout_time = now
     db.commit()
     return True
 
@@ -269,6 +310,18 @@ def record_learning_history(
     return entry
 
 
+def count_learning_history(
+    db: Session, user_id: int, activity_type: str | None = None
+) -> int:
+    """Return total count for pagination."""
+    q = db.query(func.count(models.LearningHistory.history_id)).filter(
+        models.LearningHistory.user_id == user_id
+    )
+    if activity_type:
+        q = q.filter(models.LearningHistory.activity_type == activity_type)
+    return int(q.scalar() or 0)
+
+
 def list_learning_history(
     db: Session, user_id: int,
     activity_type: str | None = None,
@@ -280,12 +333,61 @@ def list_learning_history(
     return q.order_by(models.LearningHistory.completed_at.desc()).offset(offset).limit(limit).all()
 
 
+def get_weekly_activity(db: Session, user_id: int) -> list[dict]:
+    """Return exactly 7 days of activity data for the Profile weekly chart."""
+    today = datetime.now(timezone.utc).date()
+    start = today - timedelta(days=6)
+    rows = (
+        db.query(models.LearningHistory)
+        .filter(
+            models.LearningHistory.user_id == user_id,
+            models.LearningHistory.completed_at >= datetime(
+                start.year, start.month, start.day, tzinfo=timezone.utc
+            ),
+        )
+        .all()
+    )
+    buckets = {start + timedelta(days=i): {"activities": 0, "minutes": 0} for i in range(7)}
+    for row in rows:
+        d = row.completed_at.date() if hasattr(row.completed_at, "date") else row.completed_at
+        if d in buckets:
+            buckets[d]["activities"] += 1
+            buckets[d]["minutes"] += int(row.duration or 0)
+    return [{"date": d.isoformat(), **buckets[d]} for d in sorted(buckets)]
+
+
 def get_user_statistics(db: Session, user_id: int) -> models.UserStatistics | None:
     return (
         db.query(models.UserStatistics)
         .filter(models.UserStatistics.user_id == user_id)
         .first()
     )
+
+
+def _refresh_streak(db: Session, user_id: int, stats: models.UserStatistics) -> None:
+    """Recompute the current_streak from the learning_history table."""
+    dates_result = (
+        db.query(models.LearningHistory.completed_at)
+        .filter(models.LearningHistory.user_id == user_id)
+        .order_by(models.LearningHistory.completed_at.desc())
+        .all()
+    )
+    unique_dates = set()
+    for (completed_at,) in dates_result:
+        if completed_at:
+            unique_dates.add(
+                completed_at.date() if hasattr(completed_at, "date") else completed_at
+            )
+    if not unique_dates:
+        stats.current_streak = 0
+        return
+    today = datetime.now(timezone.utc).date()
+    cursor = today if today in unique_dates else today - timedelta(days=1)
+    streak = 0
+    while cursor in unique_dates:
+        streak += 1
+        cursor -= timedelta(days=1)
+    stats.current_streak = streak
 
 
 def _update_statistics_after_flashcard(
@@ -296,7 +398,7 @@ def _update_statistics_after_flashcard(
         stats.total_flashcards += 1
         stats.total_words += cards_reviewed
         stats.total_xp += cards_reviewed * 2
-        # No commit here – caller is responsible for the transaction boundary
+        _refresh_streak(db, user_id, stats)
 
 
 def _update_statistics_after_quiz(
@@ -310,6 +412,7 @@ def _update_statistics_after_quiz(
             (stats.average_score * prev_total + accuracy) / stats.total_quizzes, 2
         )
         stats.total_xp += int(score) * 5
+        _refresh_streak(db, user_id, stats)
 
 
 def _update_statistics_after_reading(
@@ -318,6 +421,7 @@ def _update_statistics_after_reading(
     stats = get_user_statistics(db, user_id)
     if stats:
         stats.total_xp += int(accuracy // 10) * 3
+        _refresh_streak(db, user_id, stats)
 
 
 # ============================================================
@@ -360,28 +464,32 @@ def list_flashcard_sessions(
 def complete_flashcard_session(
     db: Session, session: models.FlashcardSession
 ) -> models.FlashcardSession:
-    """Mark completed → write learning_history + update statistics."""
+    """Complete a flashcard session and persist history/statistics atomically."""
     if session.is_completed:
-        return session  # idempotent – already done
+        return session
+    now = datetime.now(timezone.utc)
     session.is_completed = True
-    session.completed_at = datetime.now(timezone.utc)
-    # Do NOT commit here – caller (update_flashcard_progress) owns the transaction
-    # when called from the SRS path.  We flush so the timestamp is visible,
-    # and let the outer commit persist everything atomically.
-    db.flush()
+    session.completed_at = now
+    duration = _duration_minutes(session.started_at, now)
 
-    # ── side-effects (each opens its own commit) ──────────────────────────────
+    _update_statistics_after_flashcard(db, session.user_id, session.cards_reviewed)
+    stats = get_user_statistics(db, session.user_id)
+    if stats and duration is not None:
+        stats.study_hours = round(stats.study_hours + duration / 60.0, 2)
+
+    db.commit()
+    db.refresh(session)
+
     try:
         record_learning_history(
             db,
             user_id=session.user_id,
             activity_type="Flashcard",
             activity_id=session.session_id,
-            duration=None,
+            duration=duration,
         )
-        _update_statistics_after_flashcard(db, session.user_id, session.cards_reviewed)
     except Exception:
-        pass  # never block the main flow for stats errors
+        pass
     return session
 
 
@@ -787,7 +895,7 @@ def submit_quiz_answer(
 
 
 def calculate_quiz_score(db: Session, quiz: models.Quiz) -> models.Quiz:
-    """Tally answers, persist score/accuracy, mark completed."""
+    """Tally answers, persist score/accuracy/duration, mark completed."""
     questions = (
         db.query(models.QuizQuestion)
         .filter(models.QuizQuestion.quiz_id == quiz.quiz_id)
@@ -800,15 +908,17 @@ def calculate_quiz_score(db: Session, quiz: models.Quiz) -> models.Quiz:
     quiz.accuracy = round((correct / total) * 100, 2) if total else 0.0
     quiz.is_completed = True
     quiz.completed_at = datetime.now(timezone.utc)
+    duration = _duration_minutes(quiz.started_at, quiz.completed_at)
 
-    # side-effects – queue changes before single commit
     _update_statistics_after_quiz(db, quiz.user_id, quiz.score, quiz.accuracy)
+    stats = get_user_statistics(db, quiz.user_id)
+    if stats and duration is not None:
+        stats.study_hours = round(stats.study_hours + duration / 60.0, 2)
 
     db.commit()
     db.refresh(quiz)
     _ = quiz.questions   # eager-load while session open
 
-    # history written after commit (its own transaction)
     try:
         record_learning_history(
             db,
@@ -817,6 +927,7 @@ def calculate_quiz_score(db: Session, quiz: models.Quiz) -> models.Quiz:
             activity_id=quiz.quiz_id,
             score=quiz.score,
             accuracy=quiz.accuracy,
+            duration=duration,
         )
     except Exception:
         pass

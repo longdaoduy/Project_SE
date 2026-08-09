@@ -104,6 +104,17 @@ class UserLoginResponse(BaseModel):
     session_id: int
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=6, max_length=128)
+    confirm_password: str = Field(..., min_length=6, max_length=128)
+
+
+class DeleteAccountRequest(BaseModel):
+    password: str = Field(..., min_length=1)
+    confirmation: str = Field(..., min_length=1)
+
+
 # ── User Session ──────────────────────────────────────────────────────────────
 
 class UserSessionRead(BaseModel):
@@ -178,6 +189,25 @@ class LearningHistoryRead(BaseModel):
     accuracy: float | None = None
     duration: int | None = None
     completed_at: datetime | None = None
+
+
+class LearningHistoryPage(BaseModel):
+    """Paginated wrapper for learning history."""
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+    items: list[LearningHistoryRead]
+
+
+class WeeklyActivityItem(BaseModel):
+    date: str          # ISO date string e.g. "2026-08-03"
+    activities: int
+    minutes: int
+
+
+class WeeklyActivityResponse(BaseModel):
+    items: list[WeeklyActivityItem]
 
 
 # ============================================================

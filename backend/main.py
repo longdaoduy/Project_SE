@@ -1,9 +1,10 @@
 """
-SmartEng REST API  v3.0
-========================
+SmartEng REST API  v3.1.0
+==========================
 Endpoint groups:
   /topics /words                – FR6  Vocabulary Database
   /users /profile-settings      – FR1  User Management
+  /me                           – FR1  Token-authenticated self-service
   /history /statistics          – FR4  Learning History & Stats
   /flashcard-sessions           – FR2  Flashcard Learning
   /starred-words                – FR2  Starred Words
@@ -11,22 +12,27 @@ Endpoint groups:
   /ai-readings                  – FR8  AI Reading Generation
 """
 
-import hashlib
 from typing import List
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from . import crud, models, schemas
 from .database import SessionLocal, engine
+from .security import (
+    create_access_token, decode_access_token,
+    hash_password, needs_rehash, verify_password,
+)
 
-app = FastAPI(title="SmartEng API", version="3.0.0")
+app = FastAPI(title="SmartEng API", version="3.1.0")
+bearer = HTTPBearer(auto_error=False)
 
-# ── CORS – allow all origins so Expo web / mobile simulators can reach the API ──
+# ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # tighten in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -94,6 +100,27 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+    db: Session = Depends(get_db),
+):
+    """Resolve the authenticated user from a real JWT + active DB session."""
+    if not credentials or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        payload = decode_access_token(credentials.credentials)
+        user_id = int(payload.get("sub"))
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    session = crud.get_active_session_by_token(db, credentials.credentials)
+    if not session or session.user_id != user_id:
+        raise HTTPException(status_code=401, detail="Session is inactive or invalid")
+    user = crud.get_user_by_id(db, user_id)
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="User account is inactive")
+    return user
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -172,8 +199,7 @@ def get_random_flashcards(
 def register_user(payload: schemas.UserCreate, db: Session = Depends(get_db)):
     if crud.get_user_by_email(db, payload.email):
         raise HTTPException(400, "Email already registered")
-    hashed = hashlib.sha256(payload.password.encode()).hexdigest()
-    return crud.create_user(db, payload, hashed_password=hashed)
+    return crud.create_user(db, payload, hashed_password=hash_password(payload.password))
 
 
 @app.get("/users/{user_id}", response_model=schemas.UserRead, tags=["users"])
@@ -195,22 +221,25 @@ def update_user(user_id: int, payload: schemas.UserUpdate, db: Session = Depends
 @app.post("/users/login", response_model=schemas.UserLoginResponse, tags=["users"])
 def login_user(payload: schemas.UserLoginRequest, db: Session = Depends(get_db)):
     """
-    Authenticate user and create a JWT session + login log entry.
-    NOTE: JWT is currently a SHA-256 placeholder – replace with a real JWT library.
+    Authenticate with PBKDF2-HMAC-SHA256 password verification.
+    Old SHA-256 hashes are accepted and transparently upgraded to PBKDF2.
+    Returns a signed JWT (not a SHA-256 placeholder).
     """
     user = crud.get_user_by_email(db, payload.email)
-    hashed_input = hashlib.sha256(payload.password.encode()).hexdigest()
-
-    if not user or user.password_hash != hashed_input or not user.is_active:
-        # Log failed attempt if user exists
+    if not user or not verify_password(payload.password, user.password_hash) or not user.is_active:
         if user:
             crud.create_login_log(db, user.user_id, "Failed",
                                   ip_address=payload.ip_address,
                                   device_name=payload.device_name)
         raise HTTPException(401, "Invalid email or password")
 
-    # Create JWT placeholder token
-    token = hashlib.sha256(f"{user.user_id}:{user.email}:{user.created_at}".encode()).hexdigest()
+    # Transparently upgrade legacy SHA-256 hashes to PBKDF2
+    if needs_rehash(user.password_hash):
+        user.password_hash = hash_password(payload.password)
+        db.commit()
+        db.refresh(user)
+
+    token = create_access_token(user.user_id)
     session = crud.create_user_session(
         db, user.user_id, token,
         device_name=payload.device_name,
@@ -224,29 +253,20 @@ def login_user(payload: schemas.UserLoginRequest, db: Session = Depends(get_db))
 
 @app.post("/users/logout", tags=["users"])
 def logout_user(session_id: int = Query(..., ge=1), db: Session = Depends(get_db)):
-    """Invalidate a session token (logout)."""
     ok = crud.invalidate_user_session(db, session_id)
     if not ok:
         raise HTTPException(404, "Session not found")
     return {"detail": "Logged out successfully"}
 
 
-@app.get(
-    "/users/{user_id}/sessions",
-    response_model=List[schemas.UserSessionRead],
-    tags=["users"],
-)
+@app.get("/users/{user_id}/sessions", response_model=List[schemas.UserSessionRead], tags=["users"])
 def get_user_sessions(user_id: int, db: Session = Depends(get_db)):
     if not crud.get_user_by_id(db, user_id):
         raise HTTPException(404, "User not found")
     return crud.list_user_sessions(db, user_id)
 
 
-@app.get(
-    "/users/{user_id}/login-logs",
-    response_model=List[schemas.LoginLogRead],
-    tags=["users"],
-)
+@app.get("/users/{user_id}/login-logs", response_model=List[schemas.LoginLogRead], tags=["users"])
 def get_login_logs(
     user_id: int,
     limit: int = Query(20, ge=1, le=100),
@@ -255,6 +275,102 @@ def get_login_logs(
     if not crud.get_user_by_id(db, user_id):
         raise HTTPException(404, "User not found")
     return crud.list_login_logs(db, user_id, limit=limit)
+
+
+@app.post("/users/{user_id}/change-password", tags=["users"])
+def change_password(
+    user_id: int, payload: schemas.ChangePasswordRequest, db: Session = Depends(get_db)
+):
+    user = crud.get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+    if not verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(400, "Current password is incorrect")
+    if payload.new_password != payload.confirm_password:
+        raise HTTPException(400, "New passwords do not match")
+    if payload.new_password == payload.current_password:
+        raise HTTPException(400, "New password must be different from current password")
+    crud.change_user_password(db, user, hash_password(payload.new_password))
+    for s in crud.list_user_sessions(db, user_id):
+        if s.is_active:
+            crud.invalidate_user_session(db, s.session_id)
+    return {"detail": "Password changed successfully"}
+
+
+@app.delete("/users/{user_id}", tags=["users"])
+def delete_user(
+    user_id: int, payload: schemas.DeleteAccountRequest, db: Session = Depends(get_db)
+):
+    user = crud.get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+    if not verify_password(payload.password, user.password_hash):
+        raise HTTPException(400, "Incorrect password")
+    if payload.confirmation.strip().upper() != "DELETE":
+        raise HTTPException(400, 'Confirmation must be "DELETE"')
+    crud.delete_user_account(db, user)
+    return {"detail": "Account deleted successfully"}
+
+
+# ── /me – token-authenticated self-service ────────────────────────────────────
+
+@app.get("/me", response_model=schemas.UserRead, tags=["users"])
+def get_me(current_user=Depends(get_current_user)):
+    return current_user
+
+
+@app.patch("/me", response_model=schemas.UserRead, tags=["users"])
+def update_me(
+    payload: schemas.UserUpdate,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return crud.update_user(db, current_user, payload)
+
+
+@app.post("/me/logout", tags=["users"])
+def logout_me(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    session = crud.get_active_session_by_token(db, credentials.credentials)
+    if session:
+        crud.invalidate_user_session(db, session.session_id)
+    return {"detail": "Logged out successfully"}
+
+
+@app.post("/me/change-password", tags=["users"])
+def change_my_password(
+    payload: schemas.ChangePasswordRequest,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not verify_password(payload.current_password, current_user.password_hash):
+        raise HTTPException(400, "Current password is incorrect")
+    if payload.new_password != payload.confirm_password:
+        raise HTTPException(400, "New passwords do not match")
+    if payload.new_password == payload.current_password:
+        raise HTTPException(400, "New password must be different from current password")
+    crud.change_user_password(db, current_user, hash_password(payload.new_password))
+    for s in crud.list_user_sessions(db, current_user.user_id):
+        if s.is_active:
+            crud.invalidate_user_session(db, s.session_id)
+    return {"detail": "Password changed. Please log in again."}
+
+
+@app.delete("/me", tags=["users"])
+def delete_me(
+    payload: schemas.DeleteAccountRequest,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not verify_password(payload.password, current_user.password_hash):
+        raise HTTPException(400, "Incorrect password")
+    if payload.confirmation.strip().upper() != "DELETE":
+        raise HTTPException(400, 'Confirmation must be "DELETE"')
+    crud.delete_user_account(db, current_user)
+    return {"detail": "Account deleted successfully"}
 
 
 # ── Profile Settings ──────────────────────────────────────────────────────────
@@ -291,11 +407,7 @@ def update_profile_settings(
 # FR4 – Learning History & Statistics
 # ============================================================
 
-@app.get(
-    "/users/{user_id}/history",
-    response_model=List[schemas.LearningHistoryRead],
-    tags=["history"],
-)
+@app.get("/users/{user_id}/history", response_model=List[schemas.LearningHistoryRead], tags=["history"])
 def get_learning_history(
     user_id: int,
     activity_type: str | None = Query(default=None),
@@ -303,22 +415,75 @@ def get_learning_history(
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
+    """Backward-compatible flat list (used by existing frontend)."""
     if not crud.get_user_by_id(db, user_id):
         raise HTTPException(404, "User not found")
     return crud.list_learning_history(db, user_id, activity_type=activity_type,
                                       limit=limit, offset=offset)
 
 
-@app.get(
-    "/users/{user_id}/statistics",
-    response_model=schemas.UserStatisticsRead,
-    tags=["history"],
-)
+@app.get("/users/{user_id}/history/page", response_model=schemas.LearningHistoryPage, tags=["history"])
+def get_learning_history_page(
+    user_id: int,
+    activity_type: str | None = Query(default=None),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """Paginated history with total count and has_more flag."""
+    if not crud.get_user_by_id(db, user_id):
+        raise HTTPException(404, "User not found")
+    total = crud.count_learning_history(db, user_id, activity_type=activity_type)
+    items = crud.list_learning_history(db, user_id, activity_type=activity_type,
+                                       limit=limit, offset=offset)
+    return {"total": total, "limit": limit, "offset": offset,
+            "has_more": offset + len(items) < total, "items": items}
+
+
+@app.get("/users/{user_id}/weekly-activity", response_model=schemas.WeeklyActivityResponse, tags=["history"])
+def get_weekly_activity(user_id: int, db: Session = Depends(get_db)):
+    """7-day activity chart data for the Profile screen."""
+    if not crud.get_user_by_id(db, user_id):
+        raise HTTPException(404, "User not found")
+    return {"items": crud.get_weekly_activity(db, user_id)}
+
+
+@app.get("/users/{user_id}/statistics", response_model=schemas.UserStatisticsRead, tags=["history"])
 def get_user_statistics(user_id: int, db: Session = Depends(get_db)):
     stats = crud.get_user_statistics(db, user_id)
     if not stats:
         raise HTTPException(404, "Statistics not found")
     return stats
+
+
+# ── /me history & stats (token-auth) ─────────────────────────────────────────
+
+@app.get("/me/history", response_model=schemas.LearningHistoryPage, tags=["history"])
+def get_my_history(
+    activity_type: str | None = Query(default=None),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    total = crud.count_learning_history(db, current_user.user_id, activity_type=activity_type)
+    items = crud.list_learning_history(db, current_user.user_id, activity_type=activity_type,
+                                       limit=limit, offset=offset)
+    return {"total": total, "limit": limit, "offset": offset,
+            "has_more": offset + len(items) < total, "items": items}
+
+
+@app.get("/me/statistics", response_model=schemas.UserStatisticsRead, tags=["history"])
+def get_my_statistics(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    stats = crud.get_user_statistics(db, current_user.user_id)
+    if not stats:
+        raise HTTPException(404, "Statistics not found")
+    return stats
+
+
+@app.get("/me/weekly-activity", response_model=schemas.WeeklyActivityResponse, tags=["history"])
+def get_my_weekly_activity(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    return {"items": crud.get_weekly_activity(db, current_user.user_id)}
 
 
 # ============================================================
