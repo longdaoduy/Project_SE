@@ -105,6 +105,7 @@ def create_user(
     db: Session, payload: schemas.UserCreate, hashed_password: str
 ) -> models.User:
     user = models.User(
+        username=payload.email.strip().lower(),
         full_name=payload.full_name.strip(),
         email=payload.email.strip().lower(),
         password_hash=hashed_password,

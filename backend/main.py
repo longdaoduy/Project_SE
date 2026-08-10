@@ -13,6 +13,7 @@ Endpoint groups:
 """
 
 from typing import List
+import logging
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -199,7 +200,13 @@ def get_random_flashcards(
 def register_user(payload: schemas.UserCreate, db: Session = Depends(get_db)):
     if crud.get_user_by_email(db, payload.email):
         raise HTTPException(400, "Email already registered")
-    return crud.create_user(db, payload, hashed_password=hash_password(payload.password))
+    try:
+        return crud.create_user(db, payload, hashed_password=hash_password(payload.password))
+    except Exception as exc:
+        # Log full traceback to server logs for debugging, then return an HTTP 500.
+        logging.exception("Registration failed while creating user")
+        # Return the original message in the response to aid debugging in this dev workspace.
+        raise HTTPException(status_code=500, detail=f"Registration failed: {exc}")
 
 
 @app.get("/users/{user_id}", response_model=schemas.UserRead, tags=["users"])

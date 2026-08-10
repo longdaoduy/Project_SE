@@ -85,6 +85,20 @@ add_col("users", "english_level", "ENUM('A1','A2','B1','B2','C1','C2') NULL")
 add_col("users", "daily_goal",    "INT NOT NULL DEFAULT 20")
 add_col("users", "role",          "ENUM('student','admin') NOT NULL DEFAULT 'student'")
 
+# Keep legacy columns from blocking writes made through the new ORM schema.
+# Existing clients can still populate these columns, but new clients no longer
+# need to write both the old and new password/goal fields.
+if col_exists("users", "hashed_password"):
+    run(
+        "ALTER TABLE `users` MODIFY COLUMN `hashed_password` VARCHAR(255) NULL",
+        "Make legacy users.hashed_password optional",
+    )
+if col_exists("users", "daily_goal_minutes"):
+    run(
+        "ALTER TABLE `users` MODIFY COLUMN `daily_goal_minutes` INT NOT NULL DEFAULT 20",
+        "Default legacy users.daily_goal_minutes",
+    )
+
 # Populate new columns from old ones (safe even if already populated)
 run("""
 UPDATE users
