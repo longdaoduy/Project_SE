@@ -10,15 +10,49 @@ import {
     Dimensions,
     Image ,
     TouchableOpacity,
+    Alert,
 } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { loginUser } from '../api';
+import { useData } from '../context/DataContext';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 export default function LoginScreen({navigation}) {
     const [showPassword, setShowPassword] = useState(false);
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const { setToken, setCurrentUser, setUserId } = useData();
+
+    // Hàm để xử lý khi người dùng nhấn vào nút đăng nhập
+    const handleLogin = async () => {
+        try {
+            const response = await loginUser({
+                email,
+                password,
+                device_name: 'Mobile App',
+                ip_address: null,
+            });
+
+            await AsyncStorage.setItem('jwt_token', response.jwt_token);
+            await AsyncStorage.setItem('session_id', String(response.session_id));
+            await AsyncStorage.setItem('current_user', JSON.stringify(response.user));
+
+            setUserId(response.user.user_id);
+            setCurrentUser(response.user);
+            setToken(response.jwt_token);
+
+            navigation.reset({
+                index: 0,
+                routes: [{ name: 'Home' }], // Chuyển hướng đến màn hình Home sau khi đăng nhập thành công
+            });
+        } catch (error) {
+            Alert.alert('Login failed', error.message || 'Cannot login');
+        }
+    }
 
     return (
         // Khung bọc ngoài cùng (Nếu là Web thì căn giữa để tạo hiệu ứng giả lập)
@@ -76,6 +110,8 @@ export default function LoginScreen({navigation}) {
                                     style={styles.emailInput}
                                     placeholder="Enter your email"
                                     keyboardType="email-address"
+                                    value={email}
+                                    onChangeText={setEmail}
                                 />
                                 
                             </View>
@@ -89,6 +125,8 @@ export default function LoginScreen({navigation}) {
                                     style={styles.passwordInput}
                                     placeholder="Enter your password"
                                     secureTextEntry={!showPassword}
+                                    value={password}
+                                    onChangeText={setPassword}
                                 />
 
                                 {/*Icon mắt để hiển thị mật khẩu*/}
@@ -108,7 +146,7 @@ export default function LoginScreen({navigation}) {
                         </TouchableOpacity>
 
                         {/* Nút đăng nhập */}
-                        <TouchableOpacity style={styles.loginButton} onPress={() => navigation.navigate('Home')}>
+                        <TouchableOpacity style={styles.loginButton} onPress={handleLogin}>
                             <Text style={styles.loginButtonText}>Sign in</Text>
                         </TouchableOpacity>
 

@@ -15,22 +15,25 @@ import {
 
 import { AntDesign } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useData } from '../context/DataContext';
+import { getMe, getMyHistory, getMyStatistics, getMyWeeklyActivity } from '../api';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 export default function ProfileScreen({navigation}) {
+    const { token } = useData();
     const [profileData, setProfileData] = useState({
-        name: 'Duy Long',
-        email: "longdeptrai@gmail.com",
-        englishLevel: "B2 English Level",
+        name: '—',
+        email: "—",
+        englishLevel: "—",
         stats: {
-            streaks: 12,
-            level: 3,
-            xp: 243,
-            words: 1280,
-            quizzes: 45,
-            perfect: 12,
-            hours: 36,
+            streaks: 0,
+            level: 1,
+            xp: 0,
+            words: 0,
+            quizzes: 0,
+            perfect: 0,
+            hours: 0,
         },
        
         avatarUrl: null, // URL ảnh đại diện của người dùng, nếu null thì sẽ hiển thị ảnh mặc định
@@ -53,12 +56,49 @@ export default function ProfileScreen({navigation}) {
     });
 
     const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState('');
 
     useEffect(() => {
-        // Hiện tại chưa có backend, ta dùng dữ liệu Mock khai báo ở useState phía trên.
-        // Sau này có backend Node.js, chỉ cần mở đoạn code fetch dưới đây ra:
-        
-    }, []);
+        const loadProfile = async () => {
+            if (!token) return;
+            try {
+                setIsLoading(true);
+                setError('');
+                const [me, stats, weekly, history] = await Promise.all([
+                    getMe(token),
+                    getMyStatistics(token),
+                    getMyWeeklyActivity(token),
+                    getMyHistory(token, { limit: 20, offset: 0 }),
+                ]);
+
+                setProfileData({
+                    name: me.full_name || me.username || '—',
+                    email: me.email || '—',
+                    englishLevel: me.english_level || '—',
+                    stats: {
+                        streaks: stats.current_streak || 0,
+                        level: Math.max(1, Math.floor((stats.total_xp || 0) / 100) + 1),
+                        xp: stats.total_xp || 0,
+                        words: stats.total_words || 0,
+                        quizzes: stats.total_quizzes || 0,
+                        perfect: Math.round((stats.average_score || 0) / 10),
+                        hours: Math.round(stats.study_hours || 0),
+                    },
+                    weeklyHistory: (weekly.items || []).map((item) => ({
+                        day: item.date,
+                        words: item.activities,
+                    })),
+                    achievements: history.items ? [] : [],
+                });
+            } catch (e) {
+                setError(e.message || 'Could not load profile');
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        loadProfile();
+    }, [token]);
 
     const totalWordsThisWeek = profileData.weeklyHistory.reduce((sum, item) => sum + item.words, 0);
     {/*Lấy số từ học được nhiều nhất trong tuần để tính phần trăm chiều cao cột biểu đồ*/}
@@ -129,6 +169,7 @@ export default function ProfileScreen({navigation}) {
                     </View>
 
                     <View style={styles.whiteCardContainer}>
+                        {error ? <Text style={{ color: '#ef4444', marginBottom: 12 }}>{error}</Text> : null}
                         {/* Lưới 6 thông số học tập */}
                         <View style={styles.statsGridCard}>
                             <View style={styles.gridRow}>

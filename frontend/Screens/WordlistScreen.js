@@ -16,10 +16,13 @@ import {
 
 import { AntDesign } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { getWords } from '../api';
+import { useData } from '../context/DataContext';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 export default function WordlistScreen({navigation}) {
+    const { topics } = useData();
     
     const [vocabularies, setVocabularies] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -40,8 +43,20 @@ export default function WordlistScreen({navigation}) {
 
     const fetchVocabularies = async () => {
         try {
-            // Sử dụng dữ liệu mẫu cho đến khi có backend
-            setVocabularies(wordlist);
+            const firstTopicId = topics?.[0]?.topic_id ?? null;
+            const data = await getWords(firstTopicId, 100);
+            const normalized = (data || []).map((word) => ({
+                id: word.word_id,
+                word: word.word,
+                type: word.part_of_speech || 'word',
+                phonetic: word.phonetic || '',
+                definition: word.meaning_vi || '',
+                example: word.example_en || word.example_vi || '',
+                audioUrl: null,
+                wordStatus: 'unstudied',
+            }));
+            setVocabularies(normalized);
+            setError(null);
             setLoading(false);
             setRefreshing(false);
 
@@ -58,6 +73,13 @@ export default function WordlistScreen({navigation}) {
     useEffect(() => {
         fetchVocabularies();
     }, []);
+
+    // Khi topics load xong, fetch lại theo topic đầu tiên để dữ liệu khớp
+    useEffect(() => {
+        if (topics.length > 0) {
+            fetchVocabularies();
+        }
+    }, [topics]);
 
     // Xử lý kéo xuống để làm mới (Pull to refresh)
     const handleRefresh = () => {
@@ -107,41 +129,6 @@ export default function WordlistScreen({navigation}) {
             </View>
         </View>
     );
-
-    const wordlist = [
-        {
-            id: 1,
-            word: 'Ubiquitous',
-            type: 'adj',
-            phonetic: 'juːˈbɪkwɪtəs',
-            definition: 'Present, appearing, or found everywhere.',
-            example: 'Smartphones have become ubiquitous in modern society.',
-            audioUrl: 'https://www.oxfordlearnersdictionaries.com/media/english/us_pron/u/ubi/ubiquitous/ubiquitous__us_1.mp3',
-            wordStatus: 'studied', // 'studied' hoặc 'unstudied'
-        },
-
-        {
-            id: 2,
-            word: 'Accurate',
-            type: 'adj',
-            phonetic: 'ˈækjʊrət',
-            definition: 'Exact or correct.',
-            example: 'The survey results were accurate.',
-            audioUrl: 'https://www.oxfordlearnersdictionaries.com/media/english/us_pron/a/acc/accurate/accurate__us_1.mp3',
-            wordStatus: 'unstudied', // 'studied' hoặc 'unstudied'
-        },
-
-        {
-            id: 3,
-            word: 'Postpone',
-            type: 'verb',
-            phonetic: 'pəˈspəʊn',
-            definition: 'To delay or defer an event or action to a later time.',
-            example: 'The meeting was postponed due to unforeseen circumstances.',
-            audioUrl: 'https://www.oxfordlearnersdictionaries.com/media/english/us_pron/p/pos/postpone/postpone__us_1.mp3',
-            wordStatus: 'studied', // 'studied' hoặc 'unstudied'
-        }
-    ]
 
     return (
         // Khung bọc ngoài cùng (Nếu là Web thì căn giữa để tạo hiệu ứng giả lập)
@@ -227,7 +214,25 @@ export default function WordlistScreen({navigation}) {
                                     style={{ width: '100%', marginTop: 10 }}
                                     data={filteredVocabularies}
                                     renderItem={renderVocabularyCard}
-                                    keyExtractor={(item) => item.id.toString()}
+                                    keyExtractor={(item) => String(item.id)}
+                                    ListEmptyComponent={
+                                        loading ? (
+                                            <View style={styles.centerState}>
+                                                <Text style={styles.errorText}>Loading words...</Text>
+                                            </View>
+                                        ) : error ? (
+                                            <View style={styles.centerState}>
+                                                <Text style={styles.errorText}>{error}</Text>
+                                                <TouchableOpacity style={styles.retryBtn} onPress={fetchVocabularies}>
+                                                    <Text style={styles.retryText}>Retry</Text>
+                                                </TouchableOpacity>
+                                            </View>
+                                        ) : (
+                                            <View style={styles.centerState}>
+                                                <Text style={styles.errorText}>No words found for this topic.</Text>
+                                            </View>
+                                        )
+                                    }
                                 />
                             </View>
                         </ScrollView>

@@ -14,6 +14,9 @@ import {
 
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { loginUser, registerUser } from '../api';
+import { useData } from '../context/DataContext';
 
 const LEVELS = [
     { id: 'A1', title: 'Beginner A1', sub: 'Just starting out' },
@@ -34,6 +37,8 @@ const GOALS = [
 const DAILY_GOALS = [5, 10, 15, 20];
 
 export default function RegisterScreen({ navigation }) {
+    const { setToken, setCurrentUser, setUserId } = useData();
+
     // 1. Quản lý Step hiện tại
     const [step, setStep] = useState(1); // 1 | 2 | 3
     const [loading, setLoading] = useState(false);
@@ -103,26 +108,30 @@ export default function RegisterScreen({ navigation }) {
             setLoading(true);
 
             const payload = {
-                username: formData.username,
+                full_name: formData.username,
                 email: formData.email,
                 password: formData.password,
-                englishLevel: formData.level,
-                learningGoals: formData.goals,
-                dailyGoalMinutes: formData.dailyGoal,
+                english_level: formData.level,
+                daily_goal: formData.dailyGoal,
+                role: 'student',
             };
 
-            /* === TÍCH HỢP BACKEND CỦA BẠN TẠI ĐÂY === */
-            const response = await fetch('https://your-api.com/api/auth/register', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
+            await registerUser(payload);
+
+            const loginResponse = await loginUser({
+                email: formData.email,
+                password: formData.password,
+                device_name: 'Mobile App',
+                ip_address: null,
             });
 
-            const data = await response.json();
+            await AsyncStorage.setItem('jwt_token', loginResponse.jwt_token);
+            await AsyncStorage.setItem('session_id', String(loginResponse.session_id));
+            await AsyncStorage.setItem('current_user', JSON.stringify(loginResponse.user));
 
-            if (!response.ok) {
-                throw new Error(data.message || 'Đăng ký thất bại');
-            }
+            setUserId(loginResponse.user.user_id);
+            setCurrentUser(loginResponse.user);
+            setToken(loginResponse.jwt_token);
 
             Alert.alert('Thành công', 'Tạo tài khoản thành công!');
 

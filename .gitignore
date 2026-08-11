@@ -22,3 +22,6 @@ backend/.env.*
 # SSL cert (contains connection info)
 ca.pem
 backend/ca.pem
+
+#node_modules
+node_modules/

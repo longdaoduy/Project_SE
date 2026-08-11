@@ -24,12 +24,13 @@ export const API_BASE = getApiBase();
 
 // ─── Generic helpers ──────────────────────────────────────────────────────────
 
-async function request(method, path, body = null) {
-  const opts = {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-  };
+async function request(method, path, body = null, token = null) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const opts = { method, headers };
   if (body !== null) opts.body = JSON.stringify(body);
+
   const res = await fetch(`${API_BASE}${path}`, opts);
   if (!res.ok) {
     const text = await res.text();
@@ -38,15 +39,16 @@ async function request(method, path, body = null) {
   return res.json();
 }
 
-const get   = (path, params = {}) => {
+const get   = (path, params = {}, token = null) => {
   const qs = Object.entries(params)
     .filter(([, v]) => v !== null && v !== undefined)
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
     .join('&');
-  return request('GET', qs ? `${path}?${qs}` : path);
+  return request('GET', qs ? `${path}?${qs}` : path, null, token);
 };
-const post  = (path, body)  => request('POST',  path, body);
-const patch = (path, body)  => request('PATCH', path, body);
+const post  = (path, body, token = null)  => request('POST',  path, body, token);
+const patch = (path, body, token = null)  => request('PATCH', path, body, token);
+const del   = (path, body = null, token = null) => request('DELETE', path, body, token);
 
 // ─── Vocabulary / Topics ──────────────────────────────────────────────────────
 
@@ -312,3 +314,46 @@ export async function saveLocalQuizResult(userId, topicId, quizType, results) {
     return null;
   }
 }
+
+// ─── User Management ────────────────────────────────────────────────────────
+
+export const registerUser = (payload) =>
+  post('/users', payload);
+
+export const loginUser = (payload) =>
+  post('/users/login', payload);
+
+export const getMe = (token) =>
+  get('/me', {}, token);
+
+export const updateMe = (token, payload) =>
+  patch('/me', payload, token);
+
+export const logoutMe = (token) =>
+  post('/me/logout', null, token);
+
+export const getMyStatistics = (token) =>
+  get('/me/statistics', {}, token);
+
+export const getMyWeeklyActivity = (token) =>
+  get('/me/weekly-activity', {}, token);
+
+export const getMyHistory = (token, params = {}) =>
+  get('/me/history', params, token);
+
+export const changeMyPassword = (token, payload) =>
+  post('/me/change-password', payload, token);
+
+export const deleteMe = (token, payload) =>
+  del('/me', payload, token);
+
+export const getProfileSettings = (userId) =>
+  get(`/users/${userId}/profile-settings`);
+
+export const updateProfileSettings = (userId, payload) =>
+  patch(`/users/${userId}/profile-settings`, payload);
+
+// Backward-compatible aliases for screens already importing these names.
+export const logoutUser = logoutMe;
+export const changePassword = changeMyPassword;
+export const deleteAccount = deleteMe;

@@ -1,14 +1,54 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import { getTopics } from '../api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getMe, getTopics } from '../api';
 
 const DataContext = createContext();
 
-// Demo user — used for all backend calls until real auth is wired up
-export const DEMO_USER_ID = 1;
-
 export function DataProvider({ children }) {
   // ── Auth ────────────────────────────────────────────────────────────────────
-  const [userId, setUserId] = useState(DEMO_USER_ID);
+  const [token, setToken] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [userId, setUserId] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+
+  useEffect(() => {
+    const restoreAuth = async () => {
+      try {
+        const savedToken = await AsyncStorage.getItem('jwt_token');
+        const savedUser = await AsyncStorage.getItem('current_user');
+        const savedSessionId = await AsyncStorage.getItem('session_id');
+
+        if (savedUser) {
+          const parsedUser = JSON.parse(savedUser);
+          setCurrentUser(parsedUser);
+          setUserId(parsedUser.user_id ?? null);
+        }
+        if (savedToken) {
+          setToken(savedToken);
+          try {
+            const me = await getMe(savedToken);
+            setCurrentUser(me);
+            setUserId(me.user_id ?? null);
+          } catch (e) {
+            console.warn('restoreAuth getMe error:', e.message);
+            setToken(null);
+            setCurrentUser(null);
+            setUserId(null);
+            await AsyncStorage.multiRemove(['jwt_token', 'session_id', 'current_user']);
+          }
+        }
+        if (savedSessionId) {
+          // session_id kept for logout compatibility
+        }
+      } catch (e) {
+        console.warn('restoreAuth error:', e.message);
+      } finally {
+        setAuthReady(true);
+      }
+    };
+
+    restoreAuth();
+  }, []);
 
   // ── Backend topics ──────────────────────────────────────────────────────────
   const [topics,        setTopics]        = useState([]);
@@ -57,7 +97,10 @@ export function DataProvider({ children }) {
 
   return (
     <DataContext.Provider value={{
+      token, setToken,
+      currentUser, setCurrentUser,
       userId, setUserId,
+      authReady,
       topics, topicsLoading, topicsError, loadTopics,
       decks, addDeck, updateDeckProgress, deleteDeck,
     }}>

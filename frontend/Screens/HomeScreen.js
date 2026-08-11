@@ -15,31 +15,76 @@ import {
 
 import { AntDesign } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { getMe, getMyStatistics } from '../api';
+import { useData } from '../context/DataContext';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 export default function HomeScreen({ navigation }) {
+    const { token, currentUser, authReady } = useData();
+
     const [userData, setUserData] = useState({
-        name: 'Duy Long',
-        streak: 12,
-        level: 3,
-        xp: 243,
-        wordlearned: 1280,
+        name: '—',
+        streak: 0,
+        level: '—',
+        xp: 0,
+        wordlearned: 0,
         dailyGoal: {
-            current: 12,
-            target: 20
-        }
+            current: 0,
+            target: 0,
+        },
     });
 
-    const [isLoading, setIsLoading] = useState(false);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState('');
 
     useEffect(() => {
-        // Hiện tại chưa có backend, ta dùng dữ liệu Mock khai báo ở useState phía trên.
-        // Sau này có backend Node.js, chỉ cần mở đoạn code fetch dưới đây ra:
+        const loadHomeData = async () => {
+            if (!authReady) return;
 
-    }, []);
+            if (!token && !currentUser) {
+                setIsLoading(false);
+                return;
+            }
 
-    const wordRemaining = userData.dailyGoal.target - userData.dailyGoal.current;
+            try {
+                setIsLoading(true);
+                setError('');
+
+                const [me, stats] = await Promise.all([
+                    token ? getMe(token) : Promise.resolve(currentUser),
+                    token ? getMyStatistics(token) : Promise.resolve(null),
+                ]);
+
+                const totalXp = stats?.total_xp ?? 0;
+                const totalWords = stats?.total_words ?? 0;
+                const streak = stats?.current_streak ?? 0;
+
+                setUserData({
+                    name: me?.full_name || me?.username || '—',
+                    streak,
+                    level: me?.english_level || '—',
+                    xp: totalXp,
+                    wordlearned: totalWords,
+                    dailyGoal: {
+                        current: Math.min(totalWords, me?.daily_goal ?? 0),
+                        target: me?.daily_goal ?? 0,
+                    },
+                });
+            } catch (e) {
+                setError(e.message || 'Could not load user data');
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        loadHomeData();
+    }, [authReady, currentUser, token]);
+
+    const wordRemaining = Math.max(userData.dailyGoal.target - userData.dailyGoal.current, 0);
+    const goalProgress = userData.dailyGoal.target > 0
+        ? Math.min((userData.dailyGoal.current / userData.dailyGoal.target) * 100, 100)
+        : 0;
 
     return (
         // Khung bọc ngoài cùng (Nếu là Web thì căn giữa để tạo hiệu ứng giả lập)
@@ -53,34 +98,40 @@ export default function HomeScreen({ navigation }) {
                 {/* Thanh trạng thái màu sáng */}
                 <StatusBar barStyle="light-content" />
 
+                {error ? (
+                    <View style={styles.errorBanner}>
+                        <Text style={styles.errorText}>{error}</Text>
+                    </View>
+                ) : null}
+
                 <ScrollView contentContainerStyle={styles.scrollContainer}
                     showsVerticalScrollIndicator={false}>
                     <View style={styles.headerSection}>
                         <Text style={styles.appWelcome}>Welcome Student👋</Text>
-                        <Text style={styles.userNameText}>Hello, {userData.name}!</Text>
+                        <Text style={styles.userNameText}>Hello, {isLoading ? 'Loading...' : userData.name}!</Text>
                         {/*Phần hiển thị thông số */}
                         <View style={styles.statsRow}>
                             <View style={styles.statsCard}>
                                 <Image source={require('../assets/fire.png')} style={{ width: 30, height: 30, marginBottom: 5 }} />
-                                <Text style={styles.statsValue}>{userData.streak}</Text>
+                                <Text style={styles.statsValue}>{isLoading ? '—' : userData.streak}</Text>
                                 <Text style={styles.statsLabel}>Streak</Text>
                             </View>
 
                             <View style={styles.statsCard}>
                                 <Image source={require('../assets/xp.png')} style={{ width: 30, height: 30, marginBottom: 5 }} />
-                                <Text style={styles.statsValue}>{userData.xp}</Text>
+                                <Text style={styles.statsValue}>{isLoading ? '—' : userData.xp}</Text>
                                 <Text style={styles.statsLabel}>XP</Text>
                             </View>
 
                             <View style={styles.statsCard}>
                                 <Image source={require('../assets/books.png')} style={{ width: 30, height: 30, marginBottom: 5 }} />
-                                <Text style={styles.statsValue}>{userData.wordlearned}</Text>
+                                <Text style={styles.statsValue}>{isLoading ? '—' : userData.wordlearned}</Text>
                                 <Text style={styles.statsLabel}>Words</Text>
                             </View>
 
                             <View style={styles.statsCard}>
                                 <Image source={require('../assets/badge.png')} style={{ width: 30, height: 30, marginBottom: 5 }} />
-                                <Text style={styles.statsValue}>{userData.level}</Text>
+                                <Text style={styles.statsValue}>{isLoading ? '—' : userData.level}</Text>
                                 <Text style={styles.statsLabel}>Level</Text>
                             </View>
 
@@ -106,7 +157,9 @@ export default function HomeScreen({ navigation }) {
                                 </View>
 
                                 <Text style={styles.wordCountValue}>
-                                    {userData.dailyGoal.current} / {userData.dailyGoal.target} words
+                                    {userData.dailyGoal.target > 0
+                                        ? `${userData.dailyGoal.current} / ${userData.dailyGoal.target} words`
+                                        : 'No daily goal set'}
                                 </Text>
                             </View>
 
@@ -114,12 +167,16 @@ export default function HomeScreen({ navigation }) {
 
                             {/* Vẽ thanh tiến trình */}
                             <View style={styles.progressContainer}>
-                                <View style={[styles.progressBar, { width: `${(userData.dailyGoal.current / userData.dailyGoal.target) * 100}%` }]} />
+                                <View style={[styles.progressBar, { width: `${goalProgress}%` }]} />
                             </View>
 
                             <View style={{ marginTop: 10 }}>
                                 <Text style={{ fontSize: 14, color: '#000000', opacity: 0.5 }}>
-                                    {wordRemaining > 0 ? `${wordRemaining} more words to reach your goal today.` : "Congratulations! You've reached your daily goal!"}
+                                    {userData.dailyGoal.target > 0
+                                        ? (wordRemaining > 0
+                                            ? `${wordRemaining} more words to reach your goal today.`
+                                            : "Congratulations! You've reached your daily goal!")
+                                        : 'Set your daily goal in Settings to track progress.'}
                                 </Text>
                             </View>
                         </View>
@@ -136,7 +193,7 @@ export default function HomeScreen({ navigation }) {
                                         <Image source={require('../assets/wordlist.png')} style={styles.buttonIcon} />
                                     </View>
                                     <Text style={styles.buttonMainText}>Words list</Text>
-                                    <Text style={styles.buttonSubText}>{userData.wordlearned} words learned</Text>
+                                    <Text style={styles.buttonSubText}>{isLoading ? 'Loading...' : `${userData.wordlearned} words learned`}</Text>
                                 </View>
                             </TouchableOpacity>
 

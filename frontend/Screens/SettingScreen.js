@@ -15,56 +15,138 @@ import {
 
 import { AntDesign } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Alert } from 'react-native';
+import { useData } from '../context/DataContext';
+import { changeMyPassword, deleteMe, getProfileSettings, logoutMe, updateProfileSettings } from '../api';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 export default function SettingScreen({navigation}) {
+    const { token, currentUser, userId, setToken, setCurrentUser, setUserId } = useData();
     
 
     const [isDarkMode, setIsDarkMode] = useState(false);
     const [isVietnamese, setIsVietnamese] = useState(false);
     const [notifications, setNotifications] = useState(true);
     const [soundEffects, setSoundEffects] = useState(true);
+    const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+    const [currentPassword, setCurrentPassword] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+    const [changePasswordLoading, setChangePasswordLoading] = useState(false);
+    const [changePasswordError, setChangePasswordError] = useState('');
+    const [confirmAction, setConfirmAction] = useState(null);
     
-    const [dailyGoal, setDailyGoal] = useState(10); // Mặc định là 20 từ/ngày
+    const [dailyGoal, setDailyGoal] = useState(10);
     const goalOptions = ['10 words', '20 words', '30 words', '50 words', '100 words'];
 
+    const persistProfileSettings = async (nextSettings) => {
+        if (!userId) return;
+        try {
+            await updateProfileSettings(userId, nextSettings);
+        } catch (e) {
+            console.warn('updateProfileSettings error:', e.message);
+        }
+    };
+
     const handleDarkModeToggle = () => {
-        setIsDarkMode(!isDarkMode);
+        const nextValue = !isDarkMode;
+        setIsDarkMode(nextValue);
+        persistProfileSettings({
+            dark_mode: nextValue,
+            language: isVietnamese ? 'vi' : 'en',
+            notification_enabled: notifications,
+        });
     }
 
-    //Xử lý đăng xuất
     const handleLogout = () => {
-        Alert.alert('Log Out', 'Are you sure you want to log out?', [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-            text: 'Log Out', 
-            style: 'destructive',
-            onPress: async () => {
-            // TODO: Backend Integration
-            // await AsyncStorage.removeItem('userToken'); // Xóa Token lưu trong máy
-            navigation.reset({ index: 0, routes: [{ name: 'LoginScreen' }] });
-            } 
-        }
-        ]);
+        setConfirmAction('logout');
     };
     const handleDeleteAccount = () => {
-        Alert.alert(
-        'Delete Account', 
-        'This action is permanent and cannot be undone. Do you want to proceed?', 
-        [
-            { text: 'Cancel', style: 'cancel' },
-            { 
-            text: 'Delete', 
-            style: 'destructive',
-            onPress: async () => {
-                // TODO: Backend Integration
-                // await api.delete('/user/account');
-                navigation.reset({ index: 0, routes: [{ name: 'LoginScreen' }] });
-            } 
+        setConfirmAction('delete');
+    };
+
+    const closeConfirmAction = () => {
+        setConfirmAction(null);
+    };
+
+    const confirmLogout = async () => {
+        closeConfirmAction();
+        try {
+            if (token) await logoutMe(token);
+        } catch (e) {
+            console.warn('logout error:', e.message);
+        }
+        await AsyncStorage.multiRemove(['jwt_token', 'session_id', 'current_user']);
+        setToken(null);
+        setCurrentUser(null);
+        setUserId(null);
+        navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+    };
+
+    const confirmDeleteAccount = async () => {
+        closeConfirmAction();
+        try {
+            if (token) {
+                await deleteMe(token, { password: '', confirmation: 'DELETE' });
             }
-        ]
-        );
+        } catch (e) {
+            Alert.alert('Delete failed', e.message || 'Cannot delete account');
+            return;
+        }
+        await AsyncStorage.multiRemove(['jwt_token', 'session_id', 'current_user']);
+        setToken(null);
+        setCurrentUser(null);
+        setUserId(null);
+        navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+    };
+
+    const openChangePassword = () => {
+        setChangePasswordError('');
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+        setShowChangePasswordModal(true);
+    };
+
+    const closeChangePassword = () => {
+        if (changePasswordLoading) return;
+        setShowChangePasswordModal(false);
+        setChangePasswordError('');
+    };
+
+    const handleChangePassword = async () => {
+        if (!currentPassword || !newPassword || !confirmPassword) {
+            setChangePasswordError('Please fill in all password fields.');
+            return;
+        }
+        if (newPassword !== confirmPassword) {
+            setChangePasswordError('New passwords do not match.');
+            return;
+        }
+
+        try {
+            setChangePasswordLoading(true);
+            setChangePasswordError('');
+            await changeMyPassword(token, {
+                current_password: currentPassword,
+                new_password: newPassword,
+                confirm_password: confirmPassword,
+            });
+
+            await AsyncStorage.multiRemove(['jwt_token', 'session_id', 'current_user']);
+            setToken(null);
+            setCurrentUser(null);
+            setUserId(null);
+            setShowChangePasswordModal(false);
+            Alert.alert('Password changed', 'Please log in again with your new password.');
+            navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+        } catch (e) {
+            setChangePasswordError(e.message || 'Could not change password.');
+        } finally {
+            setChangePasswordLoading(false);
+        }
     };
 
     const handleFontSizePress = () => {
@@ -73,23 +155,25 @@ export default function SettingScreen({navigation}) {
 
     const loadDailyGoal = async () => {
         try {
-        // Đọc từ Local Storage trước
-        const savedGoal = await AsyncStorage.getItem('user_daily_goal');
-        if (savedGoal !== null) {
-            setDailyGoal(JSON.parse(savedGoal));
-        } else {
-            // Nếu chưa có local, lấy từ Backend API
-            // const response = await api.get('/user/settings');
-            // setDailyGoal(response.data.dailyGoal);
-        }
+            if (currentUser?.daily_goal) {
+                setDailyGoal(currentUser.daily_goal);
+            }
+            if (userId) {
+                const settings = await getProfileSettings(userId).catch(() => null);
+                if (settings) {
+                    setIsDarkMode(!!settings.dark_mode);
+                    setIsVietnamese(settings.language === 'vi');
+                    setNotifications(!!settings.notification_enabled);
+                }
+            }
         } catch (error) {
-        console.log('Error loading daily goal:', error);
+            console.log('Error loading daily goal:', error);
         }
     };
     
     useEffect(() => {
         loadDailyGoal();
-    }, []);
+    }, [currentUser, userId]);
 
 
     return (
@@ -131,7 +215,7 @@ export default function SettingScreen({navigation}) {
                                 <Image source={require('../assets/arrow_right.png')} style={{ width: 20, height: 20, resizeMode: 'contain' }} />
                                 
                             </TouchableOpacity>
-                            <TouchableOpacity style={styles.accountSettingItem} onPress={() => navigation.navigate('ChangePasswordScreen')}>
+                            <TouchableOpacity style={styles.accountSettingItem} onPress={openChangePassword}>
                                 <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
                                     <Text style={styles.accountSettingLabel}>Change Password</Text>
                                     <Text style={styles.accountSettingSubLabel}>Update your password</Text>
@@ -188,7 +272,15 @@ export default function SettingScreen({navigation}) {
                                 </View>
                                 <TouchableOpacity 
                                     style={[styles.customToggle, isVietnamese && styles.customToggleActive]}
-                                    onPress={() => setIsVietnamese(!isVietnamese)}
+                                    onPress={() => {
+                                        const nextValue = !isVietnamese;
+                                        setIsVietnamese(nextValue);
+                                        persistProfileSettings({
+                                            dark_mode: isDarkMode,
+                                            language: nextValue ? 'vi' : 'en',
+                                            notification_enabled: notifications,
+                                        });
+                                    }}
                                 >
                                     <View style={[styles.customToggleThumb, isVietnamese && styles.customToggleThumbActive]}>
                                         <Text style={{fontSize: 8, fontWeight: '700', color: '#ffffff'}}>
@@ -215,7 +307,15 @@ export default function SettingScreen({navigation}) {
                                 </View>
                                 <TouchableOpacity 
                                     style={[styles.customToggle, notifications && styles.customToggleActive]}
-                                    onPress={() => setNotifications(!notifications)}
+                                    onPress={() => {
+                                        const nextValue = !notifications;
+                                        setNotifications(nextValue);
+                                        persistProfileSettings({
+                                            dark_mode: isDarkMode,
+                                            language: isVietnamese ? 'vi' : 'en',
+                                            notification_enabled: nextValue,
+                                        });
+                                    }}
                                 >
                                     <View style={[styles.customToggleThumb, notifications && styles.customToggleThumbActive]}>
                                         <Ionicons
@@ -249,6 +349,142 @@ export default function SettingScreen({navigation}) {
 
                     </View>
                 </ScrollView>
+
+                {showChangePasswordModal ? (
+                    <View style={styles.modalOverlay}>
+                        <View style={styles.modalBackdrop}>
+                            <View style={styles.modalCard}>
+                                <ScrollView
+                                    showsVerticalScrollIndicator={false}
+                                    keyboardShouldPersistTaps="handled"
+                                    contentContainerStyle={styles.modalScrollContent}
+                                >
+                                    <View style={styles.modalIconWrap}>
+                                        <Ionicons name="lock-closed" size={26} color="#5b4feb" />
+                                    </View>
+                                    <Text style={styles.modalTitle}>Change password</Text>
+                                    <Text style={styles.modalSubtitle}>
+                                        Update your password using the app&apos;s secure theme.
+                                    </Text>
+
+                                    <View style={styles.modalField}>
+                                        <Text style={styles.modalFieldLabel}>Current password</Text>
+                                        <View style={styles.modalInputWrap}>
+                                            <Ionicons name="key-outline" size={18} color="#64748b" style={styles.modalInputIcon} />
+                                            <TextInput
+                                                style={styles.modalInput}
+                                                placeholder="Enter current password"
+                                                placeholderTextColor="#94a3b8"
+                                                secureTextEntry
+                                                value={currentPassword}
+                                                onChangeText={setCurrentPassword}
+                                            />
+                                        </View>
+                                    </View>
+
+                                    <View style={styles.modalField}>
+                                        <Text style={styles.modalFieldLabel}>New password</Text>
+                                        <View style={styles.modalInputWrap}>
+                                            <Ionicons name="shield-checkmark-outline" size={18} color="#64748b" style={styles.modalInputIcon} />
+                                            <TextInput
+                                                style={styles.modalInput}
+                                                placeholder="Enter new password"
+                                                placeholderTextColor="#94a3b8"
+                                                secureTextEntry
+                                                value={newPassword}
+                                                onChangeText={setNewPassword}
+                                            />
+                                        </View>
+                                    </View>
+
+                                    <View style={styles.modalField}>
+                                        <Text style={styles.modalFieldLabel}>Confirm new password</Text>
+                                        <View style={styles.modalInputWrap}>
+                                            <Ionicons name="checkmark-done-outline" size={18} color="#64748b" style={styles.modalInputIcon} />
+                                            <TextInput
+                                                style={styles.modalInput}
+                                                placeholder="Re-enter new password"
+                                                placeholderTextColor="#94a3b8"
+                                                secureTextEntry
+                                                value={confirmPassword}
+                                                onChangeText={setConfirmPassword}
+                                            />
+                                        </View>
+                                    </View>
+
+                                    {changePasswordError ? (
+                                        <Text style={styles.modalErrorText}>{changePasswordError}</Text>
+                                    ) : null}
+
+                                    <View style={styles.modalActions}>
+                                        <TouchableOpacity
+                                            style={[styles.modalButton, styles.modalCancelButton]}
+                                            onPress={closeChangePassword}
+                                            disabled={changePasswordLoading}
+                                        >
+                                            <Text style={styles.modalCancelText}>Cancel</Text>
+                                        </TouchableOpacity>
+
+                                        <TouchableOpacity
+                                            style={[styles.modalButton, styles.modalPrimaryButton, changePasswordLoading && { opacity: 0.7 }]}
+                                            onPress={handleChangePassword}
+                                            disabled={changePasswordLoading}
+                                        >
+                                            <Text style={styles.modalPrimaryText}>
+                                                {changePasswordLoading ? 'Saving...' : 'Change'}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                </ScrollView>
+                            </View>
+                        </View>
+                    </View>
+                ) : null}
+
+                {confirmAction ? (
+                    <View style={styles.modalOverlay}>
+                        <View style={styles.modalBackdrop}>
+                            <View style={styles.confirmCard}>
+                                <View style={[styles.confirmIconWrap, confirmAction === 'delete' ? styles.confirmDangerIcon : styles.confirmNeutralIcon]}>
+                                    <Ionicons
+                                        name={confirmAction === 'delete' ? 'warning-outline' : 'log-out-outline'}
+                                        size={26}
+                                        color={confirmAction === 'delete' ? '#dc2626' : '#5b4feb'}
+                                    />
+                                </View>
+                                <Text style={styles.confirmTitle}>
+                                    {confirmAction === 'delete' ? 'Delete account' : 'Log out'}
+                                </Text>
+                                <Text style={styles.confirmMessage}>
+                                    {confirmAction === 'delete'
+                                        ? 'This action is permanent and cannot be undone. Do you want to proceed?'
+                                        : 'Are you sure you want to log out of your account?'}
+                                </Text>
+
+                                <View style={styles.modalActions}>
+                                    <TouchableOpacity
+                                        style={[styles.modalButton, styles.modalCancelButton]}
+                                        onPress={closeConfirmAction}
+                                    >
+                                        <Text style={styles.modalCancelText}>Cancel</Text>
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.modalButton,
+                                            confirmAction === 'delete' ? styles.modalDangerButton : styles.modalPrimaryButton,
+                                        ]}
+                                        onPress={confirmAction === 'delete' ? confirmDeleteAccount : confirmLogout}
+                                    >
+                                        <Text style={styles.modalPrimaryText}>
+                                            {confirmAction === 'delete' ? 'Delete' : 'Log out'}
+                                        </Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </View>
+                    </View>
+                ) : null}
             </LinearGradient>
         </View>
     )
@@ -266,8 +502,8 @@ const styles = StyleSheet.create({
     
     phoneContainer: {
         
-        width: Platform.OS === 'web' ? 400 : '100%',
-        height: Platform.OS === 'web' ? 800 : '100%',
+        width: Platform.OS === 'web' ? Math.min(screenWidth, 400) : '100%',
+        height: Platform.OS === 'web' ? Math.min(screenHeight, 800) : '100%',
         
         // Tạo hiệu ứng giống chiếc điện thoại khi xem trên máy tính
         borderRadius: Platform.OS === 'web' ? 35 : 0,
@@ -1137,6 +1373,203 @@ const styles = StyleSheet.create({
         borderRadius: 12,
         borderColor: '#c7d2fe',
         borderWidth: 1,
+    },
+
+    modalOverlay: {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+        zIndex: 50,
+        elevation: 50,
+    },
+
+    modalBackdrop: {
+        flex: 1,
+        backgroundColor: 'rgba(15, 23, 42, 0.35)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 16,
+    },
+
+    modalCard: {
+        width: '100%',
+        maxWidth: 320,
+        maxHeight: '90%',
+        backgroundColor: '#ffffff',
+        borderRadius: 28,
+        paddingHorizontal: 22,
+        paddingTop: 22,
+        paddingBottom: 18,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.2,
+        shadowRadius: 18,
+        elevation: 8,
+    },
+
+    modalScrollContent: {
+        paddingBottom: 4,
+    },
+
+    modalIconWrap: {
+        width: 56,
+        height: 56,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#eef2ff',
+        alignSelf: 'center',
+        marginBottom: 14,
+    },
+
+    modalTitle: {
+        fontSize: 22,
+        fontWeight: '800',
+        color: '#0f172a',
+        textAlign: 'center',
+    },
+
+    modalSubtitle: {
+        fontSize: 13,
+        color: '#64748b',
+        textAlign: 'center',
+        marginTop: 6,
+        marginBottom: 16,
+        lineHeight: 18,
+    },
+
+    modalField: {
+        marginBottom: 12,
+    },
+
+    modalFieldLabel: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#334155',
+        marginBottom: 6,
+        textTransform: 'uppercase',
+        letterSpacing: 0.4,
+    },
+
+    modalInputWrap: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#f8fafc',
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        paddingHorizontal: 12,
+        minHeight: 52,
+    },
+
+    modalInputIcon: {
+        marginRight: 8,
+    },
+
+    modalInput: {
+        flex: 1,
+        fontSize: 15,
+        color: '#0f172a',
+        paddingVertical: 10,
+    },
+
+    modalErrorText: {
+        color: '#dc2626',
+        fontSize: 12,
+        marginTop: 2,
+        marginBottom: 10,
+    },
+
+    modalActions: {
+        flexDirection: 'row',
+        gap: 10,
+        marginTop: 10,
+    },
+
+    modalButton: {
+        flexDirection: 'row',
+        minHeight: 48,
+        borderRadius: 16,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 16,
+        marginHorizontal: 5,
+    },
+
+    modalCancelButton: {
+        backgroundColor: '#e5e7eb',
+    },
+
+    modalPrimaryButton: {
+        backgroundColor: '#5b4feb',
+    },
+
+    modalDangerButton: {
+        backgroundColor: '#dc2626',
+    },
+
+    modalCancelText: {
+        color: '#475569',
+        fontSize: 15,
+        fontWeight: '700',
+    },
+
+    modalPrimaryText: {
+        color: '#ffffff',
+        fontSize: 15,
+        fontWeight: '700',
+    },
+
+    confirmCard: {
+        width: '100%',
+        maxWidth: 320,
+        backgroundColor: '#ffffff',
+        borderRadius: 28,
+        paddingHorizontal: 22,
+        paddingTop: 22,
+        paddingBottom: 18,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.2,
+        shadowRadius: 18,
+        elevation: 8,
+        alignItems: 'center',
+    },
+
+    confirmIconWrap: {
+        width: 56,
+        height: 56,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+        alignSelf: 'center',
+        marginBottom: 10,
+    },
+
+    confirmNeutralIcon: {
+        backgroundColor: '#eef2ff',
+    },
+
+    confirmDangerIcon: {
+        backgroundColor: '#fee2e2',
+    },
+
+    confirmTitle: {
+        fontSize: 22,
+        fontWeight: '800',
+        color: '#0f172a',
+        textAlign: 'center',
+    },
+
+    confirmMessage: {
+        fontSize: 13,
+        color: '#64748b',
+        textAlign: 'center',
+        marginTop: 6,
+        lineHeight: 18,
     },
 
 });
