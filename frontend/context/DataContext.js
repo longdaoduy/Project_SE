@@ -11,6 +11,10 @@ async function clearAuthStorage() {
 }
 
 const DataContext = createContext();
+const DECKS_STORAGE_KEY = 'user_decks_v2';
+
+/** Normalise for duplicate comparison: trim + lowercase. */
+const normalise = (s) => (s || '').trim().toLowerCase();
 
 export function DataProvider({ children }) {
   // ── Auth ────────────────────────────────────────────────────────────────────
@@ -24,7 +28,6 @@ export function DataProvider({ children }) {
       try {
         const savedToken = await AsyncStorage.getItem('jwt_token');
         const savedUser = await AsyncStorage.getItem('current_user');
-        const savedSessionId = await AsyncStorage.getItem('session_id');
 
         if (savedUser) {
           const parsedUser = JSON.parse(savedUser);
@@ -45,16 +48,12 @@ export function DataProvider({ children }) {
             await clearAuthStorage();
           }
         }
-        if (savedSessionId) {
-          // session_id kept for logout compatibility
-        }
       } catch (e) {
         console.warn('restoreAuth error:', e.message);
       } finally {
         setAuthReady(true);
       }
     };
-
     restoreAuth();
   }, []);
 
@@ -77,30 +76,120 @@ export function DataProvider({ children }) {
     }
   }, []);
 
-  // Load once on mount
   useEffect(() => { loadTopics(); }, [loadTopics]);
 
-  // ── Legacy local decks (PracticeScreen) ─────────────────────────────────────
+  // ── User-created decks — persisted to AsyncStorage ───────────────────────────
   const [decks, setDecks] = useState([]);
 
+  useEffect(() => {
+    AsyncStorage.getItem(DECKS_STORAGE_KEY)
+      .then((raw) => { if (raw) setDecks(JSON.parse(raw)); })
+      .catch(() => {});
+  }, []);
+
+  const _persist = (updated) => {
+    AsyncStorage.setItem(DECKS_STORAGE_KEY, JSON.stringify(updated)).catch(() => {});
+  };
+
+  /**
+   * Create a new deck.
+   * Returns Promise<{ success, deck? }> or { success: false, error }.
+   * Rejects duplicate names (case-insensitive, trimmed).
+   */
   const addDeck = useCallback((deck) => {
-    setDecks((prev) => [...prev, {
-      id: Date.now().toString(),
-      currentWords: 0, totalWords: deck.totalWords || 10, progress: 0,
-      createdAt: new Date().toISOString(), ...deck,
-    }]);
+    const trimTitle = (deck.title || '').trim();
+    if (!trimTitle) return Promise.resolve({ success: false, error: 'Deck title cannot be empty.' });
+
+    return new Promise((resolve) => {
+      setDecks((prev) => {
+        if (prev.some((d) => normalise(d.title) === normalise(trimTitle))) {
+          resolve({ success: false, error: `A deck named "${trimTitle}" already exists.` });
+          return prev;
+        }
+        const newDeck = {
+          id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          title: trimTitle,
+          level: deck.level || 'Beginner',
+          totalWords: (deck.terms || []).length,
+          currentWords: 0,
+          progress: 0,
+          createdAt: new Date().toISOString(),
+          terms: (deck.terms || []).map((t) => ({
+            id: `${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+            term: (t.term || '').trim(),
+            definition: (t.definition || '').trim(),
+          })),
+        };
+        const updated = [...prev, newDeck];
+        _persist(updated);
+        resolve({ success: true, deck: newDeck });
+        return updated;
+      });
+    });
+  }, []);
+
+  /**
+   * Full deck edit — replaces title + entire terms list atomically.
+   * Duplicate title check skips the deck being edited.
+   * Returns Promise<{ success }> or { success: false, error }.
+   */
+  const saveDeckEdit = useCallback((deckId, newTitle, newTerms) => {
+    const trimTitle = (newTitle || '').trim();
+    if (!trimTitle) return Promise.resolve({ success: false, error: 'Deck title cannot be empty.' });
+
+    return new Promise((resolve) => {
+      setDecks((prev) => {
+        if (prev.some((d) => d.id !== deckId && normalise(d.title) === normalise(trimTitle))) {
+          resolve({ success: false, error: `A deck named "${trimTitle}" already exists.` });
+          return prev;
+        }
+        // In-list duplicate term check
+        const termSet = new Set();
+        for (const t of newTerms) {
+          const key = normalise(t.term);
+          if (key && termSet.has(key)) {
+            resolve({ success: false, error: `Duplicate word "${t.term.trim()}" in the deck.` });
+            return prev;
+          }
+          if (key) termSet.add(key);
+        }
+        const updatedDeck = {
+          ...prev.find((d) => d.id === deckId),
+          title: trimTitle,
+          terms: newTerms.map((t) => ({
+            id: t.id || `${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+            term: (t.term || '').trim(),
+            definition: (t.definition || '').trim(),
+          })),
+          totalWords: newTerms.length,
+        };
+        const updated = prev.map((d) => (d.id === deckId ? updatedDeck : d));
+        _persist(updated);
+        resolve({ success: true });
+        return updated;
+      });
+    });
   }, []);
 
   const updateDeckProgress = useCallback((deckId, currentWords, totalWords) => {
-    setDecks((prev) => prev.map((d) =>
-      d.id === deckId
-        ? { ...d, currentWords, totalWords, progress: totalWords > 0 ? Math.round((currentWords / totalWords) * 100) : 0 }
-        : d
-    ));
+    setDecks((prev) => {
+      const updated = prev.map((d) =>
+        d.id === deckId
+          ? { ...d, currentWords, totalWords,
+              progress: totalWords > 0 ? Math.round((currentWords / totalWords) * 100) : 0 }
+          : d
+      );
+      _persist(updated);
+      return updated;
+    });
   }, []);
 
   const deleteDeck = useCallback((deckId) => {
-    setDecks((prev) => prev.filter((d) => d.id !== deckId));
+    setDecks((prev) => {
+      const updated = prev.filter((d) => d.id !== deckId);
+      _persist(updated);
+      return updated;
+    });
   }, []);
 
   return (
@@ -110,7 +199,7 @@ export function DataProvider({ children }) {
       userId, setUserId,
       authReady,
       topics, topicsLoading, topicsError, loadTopics,
-      decks, addDeck, updateDeckProgress, deleteDeck,
+      decks, addDeck, saveDeckEdit, updateDeckProgress, deleteDeck,
     }}>
       {children}
     </DataContext.Provider>

@@ -10,6 +10,7 @@ import { getWords, buildMatchingPairs, saveLocalQuizResult } from '../api';
 const PAIR_COUNT = 6;
 
 export default function QuizMatching({ navigation, route }) {
+  const { topicId, topicTitle, userId = 1, deckWords = null } = route.params || {};
   const { topicId, topicTitle, userId = 1, limit = 10 } = route.params || {};
 
   const [phase, setPhase] = useState('loading');
@@ -24,6 +25,9 @@ export default function QuizMatching({ navigation, route }) {
   const loadQuiz = useCallback(async () => {
     try {
       setPhase('loading');
+      const words = deckWords ? deckWords : await getWords(topicId, 40);
+      if (words.length < 4) throw new Error('Not enough words to start a quiz (need at least 4).');
+      const built = buildMatchingPairs(words, PAIR_COUNT);
       // 2. Kéo tối đa 100 từ
       const words = await getWords(topicId, 100);
       if (words.length < 4) throw new Error('Not enough words in this topic (need at least 4).');
@@ -43,6 +47,7 @@ export default function QuizMatching({ navigation, route }) {
       setError(e.message);
       setPhase('error');
     }
+  }, [topicId, deckWords]);
   }, [topicId, limit]);
 
   useEffect(() => { loadQuiz(); }, [loadQuiz]);
@@ -61,9 +66,11 @@ export default function QuizMatching({ navigation, route }) {
       setMatched(newMatched);
       setSelectedLeft(null);
       if (newMatched.length === pairs.length) {
-        // Build results for backend
-        const results = pairs.map((p) => ({ word_id: p.word_id, is_correct: true }));
-        saveLocalQuizResult(userId, topicId, 'word_matching', results);
+        // Save to backend only for real topics (skip for local deck words)
+        if (!deckWords) {
+          const results = pairs.map((p) => ({ word_id: p.word_id, is_correct: true }));
+          saveLocalQuizResult(userId, topicId, 'word_matching', results);
+        }
         setPhase('result');
       }
     } else {

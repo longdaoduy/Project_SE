@@ -20,19 +20,22 @@ const CARDS_PER_SESSION = 15;
 const TOPICS_PER_PAGE = 5;
 
 export default function FlashcardScreen({ navigation }) {
-  const { userId, topics, topicsLoading, loadTopics, decks, addDeck, deleteDeck } = useData();
+  const { userId, topics, topicsLoading, loadTopics, decks, addDeck, saveDeckEdit, deleteDeck } = useData();
 
   // ── Screen navigation state ─────────────────────────────────────────────────
-  // viewState: 'select' (choose deck / list) | 'add' (create deck form)
-  // phase:     'select' | 'study' | 'done'
+  // viewState: 'select' | 'add' (create/edit) | phase: 'select' | 'study' | 'done'
   const [viewState, setViewState] = useState('select');
   const [phase, setPhase] = useState('select');
   const [selectedTopic, setSelectedTopic] = useState(null);
   const [selectedLocalDeck, setSelectedLocalDeck] = useState(null);
 
-  // ── Deck search / filter (for user-created decks) ───────────────────────────
+  // ── Deck search / filter ─────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedFilter, setSelectedFilter] = useState('All');
+
+  // ── Add/Edit-deck form state ─────────────────────────────────────────────────
+  // editingDeck: null → CREATE mode | non-null → EDIT mode
+  const [editingDeck, setEditingDeck] = useState(null);
+  const [deckFormError, setDeckFormError] = useState('');
   const [visibleTopicsCount, setVisibleTopicsCount] = useState(TOPICS_PER_PAGE);
   const [topicsExpanded, setTopicsExpanded] = useState(true);
 
@@ -94,20 +97,17 @@ export default function FlashcardScreen({ navigation }) {
   }, [userId, topics]);
 
   // ── Deck search/filter derived values ────────────────────────────────────────
-  const deckFilters = ['All', ...Array.from(new Set(decks.map((d) => d.level)))];
-
-  const filteredDecks = decks.filter((deck) => {
-    const matchesSearch = deck.title.toLowerCase().includes(searchQuery.toLowerCase());
-    if (selectedFilter === 'All') return matchesSearch;
-    return matchesSearch && deck.level === selectedFilter;
-  });
+  // No level filter — show all decks, just search by title
+  const filteredDecks = decks.filter((deck) =>
+    deck.title.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   const filteredTopics = topics.filter((t) =>
     t.topic_name.toLowerCase().includes(searchQuery.toLowerCase())
   );
   const visibleTopics = filteredTopics.slice(0, visibleTopicsCount);
 
-  // ── Add-deck handlers ────────────────────────────────────────────────────────
+  // ── Add/Edit-deck handlers ────────────────────────────────────────────────────
   const handleAddTermRow = () => {
     setTermRows((prev) => [...prev, { id: Date.now(), term: '', definition: '' }]);
   };
@@ -126,30 +126,84 @@ export default function FlashcardScreen({ navigation }) {
     setTermRows((prev) => prev.filter((row) => row.id !== id));
   };
 
-  const handleCreateDeck = () => {
+  // Unified save — works for both CREATE and EDIT mode
+  const handleCreateDeck = async () => {
     const trimmedTitle = deckTitle.trim();
+    setDeckFormError('');
+
     if (!trimmedTitle) {
-      Alert.alert('Missing Title', 'Please enter a deck title.');
+      setDeckFormError('Please enter a deck title.');
       return;
     }
 
-    const filledRows = termRows.filter((row) => row.term.trim() && row.definition.trim());
+    // Only rows with a term value count (blank trailing rows are ignored)
+    const filledRows = termRows.filter((row) => row.term.trim());
     if (filledRows.length === 0) {
-      Alert.alert('Empty Terms', 'Please add at least one term and definition.');
+      setDeckFormError('Please add at least one term.');
       return;
     }
 
-    addDeck({
-      title: trimmedTitle,
-      level: 'Beginner',
-      totalWords: filledRows.length,
-      terms: filledRows.map((row) => ({ term: row.term.trim(), definition: row.definition.trim() })),
-    });
+    if (editingDeck) {
+      // ── EDIT MODE: full save (update + delete + add) ──────────────────────
+      // Check for in-list duplicates
+      const seen = new Set();
+      for (const row of filledRows) {
+        const key = row.term.trim().toLowerCase();
+        if (seen.has(key)) {
+          setDeckFormError(`Duplicate word "${row.term.trim()}" in the deck.`);
+          return;
+        }
+        seen.add(key);
+      }
+
+      const result = await saveDeckEdit(
+        editingDeck.id,
+        trimmedTitle,
+        filledRows.map((r) => ({
+          id: r.id,
+          term: r.term.trim(),
+          definition: r.definition.trim(),
+        }))
+      );
+
+      if (!result.success) {
+        setDeckFormError(result.error || 'Could not save deck.');
+        return;
+      }
+
+      _resetDeckForm();
+      setViewState('select');
+    } else {
+      // ── CREATE MODE ─────────────────────────────────────────────────────────
+      const validRows = filledRows.filter((row) => row.definition.trim());
+      if (validRows.length === 0) {
+        setDeckFormError('Please add at least one term and definition.');
+        return;
+      }
+
+      const result = await addDeck({
+        title: trimmedTitle,
+        level: 'Beginner',
+        terms: validRows.map((row) => ({ term: row.term.trim(), definition: row.definition.trim() })),
+      });
+
+      if (!result.success) {
+        setDeckFormError(result.error || 'Could not create deck.');
+        return;
+      }
+
+      _resetDeckForm();
+      setViewState('select');
+    }
+  };
+
+  const _resetDeckForm = () => {
+    setEditingDeck(null);
+    setDeckFormError('');
     setDeckTitle('');
     setDescription('');
     setShowDescription(false);
     setTermRows([{ id: 1, term: '', definition: '' }]);
-    setViewState('select');
   };
 
   const confirmDeleteDeck = (deck) => {
@@ -159,6 +213,52 @@ export default function FlashcardScreen({ navigation }) {
     ]);
   };
 
+  // ── Navigate to Quiz using deck vocabulary ───────────────────────────────
+  const openDeckQuiz = (deck) => {
+    const words = (deck.terms || []).map((t, i) => ({
+      word_id: `local-${deck.id}-${i}`,
+      word: t.term,
+      meaning_vi: t.definition,
+      part_of_speech: '',
+      phonetic: '',
+      example_en: t.term,   // fallback so fill-in-blank has something
+      example_vi: t.definition,
+      topic_id: null,
+    }));
+    navigation.navigate('VocabQuizScreen', {
+      deckId: deck.id,
+      deckTitle: deck.title,
+      deckWords: words,
+      userId,
+    });
+  };
+
+  // ── Navigate to AI Reading using deck vocabulary ──────────────────────────
+  const openDeckAIReading = (deck) => {
+    const vocab = (deck.terms || []).map((t) => t.term.trim()).filter(Boolean).join(', ');
+    navigation.navigate('AIReadingScreen', {
+      presetDeckTitle: deck.title,
+      presetVocab: vocab,
+    });
+  };
+
+  // ── Open Edit Deck — pre-fills all existing terms (fully editable) ────────────
+  const openEditDeck = (deck) => {
+    setEditingDeck(deck);
+    setDeckTitle(deck.title);
+    setDescription('');
+    setShowDescription(false);
+    setDeckFormError('');
+    const rows = (deck.terms || []).map((t) => ({
+      id: t.id || `${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      term: t.term || '',
+      definition: t.definition || '',
+    }));
+    // Add one blank row for new entries
+    setTermRows([...rows, { id: `new_${Date.now()}`, term: '', definition: '' }]);
+    setViewState('add');
+  };
+
   // ── Header back handler ──────────────────────────────────────────────────────
   const handleBack = () => {
     if (phase !== 'select') {
@@ -166,6 +266,7 @@ export default function FlashcardScreen({ navigation }) {
       return;
     }
     if (viewState === 'add') {
+      _resetDeckForm();
       setViewState('select');
       return;
     }
@@ -417,8 +518,10 @@ export default function FlashcardScreen({ navigation }) {
   const totalCards = reviewed + remaining;
   const progressPct = totalCards > 0 ? (reviewed / totalCards) * 100 : 0;
 
-  // ══ ADD DECK VIEW (viewState = 'add') ════════════════════════════════════════
+  // ══ ADD / EDIT DECK VIEW (viewState = 'add') ═════════════════════════════════
+  // editingDeck == null → CREATE  |  non-null → EDIT (full save)
   if (phase === 'select' && viewState === 'add') {
+    const isEditMode = !!editingDeck;
     return (
       <View style={s.wrapper}>
         <LinearGradient colors={['#4c3b7a', '#5b65d6']} style={s.phone}>
@@ -426,12 +529,12 @@ export default function FlashcardScreen({ navigation }) {
 
           <View style={s.headerSection}>
             <View style={s.headerTopRow}>
-              <TouchableOpacity onPress={() => setViewState('select')} style={s.backButton}>
+              <TouchableOpacity onPress={handleBack} style={s.backButton}>
                 <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, resizeMode: 'contain' }} />
               </TouchableOpacity>
               <View style={s.headerTextContainer}>
-                <Text style={s.appName}>New FlashCard</Text>
-                <Text style={s.subTitleText}>Create new Deck</Text>
+                <Text style={s.appName}>{isEditMode ? 'Edit FlashCard' : 'New FlashCard'}</Text>
+                <Text style={s.subTitleText}>{isEditMode ? 'Edit Deck' : 'Create new Deck'}</Text>
               </View>
               <View style={s.addHeaderActions}>
                 <TouchableOpacity style={s.addIconButton}>
@@ -446,16 +549,25 @@ export default function FlashcardScreen({ navigation }) {
 
           <ScrollView contentContainerStyle={s.scrollContainer} showsVerticalScrollIndicator={false}>
             <View style={s.card}>
+              {/* Deck name — always editable (user can rename in edit mode) */}
               <View style={s.titleInputWrapper}>
                 <TextInput
                   style={s.titleUnderlineInput}
                   placeholder="Title"
                   placeholderTextColor="#94a3b8"
                   value={deckTitle}
-                  onChangeText={setDeckTitle}
+                  onChangeText={(v) => { setDeckTitle(v); setDeckFormError(''); }}
                 />
                 <View style={s.titleUnderline} />
               </View>
+
+              {/* Inline error (duplicate name, empty, duplicate word, etc.) */}
+              {!!deckFormError && (
+                <View style={s.inlineErrorBox}>
+                  <Ionicons name="warning-outline" size={14} color="#b91c1c" style={{ marginRight: 6 }} />
+                  <Text style={s.inlineErrorText}>{deckFormError}</Text>
+                </View>
+              )}
 
               <View style={s.actionRow}>
                 <View style={s.lockedScanRow}>
@@ -487,6 +599,7 @@ export default function FlashcardScreen({ navigation }) {
                 </View>
               )}
 
+              {/* All rows fully editable — existing words shown with current values */}
               {termRows.map((row, index) => (
                 <View key={row.id} style={s.termCard}>
                   <View style={s.termCardHeader}>
@@ -588,25 +701,11 @@ export default function FlashcardScreen({ navigation }) {
                   </View>
                 ) : (
                   <>
-                    <View style={s.filtersContainer}>
-                      {deckFilters.map((filter) => (
-                        <TouchableOpacity
-                          key={filter}
-                          style={[s.filterChip, selectedFilter === filter && s.filterChipActive]}
-                          onPress={() => setSelectedFilter(filter)}
-                        >
-                          <Text style={[s.filterText, selectedFilter === filter && s.filterTextActive]}>
-                            {filter}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-
                     {filteredDecks.length === 0 ? (
                       <View style={s.emptyBox}>
                         <Ionicons name="search-outline" size={36} color="#94a3b8" />
                         <Text style={s.emptyText}>No decks found</Text>
-                        <Text style={s.emptySubText}>Try a different search or filter</Text>
+                        <Text style={s.emptySubText}>Try a different search keyword</Text>
                       </View>
                     ) : (
                       filteredDecks.map((deck) => (
@@ -617,16 +716,8 @@ export default function FlashcardScreen({ navigation }) {
                             </View>
                             <View style={s.deckTitleContainer}>
                               <Text style={s.deckTitle} numberOfLines={1}>{deck.title}</Text>
-                              <View style={s.badgeContainer}>
-                                <Text style={s.badgeText}>{deck.level}</Text>
-                              </View>
+                              <Text style={s.deckWordCount}>{(deck.terms || []).length} words</Text>
                             </View>
-                            <TouchableOpacity
-                              style={s.deleteButton}
-                              onPress={() => confirmDeleteDeck(deck)}
-                            >
-                              <Ionicons name="trash-outline" size={16} color="#ef4444" />
-                            </TouchableOpacity>
                           </View>
 
                           <View style={s.progressInfo}>
@@ -640,14 +731,56 @@ export default function FlashcardScreen({ navigation }) {
                             <View style={[s.progressBar, { width: `${deck.progress || 0}%` }]} />
                           </View>
 
-                          <TouchableOpacity
-                            style={s.startButton}
-                            activeOpacity={0.8}
-                            onPress={() => startLocalSession(deck)}
-                          >
-                            <Ionicons name="play-outline" size={16} color="#ffffff" />
-                            <Text style={s.startButtonText}>START LEARNING</Text>
-                          </TouchableOpacity>
+                          {/* ── Primary actions: Study | Quiz | AI Reading ── */}
+                          <View style={s.deckPrimaryRow}>
+                            <TouchableOpacity
+                              style={s.deckStudyBtn}
+                              activeOpacity={0.8}
+                              onPress={() => startLocalSession(deck)}
+                            >
+                              <Ionicons name="play-outline" size={14} color="#ffffff" />
+                              <Text style={s.deckStudyBtnText}>Study</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={s.deckQuizBtn}
+                              activeOpacity={0.8}
+                              onPress={() => openDeckQuiz(deck)}
+                            >
+                              <Ionicons name="checkmark-circle-outline" size={14} color="#16a34a" />
+                              <Text style={s.deckQuizBtnText}>Quiz</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={s.deckReadingBtn}
+                              activeOpacity={0.8}
+                              onPress={() => openDeckAIReading(deck)}
+                            >
+                              <Ionicons name="sparkles-outline" size={14} color="#7c3aed" />
+                              <Text style={s.deckReadingBtnText}>AI Reading</Text>
+                            </TouchableOpacity>
+                          </View>
+
+                          {/* ── Secondary actions: Edit Deck | Delete ── */}
+                          <View style={s.deckSecondaryRow}>
+                            <TouchableOpacity
+                              style={s.deckEditBtn}
+                              activeOpacity={0.8}
+                              onPress={() => openEditDeck(deck)}
+                            >
+                              <Ionicons name="pencil-outline" size={13} color="#4f46e5" />
+                              <Text style={s.deckEditBtnText}>Edit Deck</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={s.deckDeleteBtn}
+                              activeOpacity={0.8}
+                              onPress={() => confirmDeleteDeck(deck)}
+                            >
+                              <Ionicons name="trash-outline" size={13} color="#ef4444" />
+                              <Text style={s.deckDeleteBtnText}>Delete</Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
                       ))
                     )}
@@ -1126,29 +1259,41 @@ const s = StyleSheet.create({
   showMoreBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#ffffff', paddingVertical: 12, borderRadius: 16, borderWidth: 1.5, borderColor: '#c7d2fe', gap: 6, marginTop: 2 },
   showMoreText: { fontSize: 14, fontWeight: '700', color: '#5b65d6' },
 
-  // Filters (user-created decks)
-  filtersContainer: { flexDirection: 'row', width: '100%', marginBottom: 16, gap: 10, flexWrap: 'wrap' },
-  filterChip: { backgroundColor: '#e0e7ff', paddingVertical: 8, paddingHorizontal: 20, borderRadius: 20 },
-  filterChipActive: { backgroundColor: '#4f46e5' },
-  filterText: { color: '#4f46e5', fontWeight: '600', fontSize: 14 },
-  filterTextActive: { color: '#ffffff' },
-
-  // User-created deck card (from PracticeScreen)
-  deckCard: { backgroundColor: '#ffffff', borderRadius: 20, padding: 18, width: '100%', marginBottom: 14, borderWidth: 1, borderColor: '#e2e8f0' },
-  deckHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  // User-created deck card
+  deckCard: { backgroundColor: '#ffffff', borderRadius: 20, padding: 16, width: '100%', marginBottom: 14, borderWidth: 1, borderColor: '#e2e8f0' },
+  deckHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   deckIconContainer: { width: 40, height: 40, backgroundColor: '#f1f5f9', borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
   deckTitleContainer: { flex: 1, justifyContent: 'center' },
-  deckTitle: { fontSize: 16, fontWeight: '700', color: '#0f172a', marginBottom: 4 },
+  deckTitle: { fontSize: 15, fontWeight: '700', color: '#0f172a', marginBottom: 2 },
+  deckWordCount: { fontSize: 11, color: '#64748b', fontWeight: '500' },
+  progressInfo: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+  progressText: { fontSize: 12, color: '#64748b', fontWeight: '600' },
+  progressPercentage: { fontSize: 12, color: '#3b82f6', fontWeight: '700' },
+  progressTrack: { height: 5, width: '100%', backgroundColor: '#e2e8f0', borderRadius: 3, overflow: 'hidden', marginBottom: 10 },
+  progressBar: { height: '100%', backgroundColor: '#3b82f6', borderRadius: 3 },
+
+  // Primary action row: Study | Quiz | AI Reading
+  deckPrimaryRow: { flexDirection: 'row', gap: 6, marginBottom: 8 },
+  deckStudyBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 10, borderRadius: 12, backgroundColor: '#4f46e5' },
+  deckStudyBtnText: { color: '#ffffff', fontSize: 12, fontWeight: '700' },
+  deckQuizBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 10, borderRadius: 12, backgroundColor: '#dcfce7', borderWidth: 1.5, borderColor: '#bbf7d0' },
+  deckQuizBtnText: { color: '#16a34a', fontSize: 12, fontWeight: '700' },
+  deckReadingBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 10, borderRadius: 12, backgroundColor: '#ede9fe', borderWidth: 1.5, borderColor: '#ddd6fe' },
+  deckReadingBtnText: { color: '#7c3aed', fontSize: 12, fontWeight: '700' },
+
+  // Secondary action row: Edit Deck | Delete
+  deckSecondaryRow: { flexDirection: 'row', gap: 6 },
+  deckEditBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, borderRadius: 12, backgroundColor: '#f8fafc', borderWidth: 1.5, borderColor: '#e2e8f0' },
+  deckEditBtnText: { color: '#4f46e5', fontSize: 12, fontWeight: '600' },
+  deckDeleteBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, borderRadius: 12, backgroundColor: '#fef2f2', borderWidth: 1.5, borderColor: '#fecaca' },
+  deckDeleteBtnText: { color: '#ef4444', fontSize: 12, fontWeight: '600' },
+
+  // Legacy refs kept to avoid crashes
+  startButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#4f46e5', paddingVertical: 12, borderRadius: 14, gap: 6, width: '100%' },
+  startButtonText: { color: '#ffffff', fontSize: 14, fontWeight: '700' },
   badgeContainer: { backgroundColor: '#dcfce7', alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
   badgeText: { color: '#16a34a', fontSize: 10, fontWeight: '700' },
   deleteButton: { width: 28, height: 28, borderRadius: 8, backgroundColor: '#fef2f2', justifyContent: 'center', alignItems: 'center', marginLeft: 8 },
-  progressInfo: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-  progressText: { fontSize: 12, color: '#64748b', fontWeight: '600' },
-  progressPercentage: { fontSize: 12, color: '#3b82f6', fontWeight: '700' },
-  progressTrack: { height: 6, width: '100%', backgroundColor: '#e2e8f0', borderRadius: 3, overflow: 'hidden', marginBottom: 14 },
-  progressBar: { height: '100%', backgroundColor: '#3b82f6', borderRadius: 3 },
-  startButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#4f46e5', paddingVertical: 12, borderRadius: 14, gap: 6, width: '100%' },
-  startButtonText: { color: '#ffffff', fontSize: 14, fontWeight: '700' },
 
   // Flashcard
   flashcard: { backgroundColor: '#ffffff', borderRadius: 24, padding: 22, marginBottom: 16 },

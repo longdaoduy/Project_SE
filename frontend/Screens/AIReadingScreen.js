@@ -56,11 +56,16 @@ function formatTime(seconds) {
   return `${m}:${s}`;
 }
 
-export default function AIReadingScreen({ navigation }) {
+export default function AIReadingScreen({ navigation, route }) {
   const { userId, topics, topicsLoading, loadTopics } = useData();
 
+  // Route params injected when launched from a deck card
+  const presetDeckTitle = route?.params?.presetDeckTitle || null;
+  const presetVocab     = route?.params?.presetVocab     || null;
+
   // 'history' | 'input' | 'test' | 'result'
-  const [viewState, setViewState] = useState('history');
+  // If launched from a deck, skip straight to the input/configure view
+  const [viewState, setViewState] = useState(presetVocab ? 'input' : 'history');
   const [selectedFilter, setSelectedFilter] = useState('All');
 
   const [historyReadings, setHistoryReadings]   = useState([]);
@@ -68,11 +73,11 @@ export default function AIReadingScreen({ navigation }) {
   const [visibleCount, setVisibleCount]         = useState(8);    // pagination: show 8 at a time
   const [searchQuery, setSearchQuery]           = useState('');   // search by title/topic
 
-  // Input form
+  // Input form — pre-fill if launched from a deck
   const [difficultyParam, setDifficultyParam]   = useState('B1');
   const [quickTopicId, setQuickTopicId]         = useState(null);
   const [topicWords, setTopicWords]             = useState([]);   // words loaded from selected topic
-  const [manualInput, setManualInput]           = useState('');   // free-text vocabulary
+  const [manualInput, setManualInput]           = useState(presetVocab || '');   // pre-filled from deck
   const [loadingWords, setLoadingWords]         = useState(false);
 
   // Active reading
@@ -552,6 +557,17 @@ export default function AIReadingScreen({ navigation }) {
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
               <View style={styles.inputCard}>
                 <Text style={styles.cardTitle}>Configure Your Test</Text>
+
+                {/* ── Deck source banner (shown when launched from a deck) ── */}
+                {presetDeckTitle && (
+                  <View style={styles.deckSourceBanner}>
+                    <Ionicons name="clipboard-outline" size={15} color="#4f46e5" style={{ marginRight: 6 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.deckSourceTitle}>Vocabulary Source: {presetDeckTitle}</Text>
+                      <Text style={styles.deckSourceSub} numberOfLines={2}>{presetVocab}</Text>
+                    </View>
+                  </View>
+                )}
 
                 {/* ── Difficulty (A1–C2) ── */}
                 <Text style={styles.fieldLabel}>DIFFICULTY LEVEL</Text>
@@ -1119,4 +1135,9 @@ Object.assign(styles, StyleSheet.create({
   // Combined vocab count preview
   combinedPreviewRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#dcfce7', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6, marginTop: 4 },
   combinedPreviewText: { fontSize: 12, fontWeight: '600', color: '#15803d', flex: 1 },
+
+  // Deck source banner (shown in input view when launched from a deck card)
+  deckSourceBanner: { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: '#ede9fe', borderRadius: 12, padding: 12, marginBottom: 16, borderWidth: 1.5, borderColor: '#c4b5fd' },
+  deckSourceTitle: { fontSize: 13, fontWeight: '700', color: '#4f46e5', marginBottom: 3 },
+  deckSourceSub: { fontSize: 11, color: '#6d28d9', lineHeight: 16 },
 }));

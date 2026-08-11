@@ -8,6 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { getWords, buildFillQuestions, saveLocalQuizResult } from '../api';
 
 export default function QuizFillInBlank({ navigation, route }) {
+  const { topicId, topicTitle, userId = 1, deckWords = null } = route.params || {};
   const { topicId, topicTitle, userId = 1, limit = 10 } = route.params || {};
 
   const [phase, setPhase] = useState('loading'); // loading|quiz|result|error
@@ -23,6 +24,10 @@ export default function QuizFillInBlank({ navigation, route }) {
   const loadQuiz = useCallback(async () => {
     try {
       setPhase('loading');
+      const words = deckWords ? deckWords : await getWords(topicId, 60);
+      if (words.length < 3) throw new Error('Not enough words to start a quiz (need at least 3).');
+      const built = buildFillQuestions(words, 8);
+      if (!built.length) throw new Error('Could not build questions from this deck.');
       // 2. Kéo tối đa 100 từ
       const words = await getWords(topicId, 100);
       if (words.length < 3) throw new Error('Not enough words in this topic (need at least 3).');
@@ -44,6 +49,7 @@ export default function QuizFillInBlank({ navigation, route }) {
       setError(e.message);
       setPhase('error');
     }
+  }, [topicId, deckWords]);
   }, [topicId, limit]);
 
   useEffect(() => { loadQuiz(); }, [loadQuiz]);
@@ -68,8 +74,8 @@ export default function QuizFillInBlank({ navigation, route }) {
       setShowResult(false);
       setIsCorrect(false);
     } else {
-      // save to backend (fire-and-forget)
-      saveLocalQuizResult(userId, topicId, 'fill_blank', newResults);
+      // save to backend only for real topics (skip for local deck words)
+      if (!deckWords) saveLocalQuizResult(userId, topicId, 'fill_blank', newResults);
       setPhase('result');
     }
   };

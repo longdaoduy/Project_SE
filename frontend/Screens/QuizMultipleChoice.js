@@ -11,6 +11,8 @@ import {
 } from '../api';
 
 export default function QuizMultipleChoice({ navigation, route }) {
+  const { topicId, topicTitle, quizType = 'multiple_choice', userId = 1, deckWords = null } = route.params || {};
+
   const { topicId, topicTitle, quizType = 'multiple_choice', userId = 1, limit = 10 } = route.params || {};
   // ── State ─────────────────────────────────────────────────────────────────
   const [phase, setPhase] = useState('loading'); // loading|quiz|result|error
@@ -24,10 +26,34 @@ export default function QuizMultipleChoice({ navigation, route }) {
   const [score, setScore] = useState(0);
   const [error, setError] = useState('');
 
-  // ── Load questions from backend ───────────────────────────────────────────
+  // ── Load questions ────────────────────────────────────────────────────────
   const loadQuiz = useCallback(async () => {
     try {
       setPhase('loading');
+      const words = await getWords(topicId, 100);
+      if (words.length < 4) throw new Error('This topic needs at least 4 words to start a quiz.');
+
+      // Use deckWords (local deck) if provided, otherwise fetch from backend
+      const words = deckWords ? deckWords : await getWords(topicId, 80);
+      if (words.length < 4) throw new Error('This deck needs at least 4 words to start a quiz.');
+
+      const built = buildMCQuestions(words, 10);
+      if (!built.length) throw new Error('Could not build questions from this deck.');
+
+      // For local deck words, skip backend quiz creation (word_ids are local strings)
+      if (deckWords) {
+        const localQs = built.map((q, i) => ({ ...q, question_id: `local_${i}` }));
+        setQuestions(localQs);
+        setBackendQs([]);
+        setQuizId(null);
+        setCurrentIndex(0);
+        setSelectedOption(null);
+        setAnsweredMap({});
+        setResultData(null);
+        setScore(0);
+        setPhase('quiz');
+        return;
+      }
       const words = await getWords(topicId, 100);
       if (words.length < 4) throw new Error('This topic needs at least 4 words to start a quiz.');
 
@@ -56,6 +82,7 @@ export default function QuizMultipleChoice({ navigation, route }) {
       setError(e.message);
       setPhase('error');
     }
+  }, [topicId, userId, quizType, deckWords]);
   }, [topicId, userId, quizType, limit]);
 
   useEffect(() => { loadQuiz(); }, [loadQuiz]);
@@ -65,10 +92,13 @@ export default function QuizMultipleChoice({ navigation, route }) {
     if (!selectedOption) return;
     const q = questions[currentIndex];
 
-    try {
-      await submitAnswer(q.question_id, selectedOption);
-    } catch (e) {
-      console.warn('submitAnswer error (non-critical):', e.message);
+    // Only call backend for real word_ids (skip for local deck words)
+    if (quizId && !deckWords) {
+      try {
+        await submitAnswer(q.question_id, selectedOption);
+      } catch (e) {
+        console.warn('submitAnswer error (non-critical):', e.message);
+      }
     }
 
     const newMap = { ...answeredMap, [q.question_id]: selectedOption };
@@ -82,11 +112,25 @@ export default function QuizMultipleChoice({ navigation, route }) {
       setCurrentIndex((prev) => prev + 1);
       setSelectedOption(null);
     } else {
-      await finaliseQuiz(newScore);
+      await finaliseQuiz(newScore, { ...newMap, [q.question_id]: selectedOption });
     }
   };
 
-  const finaliseQuiz = async (finalScore) => {
+  const finaliseQuiz = async (finalScore, finalMap = answeredMap) => {
+    // For local deck quizzes, skip backend calls entirely
+    if (deckWords) {
+      setResultData(
+        questions.map((q) => ({
+          ...q,
+          user_answer: finalMap[q.question_id] ?? null,
+          is_correct:  finalMap[q.question_id] === q.correct_option,
+        }))
+      );
+      setScore(finalScore);
+      setPhase('result');
+      return;
+    }
+
     try {
       await submitQuiz(quizId);
     } catch (e) {
@@ -103,6 +147,8 @@ export default function QuizMultipleChoice({ navigation, route }) {
       setResultData(
         questions.map((q) => ({
           ...q,
+          user_answer:  finalMap[q.question_id] ?? null,
+          is_correct:   finalMap[q.question_id] === q.correct_option,
           user_answer: answeredMap[q.question_id] ?? null,
           is_correct: answeredMap[q.question_id] === q.correct_option,
         }))

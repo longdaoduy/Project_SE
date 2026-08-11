@@ -11,8 +11,21 @@ import { getUserStats } from '../api';
 
 const TOPICS_PER_PAGE = 5;
 
-export default function VocabQuizScreen({ navigation }) {
-  const { userId, topics, topicsLoading, loadTopics } = useData();
+export default function VocabQuizScreen({ navigation, route }) {
+  const { userId, topics, topicsLoading, loadTopics, decks } = useData();
+
+  // If launched from a deck card, pre-select that deck immediately
+  const routeDeckWords = route.params?.deckWords || null;
+  const routeDeckTitle = route.params?.deckTitle || null;
+  const routeDeckId    = route.params?.deckId    || null;
+
+  const [selectedTopic,  setSelectedTopic]  = useState(null);
+  const [selectedDeck,   setSelectedDeck]   = useState(null);   // user-created deck
+  const [selectedMode,   setSelectedMode]   = useState('mc');
+  // If launched from a deck, skip directly to mode selection
+  const [viewState, setViewState] = useState(
+    routeDeckWords ? 'select_mode' : 'select_deck'
+  );
 
   const [selectedTopic, setSelectedTopic] = useState(null);
   const [selectedMode, setSelectedMode] = useState('mc');
@@ -82,9 +95,27 @@ export default function VocabQuizScreen({ navigation }) {
     }
 
     const screenName = modeScreenMap[selectedMode];
+    const quizType   = modeTypeMap[selectedMode];
+
+    // If a user-created deck is active (from route or deck selector), pass deckWords
+    const activeDeckWords = routeDeckWords || selectedDeck?.words || null;
+    const activeDeckTitle = routeDeckTitle || selectedDeck?.title || null;
+
+    if (activeDeckWords) {
+      navigation.navigate(screenName, {
+        deckWords:  activeDeckWords,
+        topicTitle: activeDeckTitle,
+        quizType,
+        userId,
+      });
+      return;
+    }
+
+    if (!selectedTopic) return;
     navigation.navigate(screenName, {
       topicId: selectedTopic.topic_id,
       topicTitle: selectedTopic.topic_name,
+      quizType,
       quizType: modeTypeMap[selectedMode],
       userId,
       limit: limitNumber,
@@ -93,12 +124,30 @@ export default function VocabQuizScreen({ navigation }) {
 
   const handleSelectTopic = (topic) => {
     setSelectedTopic(topic);
+    setSelectedDeck(null);
+    setViewState('select_mode');
+  };
+
+  const handleSelectDeck = (deck) => {
+    const words = (deck.terms || []).map((t, i) => ({
+      word_id: `local-${deck.id}-${i}`,
+      word: t.term,
+      meaning_vi: t.definition,
+      part_of_speech: '',
+      phonetic: '',
+      example_en: t.term,
+      example_vi: t.definition,
+      topic_id: null,
+    }));
+    setSelectedDeck({ ...deck, words });
+    setSelectedTopic(null);
     setViewState('select_mode');
   };
 
   // ── Header back handler ──────────────────────────────────────────────────────
   const handleBack = () => {
     if (viewState === 'select_deck') navigation.goBack();
+    else if (routeDeckWords) navigation.goBack();   // launched from deck → go back to FlashcardScreen
     else setViewState('select_deck');
   };
 
@@ -127,8 +176,8 @@ export default function VocabQuizScreen({ navigation }) {
             <Text style={styles.appName}>Vocabulary Quiz</Text>
             <Text style={styles.appSubtitle}>
               {viewState === 'select_deck'
-                ? 'Select a topic'
-                : selectedTopic?.topic_name || 'Choose mode'}
+                ? 'Select a topic or deck'
+                : (routeDeckTitle || selectedDeck?.title || selectedTopic?.topic_name || 'Choose mode')}
             </Text>
           </View>
         </View>
@@ -155,6 +204,36 @@ export default function VocabQuizScreen({ navigation }) {
                   <Text style={styles.statsLabel}>Total XP</Text>
                 </View>
               </View>
+
+              {/* ── Your Decks section ── */}
+              {decks.length > 0 && (
+                <View style={styles.sectionBlock}>
+                  <Text style={styles.sectionTitle}>Your Decks</Text>
+                  {decks.map((deck) => (
+                    <TouchableOpacity
+                      key={deck.id}
+                      style={[
+                        styles.deckCard,
+                        selectedDeck?.id === deck.id && styles.deckCardActive,
+                      ]}
+                      onPress={() => handleSelectDeck(deck)}
+                    >
+                      <View style={styles.deckCardLeft}>
+                        <View style={[styles.deckIcon, { backgroundColor: '#e0e7ff' }]}>
+                          <Ionicons name="clipboard-outline" size={20} color="#4f46e5" />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.deckTitle}>{deck.title}</Text>
+                          <Text style={{ fontSize: 11, color: '#94a3b8', marginTop: 1 }}>
+                            {(deck.terms || []).length} words
+                          </Text>
+                        </View>
+                      </View>
+                      <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
 
               {/* Topic list */}
               <View style={styles.sectionBlock}>
@@ -225,10 +304,19 @@ export default function VocabQuizScreen({ navigation }) {
         {viewState === 'select_mode' && (
           <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
             <View style={styles.whiteCardContainer}>
-              {/* Selected topic banner */}
+              {/* Selected source banner */}
               <View style={styles.topicBanner}>
                 <Ionicons name="clipboard-outline" size={16} color="#ffffff" />
-                <Text style={styles.topicBannerText}>{selectedTopic?.topic_name}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.topicBannerText}>
+                    {routeDeckTitle || selectedDeck?.title || selectedTopic?.topic_name || '—'}
+                  </Text>
+                  {(routeDeckWords || selectedDeck?.words) && (
+                    <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', marginTop: 1 }}>
+                      {(routeDeckWords || selectedDeck?.words || []).length} words · Your Deck
+                    </Text>
+                  )}
+                </View>
               </View>
 
               <View style={styles.sectionBlock}>

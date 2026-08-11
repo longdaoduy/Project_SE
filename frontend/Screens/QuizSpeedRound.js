@@ -12,6 +12,7 @@ const QUESTION_TIME = 10;
 const QUESTION_COUNT = 10;
 
 export default function QuizSpeedRound({ navigation, route }) {
+  const { topicId, topicTitle, userId = 1, deckWords = null } = route.params || {};
   const { topicId, topicTitle, userId = 1, limit = 10 } = route.params || {};
 
   const [phase, setPhase] = useState('loading');
@@ -28,10 +29,14 @@ export default function QuizSpeedRound({ navigation, route }) {
   const globalTimer = useRef(null);
   const questionTimer = useRef(null);
 
-  // ── Load words from backend ───────────────────────────────────────────────
+  // ── Load words ────────────────────────────────────────────────────────────
   const loadQuiz = useCallback(async () => {
     try {
       setPhase('loading');
+      const words = deckWords ? deckWords : await getWords(topicId, 60);
+      if (words.length < 4) throw new Error('Not enough words to start a quiz (need at least 4).');
+      const built = buildMCQuestions(words, QUESTION_COUNT);
+      if (!built.length) throw new Error('Could not build questions from this deck.');
       // 2. Kéo tối đa 100 từ
       const words = await getWords(topicId, 100);
       if (words.length < 4) throw new Error('Not enough words in this topic (need at least 4).');
@@ -47,6 +52,7 @@ export default function QuizSpeedRound({ navigation, route }) {
       setError(e.message);
       setPhase('error');
     }
+  }, [topicId, deckWords]);
   }, [topicId, limit]);
 
   useEffect(() => { loadQuiz(); }, [loadQuiz]);
@@ -68,9 +74,10 @@ export default function QuizSpeedRound({ navigation, route }) {
     clearInterval(globalTimer.current);
     clearInterval(questionTimer.current);
     setIsGameActive(false);
-    saveLocalQuizResult(userId, topicId, 'speed_round', finalResults);
+    // Save to backend only for real topics (skip for local deck words)
+    if (!deckWords) saveLocalQuizResult(userId, topicId, 'speed_round', finalResults);
     setPhase('result');
-  }, [userId, topicId]);
+  }, [userId, topicId, deckWords]);
 
   // ── Global countdown ──────────────────────────────────────────────────────
   useEffect(() => {
