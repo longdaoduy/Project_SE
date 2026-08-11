@@ -18,7 +18,15 @@ import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
 import { useData } from '../context/DataContext';
-import { changeMyPassword, deleteMe, getProfileSettings, logoutMe, updateProfileSettings } from '../api';
+import { changeMyPassword, deleteMe, getProfileSettings, logoutMe, logoutUserBySessionId, updateProfileSettings } from '../api';
+
+async function clearAuthStorage() {
+    await Promise.all([
+        AsyncStorage.removeItem('jwt_token'),
+        AsyncStorage.removeItem('session_id'),
+        AsyncStorage.removeItem('current_user'),
+    ]);
+}
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -37,6 +45,9 @@ export default function SettingScreen({navigation}) {
     const [changePasswordLoading, setChangePasswordLoading] = useState(false);
     const [changePasswordError, setChangePasswordError] = useState('');
     const [confirmAction, setConfirmAction] = useState(null);
+    const [deletePassword, setDeletePassword] = useState('');
+    const [deleteAccountLoading, setDeleteAccountLoading] = useState(false);
+    const [deleteAccountError, setDeleteAccountError] = useState('');
     
     const [dailyGoal, setDailyGoal] = useState(10);
     const goalOptions = ['10 words', '20 words', '30 words', '50 words', '100 words'];
@@ -64,6 +75,8 @@ export default function SettingScreen({navigation}) {
         setConfirmAction('logout');
     };
     const handleDeleteAccount = () => {
+        setDeletePassword('');
+        setDeleteAccountError('');
         setConfirmAction('delete');
     };
 
@@ -74,11 +87,16 @@ export default function SettingScreen({navigation}) {
     const confirmLogout = async () => {
         closeConfirmAction();
         try {
-            if (token) await logoutMe(token);
+            const sessionId = await AsyncStorage.getItem('session_id');
+            if (sessionId) {
+                await logoutUserBySessionId(sessionId);
+            } else if (token) {
+                await logoutMe(token);
+            }
         } catch (e) {
             console.warn('logout error:', e.message);
         }
-        await AsyncStorage.multiRemove(['jwt_token', 'session_id', 'current_user']);
+        await clearAuthStorage();
         setToken(null);
         setCurrentUser(null);
         setUserId(null);
@@ -86,16 +104,24 @@ export default function SettingScreen({navigation}) {
     };
 
     const confirmDeleteAccount = async () => {
-        closeConfirmAction();
-        try {
-            if (token) {
-                await deleteMe(token, { password: '', confirmation: 'DELETE' });
-            }
-        } catch (e) {
-            Alert.alert('Delete failed', e.message || 'Cannot delete account');
+        if (!deletePassword.trim()) {
+            setDeleteAccountError('Please enter your current password.');
             return;
         }
-        await AsyncStorage.multiRemove(['jwt_token', 'session_id', 'current_user']);
+        try {
+            setDeleteAccountLoading(true);
+            setDeleteAccountError('');
+            if (token) {
+                await deleteMe(token, { password: deletePassword, confirmation: 'DELETE' });
+            }
+        } catch (e) {
+            setDeleteAccountError(e.message || 'Cannot delete account');
+            return;
+        } finally {
+            setDeleteAccountLoading(false);
+        }
+        closeConfirmAction();
+        await clearAuthStorage();
         setToken(null);
         setCurrentUser(null);
         setUserId(null);
@@ -135,7 +161,7 @@ export default function SettingScreen({navigation}) {
                 confirm_password: confirmPassword,
             });
 
-            await AsyncStorage.multiRemove(['jwt_token', 'session_id', 'current_user']);
+            await clearAuthStorage();
             setToken(null);
             setCurrentUser(null);
             setUserId(null);
@@ -457,9 +483,30 @@ export default function SettingScreen({navigation}) {
                                 </Text>
                                 <Text style={styles.confirmMessage}>
                                     {confirmAction === 'delete'
-                                        ? 'This action is permanent and cannot be undone. Do you want to proceed?'
+                                        ? 'This action is permanent and cannot be undone. Enter your current password to confirm.'
                                         : 'Are you sure you want to log out of your account?'}
                                 </Text>
+
+                                {confirmAction === 'delete' ? (
+                                    <View style={styles.modalField}>
+                                        <Text style={styles.modalFieldLabel}>Current password</Text>
+                                        <View style={styles.modalInputWrap}>
+                                            <Ionicons name="key-outline" size={18} color="#64748b" style={styles.modalInputIcon} />
+                                            <TextInput
+                                                style={styles.modalInput}
+                                                placeholder="Enter current password"
+                                                placeholderTextColor="#94a3b8"
+                                                secureTextEntry
+                                                value={deletePassword}
+                                                onChangeText={setDeletePassword}
+                                            />
+                                        </View>
+                                    </View>
+                                ) : null}
+
+                                {confirmAction === 'delete' && deleteAccountError ? (
+                                    <Text style={styles.modalErrorText}>{deleteAccountError}</Text>
+                                ) : null}
 
                                 <View style={styles.modalActions}>
                                     <TouchableOpacity
@@ -473,11 +520,13 @@ export default function SettingScreen({navigation}) {
                                         style={[
                                             styles.modalButton,
                                             confirmAction === 'delete' ? styles.modalDangerButton : styles.modalPrimaryButton,
+                                            confirmAction === 'delete' && deleteAccountLoading && { opacity: 0.7 },
                                         ]}
                                         onPress={confirmAction === 'delete' ? confirmDeleteAccount : confirmLogout}
+                                        disabled={confirmAction === 'delete' && deleteAccountLoading}
                                     >
                                         <Text style={styles.modalPrimaryText}>
-                                            {confirmAction === 'delete' ? 'Delete' : 'Log out'}
+                                            {confirmAction === 'delete' ? (deleteAccountLoading ? 'Deleting...' : 'Delete') : 'Log out'}
                                         </Text>
                                     </TouchableOpacity>
                                 </View>

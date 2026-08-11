@@ -2,6 +2,14 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getMe, getTopics } from '../api';
 
+async function clearAuthStorage() {
+  await Promise.all([
+    AsyncStorage.removeItem('jwt_token'),
+    AsyncStorage.removeItem('session_id'),
+    AsyncStorage.removeItem('current_user'),
+  ]);
+}
+
 const DataContext = createContext();
 
 export function DataProvider({ children }) {
@@ -34,7 +42,7 @@ export function DataProvider({ children }) {
             setToken(null);
             setCurrentUser(null);
             setUserId(null);
-            await AsyncStorage.multiRemove(['jwt_token', 'session_id', 'current_user']);
+            await clearAuthStorage();
           }
         }
         if (savedSessionId) {

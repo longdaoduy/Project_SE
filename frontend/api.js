@@ -332,6 +332,9 @@ export const updateMe = (token, payload) =>
 export const logoutMe = (token) =>
   post('/me/logout', null, token);
 
+export const logoutUserBySessionId = (sessionId) =>
+  post(`/users/logout?session_id=${encodeURIComponent(sessionId)}`, null);
+
 export const getMyStatistics = (token) =>
   get('/me/statistics', {}, token);
 
