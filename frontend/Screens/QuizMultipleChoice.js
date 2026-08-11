@@ -11,28 +11,29 @@ import {
 } from '../api';
 
 export default function QuizMultipleChoice({ navigation, route }) {
-  const { topicId, topicTitle, quizType = 'multiple_choice', userId = 1 } = route.params || {};
-
+  const { topicId, topicTitle, quizType = 'multiple_choice', userId = 1, limit = 10 } = route.params || {};
   // ── State ─────────────────────────────────────────────────────────────────
-  const [phase,           setPhase]           = useState('loading'); // loading|quiz|result|error
-  const [questions,       setQuestions]       = useState([]);   // backend question objects + _word
-  const [backendQs,       setBackendQs]       = useState([]);   // backend question records
-  const [quizId,          setQuizId]          = useState(null);
-  const [currentIndex,    setCurrentIndex]    = useState(0);
-  const [selectedOption,  setSelectedOption]  = useState(null); // 'A'|'B'|'C'|'D'
-  const [answeredMap,     setAnsweredMap]      = useState({});   // questionId → letter
-  const [resultData,      setResultData]      = useState(null); // final scored questions
-  const [score,           setScore]           = useState(0);
-  const [error,           setError]           = useState('');
+  const [phase, setPhase] = useState('loading'); // loading|quiz|result|error
+  const [questions, setQuestions] = useState([]);   // backend question objects + _word
+  const [backendQs, setBackendQs] = useState([]);   // backend question records
+  const [quizId, setQuizId] = useState(null);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [selectedOption, setSelectedOption] = useState(null); // 'A'|'B'|'C'|'D'
+  const [answeredMap, setAnsweredMap] = useState({});   // questionId → letter
+  const [resultData, setResultData] = useState(null); // final scored questions
+  const [score, setScore] = useState(0);
+  const [error, setError] = useState('');
 
   // ── Load questions from backend ───────────────────────────────────────────
   const loadQuiz = useCallback(async () => {
     try {
       setPhase('loading');
-      const words = await getWords(topicId, 80);
+      const words = await getWords(topicId, 100);
       if (words.length < 4) throw new Error('This topic needs at least 4 words to start a quiz.');
 
-      const built = buildMCQuestions(words, 10);
+      const actualLimit = Math.min(limit, words.length);
+
+      const built = buildMCQuestions(words, actualLimit);
       if (!built.length) throw new Error('Could not build questions from this topic.');
 
       const { quiz, questions: bqs } = await createQuizWithQuestions(
@@ -55,7 +56,7 @@ export default function QuizMultipleChoice({ navigation, route }) {
       setError(e.message);
       setPhase('error');
     }
-  }, [topicId, userId, quizType]);
+  }, [topicId, userId, quizType, limit]);
 
   useEffect(() => { loadQuiz(); }, [loadQuiz]);
 
@@ -102,8 +103,8 @@ export default function QuizMultipleChoice({ navigation, route }) {
       setResultData(
         questions.map((q) => ({
           ...q,
-          user_answer:  answeredMap[q.question_id] ?? null,
-          is_correct:   answeredMap[q.question_id] === q.correct_option,
+          user_answer: answeredMap[q.question_id] ?? null,
+          is_correct: answeredMap[q.question_id] === q.correct_option,
         }))
       );
     }
@@ -161,7 +162,7 @@ export default function QuizMultipleChoice({ navigation, route }) {
 
   // ── RESULT ────────────────────────────────────────────────────────────────
   if (phase === 'result') {
-    const total    = questions.length;
+    const total = questions.length;
     const accuracy = total > 0 ? Math.round((score / total) * 100) : 0;
 
     return (
@@ -252,8 +253,8 @@ export default function QuizMultipleChoice({ navigation, route }) {
   }
 
   // ── QUIZ ──────────────────────────────────────────────────────────────────
-  const q       = questions[currentIndex];
-  const opts    = getOptions(q);
+  const q = questions[currentIndex];
+  const opts = getOptions(q);
   const letters = ['A', 'B', 'C', 'D'];
 
   return (
@@ -324,61 +325,61 @@ export default function QuizMultipleChoice({ navigation, route }) {
 
 const S = (obj) => StyleSheet.create(obj);
 const styles = S({
-  webWrapper:     { flex: 1, backgroundColor: Platform.OS === 'web' ? '#f0f2f5' : 'transparent', justifyContent: 'center', alignItems: 'center' },
+  webWrapper: { flex: 1, backgroundColor: Platform.OS === 'web' ? '#f0f2f5' : 'transparent', justifyContent: 'center', alignItems: 'center' },
   phoneContainer: { width: Platform.OS === 'web' ? 400 : '100%', height: Platform.OS === 'web' ? 800 : '100%', borderRadius: Platform.OS === 'web' ? 35 : 0, overflow: 'hidden' },
-  center:         { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f0f2ff' },
-  loadingText:    { marginTop: 12, color: '#64748b', fontSize: 14 },
-  headerSection:  { flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'ios' ? 60 : 40, paddingHorizontal: 20, paddingBottom: 10 },
-  backButton:     { width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.15)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f0f2ff' },
+  loadingText: { marginTop: 12, color: '#64748b', fontSize: 14 },
+  headerSection: { flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'ios' ? 60 : 40, paddingHorizontal: 20, paddingBottom: 10 },
+  backButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.15)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' },
   headerTextContainer: { marginLeft: 16 },
-  appName:        { fontSize: 22, fontWeight: '700', color: '#ffffff' },
-  appSubtitle:    { fontSize: 13, color: '#e2e8f0' },
-  progressSection:{ paddingHorizontal: 20, marginBottom: 10 },
-  segmentRow:     { flexDirection: 'row', gap: 5 },
-  segment:        { flex: 1, height: 4, borderRadius: 2 },
-  segActive:      { backgroundColor: '#ffffff' },
-  segInactive:    { backgroundColor: 'rgba(255,255,255,0.25)' },
-  whiteCard:      { flex: 1, backgroundColor: '#F0F2FF', paddingHorizontal: 24, paddingTop: 16, paddingBottom: 20 },
+  appName: { fontSize: 22, fontWeight: '700', color: '#ffffff' },
+  appSubtitle: { fontSize: 13, color: '#e2e8f0' },
+  progressSection: { paddingHorizontal: 20, marginBottom: 10 },
+  segmentRow: { flexDirection: 'row', gap: 5 },
+  segment: { flex: 1, height: 4, borderRadius: 2 },
+  segActive: { backgroundColor: '#ffffff' },
+  segInactive: { backgroundColor: 'rgba(255,255,255,0.25)' },
+  whiteCard: { flex: 1, backgroundColor: '#F0F2FF', paddingHorizontal: 24, paddingTop: 16, paddingBottom: 20 },
   // Error
-  errorTitle:     { fontSize: 18, fontWeight: '700', color: '#1e293b', marginTop: 16, textAlign: 'center' },
-  errorMsg:       { fontSize: 14, color: '#64748b', marginTop: 8, textAlign: 'center', lineHeight: 20 },
-  retryBtn:       { marginTop: 20, backgroundColor: '#667eea', paddingVertical: 14, paddingHorizontal: 32, borderRadius: 14 },
-  retryBtnText:   { color: '#ffffff', fontWeight: '700', fontSize: 15 },
+  errorTitle: { fontSize: 18, fontWeight: '700', color: '#1e293b', marginTop: 16, textAlign: 'center' },
+  errorMsg: { fontSize: 14, color: '#64748b', marginTop: 8, textAlign: 'center', lineHeight: 20 },
+  retryBtn: { marginTop: 20, backgroundColor: '#667eea', paddingVertical: 14, paddingHorizontal: 32, borderRadius: 14 },
+  retryBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 15 },
   // Quiz
-  questionCard:   { backgroundColor: '#ffffff', padding: 20, borderRadius: 20, marginBottom: 16 },
-  questionTag:    { fontSize: 12, fontWeight: '700', color: '#667eea', marginBottom: 6 },
-  questionText:   { fontSize: 17, fontWeight: '700', color: '#1e293b', lineHeight: 24 },
-  optionsList:    { gap: 10 },
-  optionBtn:      { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ffffff', padding: 14, borderRadius: 16, borderWidth: 1.5, borderColor: '#e2e8f0', gap: 12 },
+  questionCard: { backgroundColor: '#ffffff', padding: 20, borderRadius: 20, marginBottom: 16 },
+  questionTag: { fontSize: 12, fontWeight: '700', color: '#667eea', marginBottom: 6 },
+  questionText: { fontSize: 17, fontWeight: '700', color: '#1e293b', lineHeight: 24 },
+  optionsList: { gap: 10 },
+  optionBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ffffff', padding: 14, borderRadius: 16, borderWidth: 1.5, borderColor: '#e2e8f0', gap: 12 },
   optionSelected: { borderColor: '#667eea', backgroundColor: '#f0f3ff' },
-  optionLetter:   { width: 28, height: 28, borderRadius: 14, backgroundColor: '#f1f5f9', justifyContent: 'center', alignItems: 'center' },
+  optionLetter: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#f1f5f9', justifyContent: 'center', alignItems: 'center' },
   optionLetterSelected: { backgroundColor: '#e0e7ff' },
-  optionLetterText:     { fontSize: 12, fontWeight: '700', color: '#64748b' },
-  optionText:     { flex: 1, fontSize: 14, fontWeight: '500', color: '#334155' },
+  optionLetterText: { fontSize: 12, fontWeight: '700', color: '#64748b' },
+  optionText: { flex: 1, fontSize: 14, fontWeight: '500', color: '#334155' },
   optionTextSelected: { color: '#4f46e5', fontWeight: '700' },
-  nextBtn:        { marginTop: 20, backgroundColor: '#667eea', paddingVertical: 16, borderRadius: 16, alignItems: 'center' },
-  nextBtnDisabled:{ opacity: 0.45 },
-  nextBtnText:    { color: '#ffffff', fontSize: 16, fontWeight: '700' },
+  nextBtn: { marginTop: 20, backgroundColor: '#667eea', paddingVertical: 16, borderRadius: 16, alignItems: 'center' },
+  nextBtnDisabled: { opacity: 0.45 },
+  nextBtnText: { color: '#ffffff', fontSize: 16, fontWeight: '700' },
   // Result
-  scoreBanner:    { backgroundColor: '#ffffff', borderRadius: 24, padding: 24, alignItems: 'center', marginBottom: 16 },
-  trophyCircle:   { width: 64, height: 64, borderRadius: 32, backgroundColor: '#fef9c3', justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
-  scoreText:      { fontSize: 32, fontWeight: '800', color: '#1e293b' },
-  scoreMotivation:{ fontSize: 14, color: '#64748b', marginTop: 4 },
-  metricsRow:     { flexDirection: 'row', gap: 10, marginBottom: 16 },
-  metricCard:     { flex: 1, backgroundColor: '#ffffff', padding: 14, borderRadius: 16, alignItems: 'center' },
-  metricVal:      { fontSize: 20, fontWeight: '800' },
-  metricLabel:    { fontSize: 12, color: '#64748b', marginTop: 4 },
-  breakdownSection:{ width: '100%', marginBottom: 16 },
+  scoreBanner: { backgroundColor: '#ffffff', borderRadius: 24, padding: 24, alignItems: 'center', marginBottom: 16 },
+  trophyCircle: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#fef9c3', justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
+  scoreText: { fontSize: 32, fontWeight: '800', color: '#1e293b' },
+  scoreMotivation: { fontSize: 14, color: '#64748b', marginTop: 4 },
+  metricsRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
+  metricCard: { flex: 1, backgroundColor: '#ffffff', padding: 14, borderRadius: 16, alignItems: 'center' },
+  metricVal: { fontSize: 20, fontWeight: '800' },
+  metricLabel: { fontSize: 12, color: '#64748b', marginTop: 4 },
+  breakdownSection: { width: '100%', marginBottom: 16 },
   breakdownTitle: { fontSize: 14, fontWeight: '700', color: '#334155', marginBottom: 10 },
-  reviewCard:     { padding: 12, borderRadius: 14, marginBottom: 8, borderWidth: 1 },
-  reviewCorrect:  { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
-  reviewWrong:    { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
-  reviewHeader:   { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 4 },
-  reviewQ:        { flex: 1, fontSize: 13, fontWeight: '600', color: '#1e293b' },
-  reviewAnswer:   { fontSize: 12, color: '#475569', paddingLeft: 26 },
+  reviewCard: { padding: 12, borderRadius: 14, marginBottom: 8, borderWidth: 1 },
+  reviewCorrect: { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
+  reviewWrong: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
+  reviewHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 4 },
+  reviewQ: { flex: 1, fontSize: 13, fontWeight: '600', color: '#1e293b' },
+  reviewAnswer: { fontSize: 12, color: '#475569', paddingLeft: 26 },
   reviewCorrectAns: { fontSize: 12, color: '#475569', paddingLeft: 26, marginTop: 2 },
-  restartBtn:     { flexDirection: 'row', backgroundColor: '#16A487', paddingVertical: 15, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  restartBtn: { flexDirection: 'row', backgroundColor: '#16A487', paddingVertical: 15, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
   restartBtnText: { color: '#ffffff', fontSize: 15, fontWeight: '700' },
-  backMenuBtn:    { alignItems: 'center', paddingVertical: 10 },
-  backMenuText:   { color: '#16A487', fontWeight: '600', fontSize: 14 },
+  backMenuBtn: { alignItems: 'center', paddingVertical: 10 },
+  backMenuText: { color: '#16A487', fontWeight: '600', fontSize: 14 },
 });

@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import {
   StyleSheet, Text, View, ScrollView, StatusBar, Platform,
-  Image, TouchableOpacity, ActivityIndicator,
+  Image, TouchableOpacity, ActivityIndicator, TextInput, Modal
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -14,17 +14,19 @@ const TOPICS_PER_PAGE = 5;
 export default function VocabQuizScreen({ navigation }) {
   const { userId, topics, topicsLoading, loadTopics } = useData();
 
-  const [selectedTopic,  setSelectedTopic]  = useState(null);
-  const [selectedMode,   setSelectedMode]   = useState('mc');
-  const [viewState,      setViewState]      = useState('select_deck'); // 'select_deck' | 'select_mode'
-
+  const [selectedTopic, setSelectedTopic] = useState(null);
+  const [selectedMode, setSelectedMode] = useState('mc');
+  const [viewState, setViewState] = useState('select_deck'); // 'select_deck' | 'select_mode'
+  const [numQuestions, setNumQuestions] = useState('10');
+  const [alertVisible, setAlertVisible] = useState(false);
+  const [alertMessage, setAlertMessage] = useState('');
   // Topic list paging / collapse (same pattern as FlashcardScreen)
-  const [topicsExpanded,      setTopicsExpanded]      = useState(true);
-  const [visibleTopicsCount,  setVisibleTopicsCount]  = useState(TOPICS_PER_PAGE);
+  const [topicsExpanded, setTopicsExpanded] = useState(true);
+  const [visibleTopicsCount, setVisibleTopicsCount] = useState(TOPICS_PER_PAGE);
   const visibleTopics = topics.slice(0, visibleTopicsCount);
 
-  const [userStats,      setUserStats]      = useState(null);
-  const [statsLoading,   setStatsLoading]   = useState(true);
+  const [userStats, setUserStats] = useState(null);
+  const [statsLoading, setStatsLoading] = useState(true);
 
   // ── Load user stats ─────────────────────────────────────────────────────────
   const fetchStats = useCallback(async () => {
@@ -46,27 +48,46 @@ export default function VocabQuizScreen({ navigation }) {
 
   // ── Navigation ───────────────────────────────────────────────────────────────
   const modeScreenMap = {
-    mc:    'QuizMultipleChoice',
-    fill:  'QuizFillInBlank',
+    mc: 'QuizMultipleChoice',
+    fill: 'QuizFillInBlank',
     match: 'QuizMatching',
     speed: 'QuizSpeedRound',
   };
 
   const modeTypeMap = {
-    mc:    'multiple_choice',
-    fill:  'fill_blank',
+    mc: 'multiple_choice',
+    fill: 'fill_blank',
     match: 'word_matching',
     speed: 'speed_round',
   };
 
   const handleStartQuiz = () => {
     if (!selectedTopic) return;
+
+    let limitNumber = parseInt(numQuestions, 10);
+
+    if (isNaN(limitNumber) || limitNumber <= 0) {
+      setAlertMessage("Please enter a valid number of questions!");
+      setAlertVisible(true);
+      return;
+    }
+
+    const maxWords = selectedTopic.total_words || selectedTopic.word_count || 100;
+
+    if (limitNumber > maxWords) {
+      setAlertMessage(`Vượt quá giới hạn! Bộ từ này chỉ có ${maxWords} câu. Vui lòng nhập lại.`);
+      setNumQuestions(String(maxWords));
+      setAlertVisible(true); // Hiển thị Popup
+      return;
+    }
+
     const screenName = modeScreenMap[selectedMode];
     navigation.navigate(screenName, {
-      topicId:    selectedTopic.topic_id,
+      topicId: selectedTopic.topic_id,
       topicTitle: selectedTopic.topic_name,
-      quizType:   modeTypeMap[selectedMode],
+      quizType: modeTypeMap[selectedMode],
       userId,
+      limit: limitNumber,
     });
   };
 
@@ -82,9 +103,9 @@ export default function VocabQuizScreen({ navigation }) {
   };
 
   // ── Derived stats values ─────────────────────────────────────────────────────
-  const totalQuizzes  = userStats?.total_quizzes   ?? 0;
-  const avgScore      = userStats?.average_score   ?? 0;
-  const englishLevel  = userStats
+  const totalQuizzes = userStats?.total_quizzes ?? 0;
+  const avgScore = userStats?.average_score ?? 0;
+  const englishLevel = userStats
     ? (/* try to get from parent user object */ 'B1')
     : '—';
 
@@ -214,10 +235,10 @@ export default function VocabQuizScreen({ navigation }) {
                 <Text style={styles.sectionTitle}>Quiz Mode</Text>
 
                 {[
-                  { key: 'mc',    label: 'Multiple Choice', sub: 'Pick correct definition', icon: 'checkbox-outline',        bg: '#E3D5FF', color: '#5500FF' },
-                  { key: 'fill',  label: 'Fill in the blank', sub: 'Complete the sentence',  icon: 'create-outline',          bg: '#85FFC3', color: '#16A487' },
-                  { key: 'match', label: 'Word Matching',   sub: 'Drag and match pairs',    icon: 'git-compare-outline',      bg: '#A7CDFE', color: '#006FFF' },
-                  { key: 'speed', label: 'Speed Round',     sub: 'Time restriction',        icon: 'flash-outline',            bg: '#FFF9A5', color: '#FFCE0A' },
+                  { key: 'mc', label: 'Multiple Choice', sub: 'Pick correct definition', icon: 'checkbox-outline', bg: '#E3D5FF', color: '#5500FF' },
+                  { key: 'fill', label: 'Fill in the blank', sub: 'Complete the sentence', icon: 'create-outline', bg: '#85FFC3', color: '#16A487' },
+                  { key: 'match', label: 'Word Matching', sub: 'Drag and match pairs', icon: 'git-compare-outline', bg: '#A7CDFE', color: '#006FFF' },
+                  { key: 'speed', label: 'Speed Round', sub: 'Time restriction', icon: 'flash-outline', bg: '#FFF9A5', color: '#FFCE0A' },
                 ].map((m) => (
                   <TouchableOpacity
                     key={m.key}
@@ -235,7 +256,41 @@ export default function VocabQuizScreen({ navigation }) {
                   </TouchableOpacity>
                 ))}
               </View>
+              {/* Giao diện nhập số câu hỏi (Tự nhập) */}
+              <View style={styles.sectionBlock}>
+                <Text style={styles.sectionTitle}>Number of Questions</Text>
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: '#ffffff',
+                  borderRadius: 12,
+                  borderWidth: 1.5,
+                  borderColor: '#16A487',
+                  paddingHorizontal: 16,
+                  paddingVertical: 12,
+                  marginBottom: 10
+                }}>
+                  <TextInput
+                    style={{ flex: 1, fontSize: 16, color: '#1e293b', fontWeight: '700' }}
+                    keyboardType="numeric" // Bật bàn phím số
+                    value={String(numQuestions)}
+                    onChangeText={(text) => {
+                      // Regex lọc rác: Chỉ cho phép gõ số từ 0-9
+                      const numericValue = text.replace(/[^0-9]/g, '');
+                      setNumQuestions(numericValue);
+                    }}
+                    placeholder="E.g. 15"
+                    placeholderTextColor="#94a3b8"
+                  />
 
+                  {/* Đã sửa dòng này: Thay chữ Max thành chữ Questions */}
+                  <Text style={{ fontSize: 14, color: '#64748b', fontWeight: '600' }}>
+                    Questions
+                  </Text>
+
+                </View>
+              </View>
+              {/* ================= KẾT THÚC BƯỚC 3 ================= */}
               <TouchableOpacity style={styles.startBtn} onPress={handleStartQuiz}>
                 <Ionicons name="play" size={20} color="#ffffff" style={{ marginRight: 8 }} />
                 <Text style={styles.startBtnText}>Start Quiz</Text>
@@ -247,11 +302,11 @@ export default function VocabQuizScreen({ navigation }) {
         {/* ── BOTTOM NAV ─────────────────────────────────────────────────── */}
         <View style={styles.bottomNav}>
           {[
-            { icon: 'home',            label: 'Home',    screen: 'Home'           },
-            { icon: 'albums',          label: 'Cards',   screen: 'FlashcardScreen'},
-            { icon: 'book',            label: 'Words',   screen: 'WordlistScreen' },
-            { icon: 'sparkles',        label: 'Reading', screen: 'AIReadingScreen'},
-            { icon: 'checkmark-circle',label: 'Quiz',    screen: null             },
+            { icon: 'home', label: 'Home', screen: 'Home' },
+            { icon: 'albums', label: 'Cards', screen: 'FlashcardScreen' },
+            { icon: 'book', label: 'Words', screen: 'WordlistScreen' },
+            { icon: 'sparkles', label: 'Reading', screen: 'AIReadingScreen' },
+            { icon: 'checkmark-circle', label: 'Quiz', screen: null },
           ].map((item) => {
             const active = item.screen === null;
             return (
@@ -267,6 +322,29 @@ export default function VocabQuizScreen({ navigation }) {
           })}
         </View>
       </LinearGradient>
+
+      {/* ================= CHÈN MODAL VÀO ĐÂY ================= */}
+      <Modal transparent visible={alertVisible} animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: '#ffffff', padding: 24, borderRadius: 20, width: '100%', maxWidth: 340, alignItems: 'center' }}>
+            <View style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: '#fef3c7', justifyContent: 'center', alignItems: 'center', marginBottom: 16 }}>
+              <Ionicons name="warning" size={32} color="#f59e0b" />
+            </View>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: '#1e293b', marginBottom: 8, textAlign: 'center' }}>Thông báo</Text>
+            <Text style={{ fontSize: 15, color: '#475569', textAlign: 'center', marginBottom: 24, lineHeight: 22 }}>
+              {alertMessage}
+            </Text>
+            <TouchableOpacity
+              style={{ backgroundColor: '#16A487', width: '100%', paddingVertical: 14, borderRadius: 14, alignItems: 'center' }}
+              onPress={() => setAlertVisible(false)}
+            >
+              <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 16 }}>Đã hiểu</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+      {/* ================= KẾT THÚC MODAL ================= */}
+
     </View>
   );
 }

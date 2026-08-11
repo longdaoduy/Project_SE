@@ -7,34 +7,39 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { getWords, buildMCQuestions, saveLocalQuizResult } from '../api';
 
-const TIMER_SECONDS  = 30;
-const QUESTION_TIME  = 10;
+const TIMER_SECONDS = 30;
+const QUESTION_TIME = 10;
 const QUESTION_COUNT = 10;
 
 export default function QuizSpeedRound({ navigation, route }) {
-  const { topicId, topicTitle, userId = 1 } = route.params || {};
+  const { topicId, topicTitle, userId = 1, limit = 10 } = route.params || {};
 
-  const [phase,             setPhase]            = useState('loading');
-  const [questions,         setQuestions]        = useState([]);
-  const [currentIndex,      setCurrentIndex]     = useState(0);
-  const [selectedOption,    setSelectedOption]   = useState(null); // letter A-D
-  const [score,             setScore]            = useState(0);
-  const [results,           setResults]          = useState([]);
-  const [timeLeft,          setTimeLeft]         = useState(TIMER_SECONDS);
-  const [questionTimeLeft,  setQTimeLeft]        = useState(QUESTION_TIME);
-  const [isGameActive,      setIsGameActive]     = useState(false);
-  const [error,             setError]            = useState('');
+  const [phase, setPhase] = useState('loading');
+  const [questions, setQuestions] = useState([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [selectedOption, setSelectedOption] = useState(null); // letter A-D
+  const [score, setScore] = useState(0);
+  const [results, setResults] = useState([]);
+  const [timeLeft, setTimeLeft] = useState(TIMER_SECONDS);
+  const [questionTimeLeft, setQTimeLeft] = useState(QUESTION_TIME);
+  const [isGameActive, setIsGameActive] = useState(false);
+  const [error, setError] = useState('');
 
-  const globalTimer  = useRef(null);
+  const globalTimer = useRef(null);
   const questionTimer = useRef(null);
 
   // ── Load words from backend ───────────────────────────────────────────────
   const loadQuiz = useCallback(async () => {
     try {
       setPhase('loading');
-      const words = await getWords(topicId, 60);
+      // 2. Kéo tối đa 100 từ
+      const words = await getWords(topicId, 100);
       if (words.length < 4) throw new Error('Not enough words in this topic (need at least 4).');
-      const built = buildMCQuestions(words, QUESTION_COUNT);
+
+      // 3. Chốt chặn số lượng câu hỏi
+      const actualLimit = Math.min(limit, words.length);
+      const built = buildMCQuestions(words, actualLimit);
+
       if (!built.length) throw new Error('Could not build questions from this topic.');
       setQuestions(built);
       setPhase('ready');
@@ -42,7 +47,7 @@ export default function QuizSpeedRound({ navigation, route }) {
       setError(e.message);
       setPhase('error');
     }
-  }, [topicId]);
+  }, [topicId, limit]);
 
   useEffect(() => { loadQuiz(); }, [loadQuiz]);
 
@@ -105,9 +110,9 @@ export default function QuizSpeedRound({ navigation, route }) {
   const handleSelect = (letter) => {
     if (!isGameActive || selectedOption) return;
     setSelectedOption(letter);
-    const q          = questions[currentIndex];
-    const isCorrect  = letter === q.correct_option;
-    const newScore   = isCorrect ? score + 1 : score;
+    const q = questions[currentIndex];
+    const isCorrect = letter === q.correct_option;
+    const newScore = isCorrect ? score + 1 : score;
     const newResults = [...results, { word_id: q.word_id, is_correct: isCorrect }];
     setScore(newScore);
     setResults(newResults);
@@ -205,7 +210,7 @@ export default function QuizSpeedRound({ navigation, route }) {
 
   // ── RESULT ────────────────────────────────────────────────────────────────
   if (phase === 'result') {
-    const total    = results.length;
+    const total = results.length;
     const accuracy = total > 0 ? Math.round((score / total) * 100) : 0;
     return (
       <View style={st.webWrapper}>
@@ -245,9 +250,9 @@ export default function QuizSpeedRound({ navigation, route }) {
   }
 
   // ── PLAYING ───────────────────────────────────────────────────────────────
-  const q               = questions[currentIndex];
-  const opts            = { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d };
-  const timerPct        = (timeLeft / TIMER_SECONDS) * 100;
+  const q = questions[currentIndex];
+  const opts = { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d };
+  const timerPct = (timeLeft / TIMER_SECONDS) * 100;
   const questionTimerPct = (questionTimeLeft / QUESTION_TIME) * 100;
 
   return (
@@ -290,8 +295,8 @@ export default function QuizSpeedRound({ navigation, route }) {
           <View style={{ gap: 10, width: '100%' }}>
             {['A', 'B', 'C', 'D'].map((letter) => {
               const isSelected = selectedOption === letter;
-              const correct    = selectedOption && letter === q.correct_option;
-              const wrong      = isSelected && !correct;
+              const correct = selectedOption && letter === q.correct_option;
+              const wrong = isSelected && !correct;
               return (
                 <TouchableOpacity
                   key={letter}
@@ -299,7 +304,7 @@ export default function QuizSpeedRound({ navigation, route }) {
                     st.optionBtn,
                     isSelected && !selectedOption && st.optionSelected,
                     correct && st.optionCorrect,
-                    wrong   && st.optionWrong,
+                    wrong && st.optionWrong,
                     isSelected && st.optionSelected,
                   ]}
                   onPress={() => handleSelect(letter)}

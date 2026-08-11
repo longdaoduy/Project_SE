@@ -8,24 +8,29 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { getWords, buildFillQuestions, saveLocalQuizResult } from '../api';
 
 export default function QuizFillInBlank({ navigation, route }) {
-  const { topicId, topicTitle, userId = 1 } = route.params || {};
+  const { topicId, topicTitle, userId = 1, limit = 10 } = route.params || {};
 
-  const [phase,         setPhase]         = useState('loading'); // loading|quiz|result|error
-  const [questions,     setQuestions]     = useState([]);
-  const [currentIndex,  setCurrentIndex]  = useState(0);
-  const [userAnswer,    setUserAnswer]    = useState('');
-  const [showResult,    setShowResult]    = useState(false);
-  const [isCorrect,     setIsCorrect]     = useState(false);
-  const [score,         setScore]         = useState(0);
-  const [results,       setResults]       = useState([]); // [{word_id, is_correct}]
-  const [error,         setError]         = useState('');
+  const [phase, setPhase] = useState('loading'); // loading|quiz|result|error
+  const [questions, setQuestions] = useState([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [userAnswer, setUserAnswer] = useState('');
+  const [showResult, setShowResult] = useState(false);
+  const [isCorrect, setIsCorrect] = useState(false);
+  const [score, setScore] = useState(0);
+  const [results, setResults] = useState([]); // [{word_id, is_correct}]
+  const [error, setError] = useState('');
 
   const loadQuiz = useCallback(async () => {
     try {
       setPhase('loading');
-      const words = await getWords(topicId, 60);
+      // 2. Kéo tối đa 100 từ
+      const words = await getWords(topicId, 100);
       if (words.length < 3) throw new Error('Not enough words in this topic (need at least 3).');
-      const built = buildFillQuestions(words, 8);
+
+      // 3. Chốt chặn số lượng câu hỏi
+      const actualLimit = Math.min(limit, words.length);
+      const built = buildFillQuestions(words, actualLimit);
+
       if (!built.length) throw new Error('Could not build questions from this topic.');
       setQuestions(built);
       setCurrentIndex(0);
@@ -39,7 +44,7 @@ export default function QuizFillInBlank({ navigation, route }) {
       setError(e.message);
       setPhase('error');
     }
-  }, [topicId]);
+  }, [topicId, limit]);
 
   useEffect(() => { loadQuiz(); }, [loadQuiz]);
 
@@ -108,7 +113,7 @@ export default function QuizFillInBlank({ navigation, route }) {
 
   // ── RESULT ────────────────────────────────────────────────────────────────
   if (phase === 'result') {
-    const total    = questions.length;
+    const total = questions.length;
     const accuracy = total > 0 ? Math.round((score / total) * 100) : 0;
     return (
       <View style={styles.webWrapper}>
@@ -183,7 +188,7 @@ export default function QuizFillInBlank({ navigation, route }) {
             <View style={styles.inputSection}>
               <TextInput
                 style={[styles.answerInput,
-                  showResult && (isCorrect ? styles.inputCorrect : styles.inputWrong)]}
+                showResult && (isCorrect ? styles.inputCorrect : styles.inputWrong)]}
                 placeholder="Type the missing word…"
                 placeholderTextColor="#94a3b8"
                 value={userAnswer}

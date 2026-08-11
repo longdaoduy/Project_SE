@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   StyleSheet, Text, View, StatusBar, Platform,
-  TouchableOpacity, Image, ActivityIndicator,
+  TouchableOpacity, Image, ActivityIndicator, ScrollView
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -10,23 +10,28 @@ import { getWords, buildMatchingPairs, saveLocalQuizResult } from '../api';
 const PAIR_COUNT = 6;
 
 export default function QuizMatching({ navigation, route }) {
-  const { topicId, topicTitle, userId = 1 } = route.params || {};
+  const { topicId, topicTitle, userId = 1, limit = 10 } = route.params || {};
 
-  const [phase,        setPhase]        = useState('loading');
-  const [pairs,        setPairs]        = useState([]);
-  const [leftItems,    setLeftItems]    = useState([]);
-  const [rightItems,   setRightItems]   = useState([]);
+  const [phase, setPhase] = useState('loading');
+  const [pairs, setPairs] = useState([]);
+  const [leftItems, setLeftItems] = useState([]);
+  const [rightItems, setRightItems] = useState([]);
   const [selectedLeft, setSelectedLeft] = useState(null);
-  const [matched,      setMatched]      = useState([]); // array of word_ids correctly matched
-  const [wrong,        setWrong]        = useState(0);  // wrong attempts count
-  const [error,        setError]        = useState('');
+  const [matched, setMatched] = useState([]); // array of word_ids correctly matched
+  const [wrong, setWrong] = useState(0);  // wrong attempts count
+  const [error, setError] = useState('');
 
   const loadQuiz = useCallback(async () => {
     try {
       setPhase('loading');
-      const words = await getWords(topicId, 40);
+      // 2. Kéo tối đa 100 từ
+      const words = await getWords(topicId, 100);
       if (words.length < 4) throw new Error('Not enough words in this topic (need at least 4).');
-      const built = buildMatchingPairs(words, PAIR_COUNT);
+
+      // 3. Chốt chặn số lượng cặp từ
+      const actualLimit = Math.min(limit, words.length);
+      const built = buildMatchingPairs(words, actualLimit);
+
       setPairs(built);
       setLeftItems([...built].sort(() => Math.random() - 0.5));
       setRightItems([...built].sort(() => Math.random() - 0.5));
@@ -38,7 +43,7 @@ export default function QuizMatching({ navigation, route }) {
       setError(e.message);
       setPhase('error');
     }
-  }, [topicId]);
+  }, [topicId, limit]);
 
   useEffect(() => { loadQuiz(); }, [loadQuiz]);
 
@@ -172,46 +177,56 @@ export default function QuizMatching({ navigation, route }) {
             </Text>
           </View>
 
-          <View style={st.columns}>
-            <View style={st.column}>
-              <Text style={st.columnLabel}>Words</Text>
-              {leftItems.map((item) => (
-                <TouchableOpacity
-                  key={item.word_id}
-                  style={[
-                    st.matchCard,
-                    isMatched(item.word_id) && st.matchCardMatched,
-                    selectedLeft?.word_id === item.word_id && st.matchCardSelected,
-                  ]}
-                  onPress={() => handleSelectLeft(item)}
-                  disabled={isMatched(item.word_id)}
-                >
-                  <Text style={[st.matchCardText, isMatched(item.word_id) && st.matchCardTextMatched]} numberOfLines={2}>
-                    {isMatched(item.word_id) ? '✓' : item.word}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+          {/* ===== BẮT ĐẦU BỌC SCROLLVIEW ===== */}
+          <ScrollView style={{ flex: 1, width: '100%' }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
 
-            <View style={st.column}>
-              <Text style={st.columnLabel}>Definitions</Text>
-              {rightItems.map((item) => (
-                <TouchableOpacity
-                  key={item.word_id}
-                  style={[
-                    st.matchCard,
-                    isMatched(item.word_id) && st.matchCardMatched,
-                  ]}
-                  onPress={() => handleSelectRight(item)}
-                  disabled={isMatched(item.word_id)}
-                >
-                  <Text style={[st.matchCardText, isMatched(item.word_id) && st.matchCardTextMatched]} numberOfLines={3}>
-                    {isMatched(item.word_id) ? '✓' : item.definition}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+            <View style={[st.columns, { flex: 0 }]}>
+
+              {/* CỘT TỪ VỰNG */}
+              <View style={st.column}>
+                <Text style={st.columnLabel}>Words</Text>
+                {leftItems.map((item) => (
+                  <TouchableOpacity
+                    key={item.word_id}
+                    style={[
+                      st.matchCard,
+                      isMatched(item.word_id) && st.matchCardMatched,
+                      selectedLeft?.word_id === item.word_id && st.matchCardSelected,
+                    ]}
+                    onPress={() => handleSelectLeft(item)}
+                    disabled={isMatched(item.word_id)}
+                  >
+                    <Text style={[st.matchCardText, isMatched(item.word_id) && st.matchCardTextMatched]} numberOfLines={2}>
+                      {isMatched(item.word_id) ? '✓' : item.word}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* CỘT ĐỊNH NGHĨA */}
+              <View style={st.column}>
+                <Text style={st.columnLabel}>Definitions</Text>
+                {rightItems.map((item) => (
+                  <TouchableOpacity
+                    key={item.word_id}
+                    style={[
+                      st.matchCard,
+                      isMatched(item.word_id) && st.matchCardMatched,
+                    ]}
+                    onPress={() => handleSelectRight(item)}
+                    disabled={isMatched(item.word_id)}
+                  >
+                    <Text style={[st.matchCardText, isMatched(item.word_id) && st.matchCardTextMatched]} numberOfLines={3}>
+                      {isMatched(item.word_id) ? '✓' : item.definition}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
             </View>
-          </View>
+          </ScrollView>
+          {/* ===== KẾT THÚC SCROLLVIEW ===== */}
+
         </View>
       </LinearGradient>
     </View>
