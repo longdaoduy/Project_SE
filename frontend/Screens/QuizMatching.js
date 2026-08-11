@@ -10,32 +10,23 @@ import { getWords, buildMatchingPairs, saveLocalQuizResult } from '../api';
 const PAIR_COUNT = 6;
 
 export default function QuizMatching({ navigation, route }) {
-  const { topicId, topicTitle, userId = 1, deckWords = null } = route.params || {};
-  const { topicId, topicTitle, userId = 1, limit = 10 } = route.params || {};
+  const { topicId, topicTitle, userId = 1, deckWords = null, limit = 6 } = route.params || {};
 
   const [phase, setPhase] = useState('loading');
   const [pairs, setPairs] = useState([]);
   const [leftItems, setLeftItems] = useState([]);
   const [rightItems, setRightItems] = useState([]);
   const [selectedLeft, setSelectedLeft] = useState(null);
-  const [matched, setMatched] = useState([]); // array of word_ids correctly matched
-  const [wrong, setWrong] = useState(0);  // wrong attempts count
+  const [matched, setMatched] = useState([]);
+  const [wrong, setWrong] = useState(0);
   const [error, setError] = useState('');
 
   const loadQuiz = useCallback(async () => {
     try {
       setPhase('loading');
-      const words = deckWords ? deckWords : await getWords(topicId, 40);
+      const words = deckWords ? deckWords : await getWords(topicId, Math.max(limit * 2, 40));
       if (words.length < 4) throw new Error('Not enough words to start a quiz (need at least 4).');
-      const built = buildMatchingPairs(words, PAIR_COUNT);
-      // 2. Kéo tối đa 100 từ
-      const words = await getWords(topicId, 100);
-      if (words.length < 4) throw new Error('Not enough words in this topic (need at least 4).');
-
-      // 3. Chốt chặn số lượng cặp từ
-      const actualLimit = Math.min(limit, words.length);
-      const built = buildMatchingPairs(words, actualLimit);
-
+      const built = buildMatchingPairs(words, limit);
       setPairs(built);
       setLeftItems([...built].sort(() => Math.random() - 0.5));
       setRightItems([...built].sort(() => Math.random() - 0.5));
@@ -47,8 +38,7 @@ export default function QuizMatching({ navigation, route }) {
       setError(e.message);
       setPhase('error');
     }
-  }, [topicId, deckWords]);
-  }, [topicId, limit]);
+  }, [topicId, deckWords, limit]);
 
   useEffect(() => { loadQuiz(); }, [loadQuiz]);
 
@@ -66,7 +56,6 @@ export default function QuizMatching({ navigation, route }) {
       setMatched(newMatched);
       setSelectedLeft(null);
       if (newMatched.length === pairs.length) {
-        // Save to backend only for real topics (skip for local deck words)
         if (!deckWords) {
           const results = pairs.map((p) => ({ word_id: p.word_id, is_correct: true }));
           saveLocalQuizResult(userId, topicId, 'word_matching', results);
@@ -184,12 +173,8 @@ export default function QuizMatching({ navigation, route }) {
             </Text>
           </View>
 
-          {/* ===== BẮT ĐẦU BỌC SCROLLVIEW ===== */}
           <ScrollView style={{ flex: 1, width: '100%' }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
-
             <View style={[st.columns, { flex: 0 }]}>
-
-              {/* CỘT TỪ VỰNG */}
               <View style={st.column}>
                 <Text style={st.columnLabel}>Words</Text>
                 {leftItems.map((item) => (
@@ -210,7 +195,6 @@ export default function QuizMatching({ navigation, route }) {
                 ))}
               </View>
 
-              {/* CỘT ĐỊNH NGHĨA */}
               <View style={st.column}>
                 <Text style={st.columnLabel}>Definitions</Text>
                 {rightItems.map((item) => (
@@ -229,11 +213,8 @@ export default function QuizMatching({ navigation, route }) {
                   </TouchableOpacity>
                 ))}
               </View>
-
             </View>
           </ScrollView>
-          {/* ===== KẾT THÚC SCROLLVIEW ===== */}
-
         </View>
       </LinearGradient>
     </View>

@@ -12,13 +12,12 @@ const QUESTION_TIME = 10;
 const QUESTION_COUNT = 10;
 
 export default function QuizSpeedRound({ navigation, route }) {
-  const { topicId, topicTitle, userId = 1, deckWords = null } = route.params || {};
-  const { topicId, topicTitle, userId = 1, limit = 10 } = route.params || {};
+  const { topicId, topicTitle, userId = 1, deckWords = null, limit = 10 } = route.params || {};
 
   const [phase, setPhase] = useState('loading');
   const [questions, setQuestions] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [selectedOption, setSelectedOption] = useState(null); // letter A-D
+  const [selectedOption, setSelectedOption] = useState(null);
   const [score, setScore] = useState(0);
   const [results, setResults] = useState([]);
   const [timeLeft, setTimeLeft] = useState(TIMER_SECONDS);
@@ -33,27 +32,17 @@ export default function QuizSpeedRound({ navigation, route }) {
   const loadQuiz = useCallback(async () => {
     try {
       setPhase('loading');
-      const words = deckWords ? deckWords : await getWords(topicId, 60);
+      const words = deckWords ? deckWords : await getWords(topicId, Math.max(limit * 2, 60));
       if (words.length < 4) throw new Error('Not enough words to start a quiz (need at least 4).');
-      const built = buildMCQuestions(words, QUESTION_COUNT);
+      const built = buildMCQuestions(words, limit);
       if (!built.length) throw new Error('Could not build questions from this deck.');
-      // 2. Kéo tối đa 100 từ
-      const words = await getWords(topicId, 100);
-      if (words.length < 4) throw new Error('Not enough words in this topic (need at least 4).');
-
-      // 3. Chốt chặn số lượng câu hỏi
-      const actualLimit = Math.min(limit, words.length);
-      const built = buildMCQuestions(words, actualLimit);
-
-      if (!built.length) throw new Error('Could not build questions from this topic.');
       setQuestions(built);
       setPhase('ready');
     } catch (e) {
       setError(e.message);
       setPhase('error');
     }
-  }, [topicId, deckWords]);
-  }, [topicId, limit]);
+  }, [topicId, deckWords, limit]);
 
   useEffect(() => { loadQuiz(); }, [loadQuiz]);
 
@@ -74,7 +63,6 @@ export default function QuizSpeedRound({ navigation, route }) {
     clearInterval(globalTimer.current);
     clearInterval(questionTimer.current);
     setIsGameActive(false);
-    // Save to backend only for real topics (skip for local deck words)
     if (!deckWords) saveLocalQuizResult(userId, topicId, 'speed_round', finalResults);
     setPhase('result');
   }, [userId, topicId, deckWords]);
@@ -97,7 +85,6 @@ export default function QuizSpeedRound({ navigation, route }) {
     questionTimer.current = setInterval(() => {
       setQTimeLeft(prev => {
         if (prev <= 1) {
-          // auto-advance, no answer = wrong
           setResults(r => {
             const q = questions[currentIndex];
             const newR = q ? [...r, { word_id: q.word_id, is_correct: false }] : r;
@@ -196,7 +183,7 @@ export default function QuizSpeedRound({ navigation, route }) {
                 {[
                   ['time-outline', `${TIMER_SECONDS} seconds total`],
                   ['timer-outline', `${QUESTION_TIME}s per question`],
-                  ['albums-outline', `${questions.length} questions from backend`],
+                  ['albums-outline', `${questions.length} questions`],
                 ].map(([icon, text]) => (
                   <View key={text} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <Ionicons name={icon} size={16} color="#64748b" />
@@ -243,7 +230,7 @@ export default function QuizSpeedRound({ navigation, route }) {
               <View style={st.metricCard}><Text style={[st.metricValue, { color: '#ef4444' }]}>{total - score}</Text><Text style={st.metricLabel}>Wrong</Text></View>
               <View style={st.metricCard}><Text style={[st.metricValue, { color: '#6366f1' }]}>{accuracy}%</Text><Text style={st.metricLabel}>Accuracy</Text></View>
             </View>
-            <TouchableOpacity style={st.restartButton} onPress={() => { loadQuiz(); }}>
+            <TouchableOpacity style={st.restartButton} onPress={loadQuiz}>
               <Ionicons name="reload" size={20} color="#ffffff" style={{ marginRight: 8 }} />
               <Text style={st.restartButtonText}>Play Again</Text>
             </TouchableOpacity>
@@ -309,10 +296,9 @@ export default function QuizSpeedRound({ navigation, route }) {
                   key={letter}
                   style={[
                     st.optionBtn,
-                    isSelected && !selectedOption && st.optionSelected,
                     correct && st.optionCorrect,
                     wrong && st.optionWrong,
-                    isSelected && st.optionSelected,
+                    isSelected && !wrong && !correct && st.optionSelected,
                   ]}
                   onPress={() => handleSelect(letter)}
                   disabled={!!selectedOption}

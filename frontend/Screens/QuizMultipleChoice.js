@@ -11,18 +11,16 @@ import {
 } from '../api';
 
 export default function QuizMultipleChoice({ navigation, route }) {
-  const { topicId, topicTitle, quizType = 'multiple_choice', userId = 1, deckWords = null } = route.params || {};
+  const { topicId, topicTitle, quizType = 'multiple_choice', userId = 1, deckWords = null, limit = 10 } = route.params || {};
 
-  const { topicId, topicTitle, quizType = 'multiple_choice', userId = 1, limit = 10 } = route.params || {};
-  // ── State ─────────────────────────────────────────────────────────────────
-  const [phase, setPhase] = useState('loading'); // loading|quiz|result|error
-  const [questions, setQuestions] = useState([]);   // backend question objects + _word
-  const [backendQs, setBackendQs] = useState([]);   // backend question records
+  const [phase, setPhase] = useState('loading');
+  const [questions, setQuestions] = useState([]);
+  const [backendQs, setBackendQs] = useState([]);
   const [quizId, setQuizId] = useState(null);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [selectedOption, setSelectedOption] = useState(null); // 'A'|'B'|'C'|'D'
-  const [answeredMap, setAnsweredMap] = useState({});   // questionId → letter
-  const [resultData, setResultData] = useState(null); // final scored questions
+  const [selectedOption, setSelectedOption] = useState(null);
+  const [answeredMap, setAnsweredMap] = useState({});
+  const [resultData, setResultData] = useState(null);
   const [score, setScore] = useState(0);
   const [error, setError] = useState('');
 
@@ -30,17 +28,14 @@ export default function QuizMultipleChoice({ navigation, route }) {
   const loadQuiz = useCallback(async () => {
     try {
       setPhase('loading');
-      const words = await getWords(topicId, 100);
-      if (words.length < 4) throw new Error('This topic needs at least 4 words to start a quiz.');
 
-      // Use deckWords (local deck) if provided, otherwise fetch from backend
-      const words = deckWords ? deckWords : await getWords(topicId, 80);
+      const words = deckWords ? deckWords : await getWords(topicId, Math.max(limit * 2, 80));
       if (words.length < 4) throw new Error('This deck needs at least 4 words to start a quiz.');
 
-      const built = buildMCQuestions(words, 10);
+      const built = buildMCQuestions(words, limit);
       if (!built.length) throw new Error('Could not build questions from this deck.');
 
-      // For local deck words, skip backend quiz creation (word_ids are local strings)
+      // For local deck words, skip backend quiz creation
       if (deckWords) {
         const localQs = built.map((q, i) => ({ ...q, question_id: `local_${i}` }));
         setQuestions(localQs);
@@ -54,19 +49,11 @@ export default function QuizMultipleChoice({ navigation, route }) {
         setPhase('quiz');
         return;
       }
-      const words = await getWords(topicId, 100);
-      if (words.length < 4) throw new Error('This topic needs at least 4 words to start a quiz.');
-
-      const actualLimit = Math.min(limit, words.length);
-
-      const built = buildMCQuestions(words, actualLimit);
-      if (!built.length) throw new Error('Could not build questions from this topic.');
 
       const { quiz, questions: bqs } = await createQuizWithQuestions(
         userId, topicId, quizType, built
       );
 
-      // merge backend question_id into local question data
       const merged = built.map((q, i) => ({ ...q, question_id: bqs[i].question_id }));
 
       setQuestions(merged);
@@ -82,8 +69,7 @@ export default function QuizMultipleChoice({ navigation, route }) {
       setError(e.message);
       setPhase('error');
     }
-  }, [topicId, userId, quizType, deckWords]);
-  }, [topicId, userId, quizType, limit]);
+  }, [topicId, userId, quizType, deckWords, limit]);
 
   useEffect(() => { loadQuiz(); }, [loadQuiz]);
 
@@ -92,7 +78,6 @@ export default function QuizMultipleChoice({ navigation, route }) {
     if (!selectedOption) return;
     const q = questions[currentIndex];
 
-    // Only call backend for real word_ids (skip for local deck words)
     if (quizId && !deckWords) {
       try {
         await submitAnswer(q.question_id, selectedOption);
@@ -117,13 +102,12 @@ export default function QuizMultipleChoice({ navigation, route }) {
   };
 
   const finaliseQuiz = async (finalScore, finalMap = answeredMap) => {
-    // For local deck quizzes, skip backend calls entirely
     if (deckWords) {
       setResultData(
         questions.map((q) => ({
           ...q,
           user_answer: finalMap[q.question_id] ?? null,
-          is_correct:  finalMap[q.question_id] === q.correct_option,
+          is_correct: finalMap[q.question_id] === q.correct_option,
         }))
       );
       setScore(finalScore);
@@ -136,21 +120,18 @@ export default function QuizMultipleChoice({ navigation, route }) {
     } catch (e) {
       console.warn('submitQuiz error (non-critical):', e.message);
     }
-    // re-fetch questions to get is_correct from backend
+
     try {
       const detailed = await Promise.all(
         questions.map((q) => getQuizQuestion(q.question_id))
       );
       setResultData(detailed);
     } catch (e) {
-      // fallback: compute locally
       setResultData(
         questions.map((q) => ({
           ...q,
-          user_answer:  finalMap[q.question_id] ?? null,
-          is_correct:   finalMap[q.question_id] === q.correct_option,
-          user_answer: answeredMap[q.question_id] ?? null,
-          is_correct: answeredMap[q.question_id] === q.correct_option,
+          user_answer: finalMap[q.question_id] ?? null,
+          is_correct: finalMap[q.question_id] === q.correct_option,
         }))
       );
     }
@@ -158,7 +139,6 @@ export default function QuizMultipleChoice({ navigation, route }) {
     setPhase('result');
   };
 
-  // ── Option map helper ─────────────────────────────────────────────────────
   const getOptions = (q) => ({
     A: q.option_a,
     B: q.option_b,
@@ -227,7 +207,6 @@ export default function QuizMultipleChoice({ navigation, route }) {
 
           <ScrollView style={{ flex: 1 }}>
             <View style={styles.whiteCard}>
-              {/* Score banner */}
               <View style={styles.scoreBanner}>
                 <View style={styles.trophyCircle}>
                   <Ionicons name="trophy" size={32} color="#eab308" />
@@ -238,7 +217,6 @@ export default function QuizMultipleChoice({ navigation, route }) {
                 </Text>
               </View>
 
-              {/* Metrics */}
               <View style={styles.metricsRow}>
                 <View style={styles.metricCard}>
                   <Text style={[styles.metricVal, { color: '#16A487' }]}>{score}</Text>
@@ -254,7 +232,6 @@ export default function QuizMultipleChoice({ navigation, route }) {
                 </View>
               </View>
 
-              {/* Breakdown */}
               {resultData && (
                 <View style={styles.breakdownSection}>
                   <Text style={styles.breakdownTitle}>Review</Text>
@@ -318,7 +295,6 @@ export default function QuizMultipleChoice({ navigation, route }) {
           </View>
         </View>
 
-        {/* Progress segments */}
         <View style={styles.progressSection}>
           <View style={styles.segmentRow}>
             {questions.map((_, i) => (
@@ -328,13 +304,11 @@ export default function QuizMultipleChoice({ navigation, route }) {
         </View>
 
         <View style={styles.whiteCard}>
-          {/* Question card */}
           <View style={styles.questionCard}>
             <Text style={styles.questionTag}>Q{currentIndex + 1} / {questions.length}</Text>
             <Text style={styles.questionText}>{q.question_text}</Text>
           </View>
 
-          {/* Options */}
           <View style={styles.optionsList}>
             {letters.map((letter) => {
               const isSelected = selectedOption === letter;
@@ -369,8 +343,7 @@ export default function QuizMultipleChoice({ navigation, route }) {
   );
 }
 
-const S = (obj) => StyleSheet.create(obj);
-const styles = S({
+const styles = StyleSheet.create({
   webWrapper: { flex: 1, backgroundColor: Platform.OS === 'web' ? '#f0f2f5' : 'transparent', justifyContent: 'center', alignItems: 'center' },
   phoneContainer: { width: Platform.OS === 'web' ? 400 : '100%', height: Platform.OS === 'web' ? 800 : '100%', borderRadius: Platform.OS === 'web' ? 35 : 0, overflow: 'hidden' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f0f2ff' },
@@ -386,12 +359,10 @@ const styles = S({
   segActive: { backgroundColor: '#ffffff' },
   segInactive: { backgroundColor: 'rgba(255,255,255,0.25)' },
   whiteCard: { flex: 1, backgroundColor: '#F0F2FF', paddingHorizontal: 24, paddingTop: 16, paddingBottom: 20 },
-  // Error
   errorTitle: { fontSize: 18, fontWeight: '700', color: '#1e293b', marginTop: 16, textAlign: 'center' },
   errorMsg: { fontSize: 14, color: '#64748b', marginTop: 8, textAlign: 'center', lineHeight: 20 },
   retryBtn: { marginTop: 20, backgroundColor: '#667eea', paddingVertical: 14, paddingHorizontal: 32, borderRadius: 14 },
   retryBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 15 },
-  // Quiz
   questionCard: { backgroundColor: '#ffffff', padding: 20, borderRadius: 20, marginBottom: 16 },
   questionTag: { fontSize: 12, fontWeight: '700', color: '#667eea', marginBottom: 6 },
   questionText: { fontSize: 17, fontWeight: '700', color: '#1e293b', lineHeight: 24 },
@@ -406,7 +377,6 @@ const styles = S({
   nextBtn: { marginTop: 20, backgroundColor: '#667eea', paddingVertical: 16, borderRadius: 16, alignItems: 'center' },
   nextBtnDisabled: { opacity: 0.45 },
   nextBtnText: { color: '#ffffff', fontSize: 16, fontWeight: '700' },
-  // Result
   scoreBanner: { backgroundColor: '#ffffff', borderRadius: 24, padding: 24, alignItems: 'center', marginBottom: 16 },
   trophyCircle: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#fef9c3', justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
   scoreText: { fontSize: 32, fontWeight: '800', color: '#1e293b' },
