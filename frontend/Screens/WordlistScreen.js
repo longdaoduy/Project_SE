@@ -13,6 +13,7 @@ import {
   FlatList,
   ActivityIndicator,
   Alert,
+  Modal,
 } from 'react-native';
 import { Ionicons, AntDesign } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -44,6 +45,7 @@ export default function WordlistScreen({ navigation }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFilter, setSelectedFilter] = useState('all'); // 'all', 'starred', 'studied', 'unstudied'
   const [viewState, setViewState] = useState('list'); // 'list' | 'add'
+  const [isTopicModalVisible, setIsTopicModalVisible] = useState(false);
 
   // Add Word Form State
   const [newWord, setNewWord] = useState('');
@@ -55,14 +57,17 @@ export default function WordlistScreen({ navigation }) {
   const [selectedWordType, setSelectedWordType] = useState('noun');
   const [submittingWord, setSubmittingWord] = useState(false);
 
+  const selectedTopic = topics?.find((t) => t.topic_id === selectedTopicId) || null;
+
   // ── Fetch Vocabularies & Starred Words ───────────────────────────────────────
   const fetchVocabularies = useCallback(async () => {
     try {
+      setLoading(true);
       setError(null);
-      const targetTopicId = selectedTopicId ?? (topics?.[0]?.topic_id ?? null);
-      
+      const targetTopicId = selectedTopicId; // null = all topics
+
       const [wordsData, starredData] = await Promise.all([
-        getWords(targetTopicId, 100),
+        getWords(targetTopicId, 200),
         userId ? getStarredWords(userId, 200).catch(() => []) : Promise.resolve([]),
       ]);
 
@@ -91,7 +96,7 @@ export default function WordlistScreen({ navigation }) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [selectedTopicId, topics, userId]);
+  }, [selectedTopicId, userId]);
 
   useEffect(() => {
     if (topics.length === 0) {
@@ -321,7 +326,7 @@ export default function WordlistScreen({ navigation }) {
               <View style={styles.headerTextContainer}>
                 <Text style={styles.appName}>My Vocabulary</Text>
                 <Text style={styles.appSubtitle}>
-                  {vocabularies.length} words available
+                  {selectedTopic ? `${selectedTopic.topic_name} • ` : ''}{vocabularies.length} words available
                 </Text>
               </View>
 
@@ -329,38 +334,6 @@ export default function WordlistScreen({ navigation }) {
                 <Ionicons name="add" size={20} color="#ffffff" />
               </TouchableOpacity>
             </View>
-
-            {/* ── TOPIC SELECTOR HORIZONTAL SCROLL ── */}
-            {topics.length > 0 && (
-              <View style={styles.topicScrollWrapper}>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.topicScrollContent}
-                >
-                  {topics.map((t) => {
-                    const isSelected = selectedTopicId === t.topic_id;
-                    return (
-                      <TouchableOpacity
-                        key={t.topic_id}
-                        style={[styles.topicChip, isSelected && styles.selectedTopicChip]}
-                        onPress={() => setSelectedTopicId(t.topic_id)}
-                        activeOpacity={0.7}
-                      >
-                        <Text
-                          style={[
-                            styles.topicChipText,
-                            isSelected && styles.selectedTopicChipText,
-                          ]}
-                        >
-                          {t.topic_name}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-              </View>
-            )}
 
             {/* ── SEARCH INPUT ── */}
             <View style={styles.searchSection}>
@@ -384,9 +357,14 @@ export default function WordlistScreen({ navigation }) {
 
             {/* ── WHITE CARD WITH FILTERS & FLATLIST ── */}
             <View style={styles.whiteCardContainer}>
-              {/* Filter Tabs */}
+              {/* Filter Tabs & Topic Filter Icon */}
               <View style={styles.filterRow}>
-                <View style={styles.filterContainer}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.filterTabsScroll}
+                  style={styles.filterScroll}
+                >
                   <TouchableOpacity
                     style={[styles.filterButton, selectedFilter === 'all' && styles.selectedFilter]}
                     onPress={() => setSelectedFilter('all')}
@@ -457,8 +435,44 @@ export default function WordlistScreen({ navigation }) {
                       Unstudied
                     </Text>
                   </TouchableOpacity>
-                </View>
+                </ScrollView>
+
+                {/* Topic Filter Icon Button (top right of whiteCardContainer) */}
+                <TouchableOpacity
+
+                  onPress={() => setIsTopicModalVisible(true)}
+                  activeOpacity={0.7}
+                  accessibilityLabel="Filter by topic"
+                >
+                  <Ionicons
+                    name={selectedTopicId !== null ? 'funnel' : 'funnel-outline'}
+                    size={16}
+                    color={selectedTopicId !== null ? '#aba8a8ff' : '#6366f1'}
+                  />
+                  {selectedTopicId !== null && <View style={styles.topicFilterActiveDot} />}
+                </TouchableOpacity>
               </View>
+
+              {/* Active Topic Banner */}
+              {selectedTopic && (
+                <View style={styles.activeTopicBanner}>
+                  <View style={styles.activeTopicInfo}>
+                    <Ionicons name="pricetag" size={13} color="#6366f1" style={{ marginRight: 6 }} />
+                    <Text style={styles.activeTopicLabel}>Topic:</Text>
+                    <Text style={styles.activeTopicName} numberOfLines={1}>
+                      {selectedTopic.topic_name}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.clearTopicButton}
+                    onPress={() => setSelectedTopicId(null)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={styles.clearTopicText}>Clear</Text>
+                    <Ionicons name="close-circle" size={14} color="#94a3b8" />
+                  </TouchableOpacity>
+                </View>
+              )}
 
               {/* Word List */}
               <FlatList
@@ -490,8 +504,18 @@ export default function WordlistScreen({ navigation }) {
                       <Text style={styles.stateText}>
                         {selectedFilter === 'starred'
                           ? 'No starred words yet. Tap the star icon on any word to bookmark it!'
-                          : 'No words found matching your search.'}
+                          : selectedTopic
+                            ? `No words found in topic "${selectedTopic.topic_name}".`
+                            : 'No words found matching your search.'}
                       </Text>
+                      {selectedTopicId !== null && (
+                        <TouchableOpacity
+                          style={[styles.retryBtn, { marginTop: 12, backgroundColor: '#f1f5f9' }]}
+                          onPress={() => setSelectedTopicId(null)}
+                        >
+                          <Text style={[styles.retryText, { color: '#6366f1' }]}>Show All Topics</Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   )
                 }
@@ -570,7 +594,7 @@ export default function WordlistScreen({ navigation }) {
                     />
                   </View>
 
-                  <Text style={styles.addWordContainerTitle}>VIETNAMESE MEANING *</Text>
+                  <Text style={styles.addWordContainerTitle}>VIETNAMESE MEANING </Text>
                   <View style={styles.addWordInputContainer}>
                     <TextInput
                       placeholder="e.g. Khả năng phục hồi, kiên cường"
@@ -580,7 +604,7 @@ export default function WordlistScreen({ navigation }) {
                     />
                   </View>
 
-                  <Text style={styles.addWordContainerTitle}>EXAMPLE SENTENCE (ENGLISH) *</Text>
+                  <Text style={styles.addWordContainerTitle}>EXAMPLE SENTENCE (ENGLISH) </Text>
                   <View style={styles.addWordInputContainer}>
                     <TextInput
                       placeholder="e.g. She showed great resilience in overcoming her illness."
@@ -590,7 +614,7 @@ export default function WordlistScreen({ navigation }) {
                     />
                   </View>
 
-                  <Text style={styles.addWordContainerTitle}>EXAMPLE TRANSLATION (VIETNAMESE) *</Text>
+                  <Text style={styles.addWordContainerTitle}>EXAMPLE TRANSLATION (VIETNAMESE) </Text>
                   <View style={styles.addWordInputContainer}>
                     <TextInput
                       placeholder="e.g. Cô ấy đã thể hiện sự kiên cường tuyệt vời để vượt qua bệnh tật."
@@ -640,6 +664,170 @@ export default function WordlistScreen({ navigation }) {
             </ScrollView>
           </>
         )}
+
+        {/* ── TOPIC FILTER MODAL ── */}
+        <Modal
+          visible={isTopicModalVisible}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setIsTopicModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <TouchableOpacity
+              style={styles.modalBackdrop}
+              activeOpacity={1}
+              onPress={() => setIsTopicModalVisible(false)}
+            />
+            <View style={styles.modalContainer}>
+              <View style={styles.modalHeader}>
+                <View style={styles.modalHeaderTitleRow}>
+                  <View style={styles.modalIconBadge}>
+                    <Ionicons name="funnel" size={16} color="#6366f1" />
+                  </View>
+                  <View>
+                    <Text style={styles.modalTitle}>Filter by Topic</Text>
+                    <Text style={styles.modalSubtitle}>Select a topic to focus your vocabulary</Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.modalCloseBtn}
+                  onPress={() => setIsTopicModalVisible(false)}
+                >
+                  <Ionicons name="close" size={18} color="#64748b" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView
+                style={styles.modalList}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 8 }}
+              >
+                {/* Option: All Topics */}
+                <TouchableOpacity
+                  style={[
+                    styles.topicOptionItem,
+                    selectedTopicId === null && styles.topicOptionItemActive,
+                  ]}
+                  onPress={() => {
+                    setSelectedTopicId(null);
+                    setIsTopicModalVisible(false);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.topicOptionLeft}>
+                    <View
+                      style={[
+                        styles.topicOptionIconWrapper,
+                        selectedTopicId === null && styles.topicOptionIconWrapperActive,
+                      ]}
+                    >
+                      <Ionicons
+                        name="grid-outline"
+                        size={18}
+                        color={selectedTopicId === null ? '#6366f1' : '#64748b'}
+                      />
+                    </View>
+                    <View style={styles.topicOptionTextWrapper}>
+                      <Text
+                        style={[
+                          styles.topicOptionTitle,
+                          selectedTopicId === null && styles.topicOptionTitleActive,
+                        ]}
+                      >
+                        All Topics
+                      </Text>
+                      <Text style={styles.topicOptionDesc}>Show words across all topics</Text>
+                    </View>
+                  </View>
+                  {selectedTopicId === null ? (
+                    <View style={styles.checkCircle}>
+                      <Ionicons name="checkmark" size={14} color="#ffffff" />
+                    </View>
+                  ) : (
+                    <View style={styles.uncheckCircle} />
+                  )}
+                </TouchableOpacity>
+
+                {/* Topic list */}
+                {topics.map((t) => {
+                  const isSelected = selectedTopicId === t.topic_id;
+                  return (
+                    <TouchableOpacity
+                      key={t.topic_id}
+                      style={[
+                        styles.topicOptionItem,
+                        isSelected && styles.topicOptionItemActive,
+                      ]}
+                      onPress={() => {
+                        setSelectedTopicId(t.topic_id);
+                        setIsTopicModalVisible(false);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.topicOptionLeft}>
+                        <View
+                          style={[
+                            styles.topicOptionIconWrapper,
+                            isSelected && styles.topicOptionIconWrapperActive,
+                          ]}
+                        >
+                          <Ionicons
+                            name="book-outline"
+                            size={18}
+                            color={isSelected ? '#6366f1' : '#64748b'}
+                          />
+                        </View>
+                        <View style={styles.topicOptionTextWrapper}>
+                          <Text
+                            style={[
+                              styles.topicOptionTitle,
+                              isSelected && styles.topicOptionTitleActive,
+                            ]}
+                          >
+                            {t.topic_name}
+                          </Text>
+                          {t.description ? (
+                            <Text style={styles.topicOptionDesc} numberOfLines={1}>
+                              {t.description}
+                            </Text>
+                          ) : null}
+                        </View>
+                      </View>
+                      {isSelected ? (
+                        <View style={styles.checkCircle}>
+                          <Ionicons name="checkmark" size={14} color="#ffffff" />
+                        </View>
+                      ) : (
+                        <View style={styles.uncheckCircle} />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              {/* Modal Footer */}
+              <View style={styles.modalFooter}>
+                {selectedTopicId !== null && (
+                  <TouchableOpacity
+                    style={styles.modalResetBtn}
+                    onPress={() => {
+                      setSelectedTopicId(null);
+                      setIsTopicModalVisible(false);
+                    }}
+                  >
+                    <Text style={styles.modalResetText}>Clear Filter</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={styles.modalApplyBtn}
+                  onPress={() => setIsTopicModalVisible(false)}
+                >
+                  <Text style={styles.modalApplyText}>Close</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
 
         {/* ── QUICK NAV BAR ── */}
         <View style={styles.quickNavContainer}>
@@ -721,8 +909,9 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
   },
   headerTextContainer: {
-    alignItems: 'center',
     flex: 1,
+    marginLeft: 16,
+    marginBottom: 10
   },
   backButton: {
     width: 34,
@@ -797,7 +986,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#ffffff',
-    borderRadius: 16,
+    borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: Platform.OS === 'ios' ? 10 : 6,
     shadowColor: '#000',
@@ -817,18 +1006,24 @@ const styles = StyleSheet.create({
   whiteCardContainer: {
     flex: 1,
     backgroundColor: '#F0F2FF',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
     paddingTop: 12,
     overflow: 'hidden',
+    paddingHorizontal: 15
   },
   filterRow: {
-    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 10,
+    gap: 8,
   },
-  filterContainer: {
+  filterScroll: {
+    flex: 1,
+  },
+  filterTabsScroll: {
     flexDirection: 'row',
     gap: 6,
+    alignItems: 'center',
   },
   filterButton: {
     flexDirection: 'row',
@@ -852,6 +1047,90 @@ const styles = StyleSheet.create({
   selectedFilterText: {
     color: '#ffffff',
     fontWeight: '700',
+  },
+  topicFilterIconButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  topicFilterIconButtonActive: {
+    backgroundColor: '#667eea',
+    borderColor: '#667eea',
+    shadowColor: '#667eea',
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
+  topicFilterActiveDot: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#ea3b14ff',
+    borderWidth: 1.5,
+    borderColor: '#ffffff',
+  },
+  activeTopicBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    marginBottom: 10,
+    shadowColor: '#667eea',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 1,
+    marginHorizontal: 16
+  },
+  activeTopicInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
+  },
+  activeTopicLabel: {
+    fontSize: 11,
+    color: '#6366f1',
+    fontWeight: '600',
+    marginRight: 4,
+  },
+  activeTopicName: {
+    fontSize: 12,
+    color: '#312e81',
+    fontWeight: '700',
+    flex: 1,
+  },
+  clearTopicButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: '#f1f5f9',
+  },
+  clearTopicText: {
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '600',
   },
 
   listContent: {
@@ -1030,7 +1309,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderRadius: 14,
     paddingHorizontal: 14,
-    paddingVertical: Platform.OS === 'ios' ? 12 : 8,
+    paddingVertical: Platform.OS === 'ios' ? 16 : 12,
     marginBottom: 14,
     borderWidth: 1,
     borderColor: '#e2e8f0',
@@ -1038,12 +1317,13 @@ const styles = StyleSheet.create({
   addWordInput: {
     fontSize: 14,
     color: '#0f172a',
+    opacity: 0.5
   },
   formTopicChip: {
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: 14,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#ffffff',
     marginRight: 6,
     borderWidth: 1,
     borderColor: '#e2e8f0',
@@ -1089,12 +1369,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   addWordButton: {
-    backgroundColor: '#10b981',
+    backgroundColor: '#667eea',
     borderRadius: 16,
     paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#10b981',
+    shadowColor: '#667eea',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -1124,5 +1404,182 @@ const styles = StyleSheet.create({
     color: '#919191',
     marginTop: 3,
     fontWeight: '500',
+  },
+
+  // ── Topic Filter Modal ──
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  modalContainer: {
+    width: '100%',
+    maxWidth: 360,
+    maxHeight: '80%',
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 18,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.2,
+    shadowRadius: 20,
+    elevation: 8,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  modalHeaderTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  modalIconBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#eef2ff',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  modalSubtitle: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 1,
+  },
+  modalCloseBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#f1f5f9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalList: {
+    maxHeight: 320,
+  },
+  topicOptionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    marginBottom: 8,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  topicOptionItemActive: {
+    backgroundColor: '#eef2ff',
+    borderColor: '#c7d2fe',
+  },
+  topicOptionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 10,
+    marginRight: 8,
+  },
+  topicOptionIconWrapper: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#ffffff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  topicOptionIconWrapperActive: {
+    backgroundColor: '#ffffff',
+    borderColor: '#a5b4fc',
+  },
+  topicOptionTextWrapper: {
+    flex: 1,
+  },
+  topicOptionTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  topicOptionTitleActive: {
+    color: '#4f46e5',
+    fontWeight: '700',
+  },
+  topicOptionDesc: {
+    fontSize: 11,
+    color: '#94a3b8',
+    marginTop: 1,
+  },
+  checkCircle: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#6366f1',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  uncheckCircle: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+  },
+  modalResetBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalResetText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  modalApplyBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: '#667eea',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#667eea',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  modalApplyText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
   },
 });
