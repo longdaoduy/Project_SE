@@ -111,30 +111,29 @@ export default function HomeScreen({ navigation }) {
                         <Text style={styles.userNameText}>Hello, {isLoading ? 'Loading...' : userData.name}!</Text>
                         {/*Phần hiển thị thông số */}
                         <View style={styles.statsRow}>
-                            <View style={styles.statsCard}>
+                            <TouchableOpacity style={styles.statsCard} onPress={() => navigation.navigate('HistoryScreen')} activeOpacity={0.75}>
                                 <Image source={require('../assets/fire.png')} style={{ width: 30, height: 30, marginBottom: 5 }} />
                                 <Text style={styles.statsValue}>{isLoading ? '—' : userData.streak}</Text>
                                 <Text style={styles.statsLabel}>Streak</Text>
-                            </View>
+                            </TouchableOpacity>
 
-                            <View style={styles.statsCard}>
+                            <TouchableOpacity style={styles.statsCard} onPress={() => navigation.navigate('HistoryScreen')} activeOpacity={0.75}>
                                 <Image source={require('../assets/xp.png')} style={{ width: 30, height: 30, marginBottom: 5 }} />
                                 <Text style={styles.statsValue}>{isLoading ? '—' : userData.xp}</Text>
                                 <Text style={styles.statsLabel}>XP</Text>
-                            </View>
+                            </TouchableOpacity>
 
-                            <View style={styles.statsCard}>
+                            <TouchableOpacity style={styles.statsCard} onPress={() => navigation.navigate('WordlistScreen')} activeOpacity={0.75}>
                                 <Image source={require('../assets/books.png')} style={{ width: 30, height: 30, marginBottom: 5 }} />
                                 <Text style={styles.statsValue}>{isLoading ? '—' : userData.wordlearned}</Text>
                                 <Text style={styles.statsLabel}>Words</Text>
-                            </View>
+                            </TouchableOpacity>
 
-                            <View style={styles.statsCard}>
+                            <TouchableOpacity style={styles.statsCard} onPress={() => navigation.navigate('Profile')} activeOpacity={0.75}>
                                 <Image source={require('../assets/badge.png')} style={{ width: 30, height: 30, marginBottom: 5 }} />
                                 <Text style={styles.statsValue}>{isLoading ? '—' : userData.level}</Text>
                                 <Text style={styles.statsLabel}>Level</Text>
-                            </View>
-
+                            </TouchableOpacity>
                         </View>
                         {/*Nút notification*/}
                         <TouchableOpacity style={styles.notificationButton} onPress={() => navigation.navigate('Notifications')}>

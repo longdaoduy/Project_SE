@@ -55,8 +55,14 @@ const del   = (path, body = null, token = null) => request('DELETE', path, body,
 export const getTopics = (limit = 100) =>
   get('/topics', { limit });
 
+export const getTopic = (topicId) =>
+  get(`/topics/${topicId}`);
+
 export const getWords = (topicId, limit = 50) =>
   get('/words', { topic_id: topicId, limit });
+
+export const getWord = (wordId) =>
+  get(`/words/${wordId}`);
 
 export const getRandomWords = (topicId = null, limit = 10) =>
   get('/flashcards/random', { topic_id: topicId, limit });
@@ -66,6 +72,12 @@ export const getRandomWords = (topicId = null, limit = 10) =>
 export const createFlashcardSession = (userId, topicId, totalCards) =>
   post('/flashcard-sessions', { user_id: userId, topic_id: topicId ?? null, total_cards: totalCards });
 
+export const getFlashcardSession = (sessionId) =>
+  get(`/flashcard-sessions/${sessionId}`);
+
+export const getUserFlashcardSessions = (userId, limit = 20, offset = 0) =>
+  get(`/users/${userId}/flashcard-sessions`, { limit, offset });
+
 export const completeFlashcardSession = (sessionId) =>
   post(`/flashcard-sessions/${sessionId}/complete`, {});
 
@@ -74,6 +86,17 @@ export const createFlashcardProgress = (sessionId, wordId) =>
 
 export const updateFlashcardProgress = (progressId, payload) =>
   patch(`/flashcard-progress/${progressId}`, payload);
+
+// ─── Starred Words (Favorites) ────────────────────────────────────────────────
+
+export const starWord = (userId, wordId) =>
+  post('/starred-words', { user_id: userId, word_id: wordId });
+
+export const unstarWord = (userId, wordId) =>
+  del(`/starred-words?user_id=${encodeURIComponent(userId)}&word_id=${encodeURIComponent(wordId)}`);
+
+export const getStarredWords = (userId, limit = 100, offset = 0) =>
+  get(`/users/${userId}/starred-words`, { limit, offset });
 
 // ─── SRS (Spaced Repetition System) ──────────────────────────────────────────
 
@@ -100,10 +123,25 @@ export const submitSRSRating = (userId, wordId, topicId, rating) =>
 export const getDailyStatus = (userId, topicId) =>
   get('/flashcards/daily-status', { user_id: userId, topic_id: topicId });
 
-// ─── Users / Stats ────────────────────────────────────────────────────────────
+// ─── Users / Stats / History ──────────────────────────────────────────────────
 
 export const getUserStats = (userId) =>
   get(`/users/${userId}/statistics`);
+
+export const getUserHistory = (userId, params = {}) =>
+  get(`/users/${userId}/history`, params);
+
+export const getUserHistoryPage = (userId, params = {}) =>
+  get(`/users/${userId}/history/page`, params);
+
+export const getUserWeeklyActivity = (userId) =>
+  get(`/users/${userId}/weekly-activity`);
+
+export const getUserSessions = (userId) =>
+  get(`/users/${userId}/sessions`);
+
+export const getUserLoginLogs = (userId, limit = 20) =>
+  get(`/users/${userId}/login-logs`, { limit });
 
 // ─── Quiz ─────────────────────────────────────────────────────────────────────
 
@@ -135,6 +173,12 @@ export async function createQuizWithQuestions(userId, topicId, quizType, questio
   }
   return { quiz, questions };
 }
+
+export const getQuiz = (quizId) =>
+  get(`/quizzes/${quizId}`);
+
+export const getUserQuizzes = (userId, limit = 20, offset = 0) =>
+  get(`/users/${userId}/quizzes`, { limit, offset });
 
 /**
  * Submit a single answer for a question.
@@ -275,6 +319,7 @@ export const submitAIAnswer = (questionId, userAnswer) =>
 export const addWord = (payload) =>
   post('/words', payload);
 // payload: { topic_id, word, part_of_speech, phonetic, meaning_vi, example_en, example_vi }
+
 /**
  * For fill/match/speed we build a dummy "correct_option=A" question per word
  * and mark it correct/incorrect based on local scoring.
@@ -322,6 +367,12 @@ export const registerUser = (payload) =>
 
 export const loginUser = (payload) =>
   post('/users/login', payload);
+
+export const getUser = (userId) =>
+  get(`/users/${userId}`);
+
+export const updateUser = (userId, payload) =>
+  patch(`/users/${userId}`, payload);
 
 export const getMe = (token) =>
   get('/me', {}, token);

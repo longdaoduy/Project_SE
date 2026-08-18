@@ -14,6 +14,7 @@ import QuizFillInBlank from './Screens/QuizFillInBlank';
 import QuizMatching from './Screens/QuizMatching';
 import QuizSpeedRound from './Screens/QuizSpeedRound';
 import RegisterScreen from './Screens/RegisterScreen';
+import HistoryScreen from './Screens/HistoryScreen';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { DataProvider } from './context/DataContext';
@@ -55,6 +56,8 @@ function AppNavigator() {
         <Stack.Screen name="QuizMatching" component={QuizMatching} />
         <Stack.Screen name="QuizSpeedRound" component={QuizSpeedRound} />
         <Stack.Screen name="Register" component={RegisterScreen} />
+        <Stack.Screen name="History" component={HistoryScreen} />
+        <Stack.Screen name="HistoryScreen" component={HistoryScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

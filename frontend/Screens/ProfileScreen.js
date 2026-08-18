@@ -64,31 +64,59 @@ export default function ProfileScreen({navigation}) {
             try {
                 setIsLoading(true);
                 setError('');
-                const [me, stats, weekly, history] = await Promise.all([
+                const [me, stats, weekly] = await Promise.all([
                     getMe(token),
                     getMyStatistics(token),
                     getMyWeeklyActivity(token),
-                    getMyHistory(token, { limit: 20, offset: 0 }),
                 ]);
+
+                const totalWords = stats?.total_words || 0;
+                const currentStreak = stats?.current_streak || 0;
+                const totalXp = stats?.total_xp || 0;
+                const totalQuizzes = stats?.total_quizzes || 0;
+                const studyHours = stats?.study_hours || 0;
+
+                const dynamicAchievements = [
+                    { id: 1, title: 'First 10 Words', unlocked: totalWords >= 10 },
+                    { id: 2, title: '50 Words Master', unlocked: totalWords >= 50 },
+                    { id: 3, title: '3-Day Streak', unlocked: currentStreak >= 3 },
+                    { id: 4, title: '7-Day Streak', unlocked: currentStreak >= 7 },
+                    { id: 5, title: 'Quiz Champion', unlocked: totalQuizzes >= 5 },
+                    { id: 6, title: 'XP Hunter', unlocked: totalXp >= 250 },
+                    { id: 7, title: 'Dedicated Learner', unlocked: studyHours >= 2 },
+                ];
+
+                const weekdayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                const formattedWeekly = (weekly.items || []).map((item) => {
+                    let dayLabel = item.date;
+                    try {
+                        const d = new Date(item.date);
+                        dayLabel = weekdayNames[d.getDay()] || item.date.slice(-2);
+                    } catch (_) {}
+                    return {
+                        day: dayLabel,
+                        words: item.activities,
+                    };
+                });
 
                 setProfileData({
                     name: me.full_name || me.username || '—',
                     email: me.email || '—',
                     englishLevel: me.english_level || '—',
                     stats: {
-                        streaks: stats.current_streak || 0,
-                        level: Math.max(1, Math.floor((stats.total_xp || 0) / 100) + 1),
-                        xp: stats.total_xp || 0,
-                        words: stats.total_words || 0,
-                        quizzes: stats.total_quizzes || 0,
+                        streaks: currentStreak,
+                        level: Math.max(1, Math.floor(totalXp / 100) + 1),
+                        xp: totalXp,
+                        words: totalWords,
+                        quizzes: totalQuizzes,
                         perfect: Math.round((stats.average_score || 0) / 10),
-                        hours: Math.round(stats.study_hours || 0),
+                        hours: Math.round(studyHours),
                     },
-                    weeklyHistory: (weekly.items || []).map((item) => ({
-                        day: item.date,
-                        words: item.activities,
-                    })),
-                    achievements: history.items ? [] : [],
+                    weeklyHistory: formattedWeekly.length > 0 ? formattedWeekly : [
+                        { day: 'M', words: 0 }, { day: 'T', words: 0 }, { day: 'W', words: 0 },
+                        { day: 'T', words: 0 }, { day: 'F', words: 0 }, { day: 'S', words: 0 }, { day: 'S', words: 0 }
+                    ],
+                    achievements: dynamicAchievements,
                 });
             } catch (e) {
                 setError(e.message || 'Could not load profile');
@@ -212,13 +240,15 @@ export default function ProfileScreen({navigation}) {
                         <View style={styles.chartCard}>
                             <View style={styles.chartHeader}>
                                 <Text style={styles.chartTitle}>This week</Text>
-                                <TouchableOpacity><Text style={styles.fullHistoryText}>Full history</Text></TouchableOpacity>
+                                <TouchableOpacity onPress={() => navigation.navigate('HistoryScreen')} activeOpacity={0.7}>
+                                    <Text style={styles.fullHistoryText}>Full history →</Text>
+                                </TouchableOpacity>
                             </View>
 
                             {/* Vẽ biểu đồ cột động tỉ lệ phần trăm */}
                             <View style={styles.chartBarWrapper}>
                                 {profileData.weeklyHistory.map((item, index) => {
-                                    // Cột cuối cùng (Chủ nhật) tô màu tím đậm làm nổi bật ngày hiện tại
+                                    // Cột cuối cùng tô màu tím đậm làm nổi bật ngày hiện tại
                                     const isCurrentDay = index === profileData.weeklyHistory.length - 1;
                                     // Tính phần trăm chiều cao cột động dựa trên số từ gõ được
                                     const barHeightPercent = (item.words / maxWordsInWeek) * 100;
@@ -260,13 +290,16 @@ export default function ProfileScreen({navigation}) {
                                 showsHorizontalScrollIndicator={false} // Ẩn thanh cuộn mặc định cho đẹp
                                 contentContainerStyle={styles.horizontalScrollContent}>
                                 {profileData.achievements.map((achievement, index) => (
-                                <View key={index} style={styles.achievementCard}>
-                                    <AntDesign name="check-circle" size={16} color="#22c55e" style={styles.checkIcon} />
+                                <View key={index} style={[styles.achievementCard, !achievement.unlocked && { opacity: 0.6 }]}>
+                                    {achievement.unlocked ? (
+                                        <AntDesign name="check-circle" size={16} color="#22c55e" style={styles.checkIcon} />
+                                    ) : (
+                                        <Ionicons name="lock-closed" size={14} color="#94a3b8" style={styles.checkIcon} />
+                                    )}
                                     <Image source={require('../assets/achievement.png')} style={styles.gridIcon} />
                                     
                                     <View style={styles.achievementInfo}>
                                         <Text style={styles.gridValue}>{achievement.title}</Text>
-                                        
                                     </View>
                                 </View>
                                 ))}

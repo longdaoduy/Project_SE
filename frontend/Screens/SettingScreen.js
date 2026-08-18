@@ -1,15 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import {Ionicons} from '@expo/vector-icons';
-import { 
-    StyleSheet, 
-    Text, 
+import { Ionicons } from '@expo/vector-icons';
+import {
+    StyleSheet,
+    Text,
     TextInput,
-    View, 
-    ScrollView, 
-    StatusBar, 
-    Platform, 
+    View,
+    ScrollView,
+    StatusBar,
+    Platform,
     Dimensions,
-    Image ,
+    Image,
     TouchableOpacity,
 } from 'react-native';
 
@@ -30,9 +30,9 @@ async function clearAuthStorage() {
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-export default function SettingScreen({navigation}) {
+export default function SettingScreen({ navigation }) {
     const { token, currentUser, userId, setToken, setCurrentUser, setUserId } = useData();
-    
+
 
     const [isDarkMode, setIsDarkMode] = useState(false);
     const [isVietnamese, setIsVietnamese] = useState(false);
@@ -48,7 +48,7 @@ export default function SettingScreen({navigation}) {
     const [deletePassword, setDeletePassword] = useState('');
     const [deleteAccountLoading, setDeleteAccountLoading] = useState(false);
     const [deleteAccountError, setDeleteAccountError] = useState('');
-    
+
     const [dailyGoal, setDailyGoal] = useState(10);
     const goalOptions = ['10 words', '20 words', '30 words', '50 words', '100 words'];
 
@@ -176,7 +176,7 @@ export default function SettingScreen({navigation}) {
     };
 
     const handleFontSizePress = () => {
-        
+
     };
 
     const loadDailyGoal = async () => {
@@ -196,7 +196,7 @@ export default function SettingScreen({navigation}) {
             console.log('Error loading daily goal:', error);
         }
     };
-    
+
     useEffect(() => {
         loadDailyGoal();
     }, [currentUser, userId]);
@@ -213,7 +213,7 @@ export default function SettingScreen({navigation}) {
             >
                 {/* Thanh trạng thái màu sáng */}
                 <StatusBar barStyle="light-content" />
-                
+
                 <View style={styles.headerSection}>
                     {/*Nút back*/}
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
@@ -224,8 +224,8 @@ export default function SettingScreen({navigation}) {
 
                 </View>
 
-                <ScrollView contentContainerStyle={styles.scrollContainer} 
-                showsVerticalScrollIndicator={false}>
+                <ScrollView contentContainerStyle={styles.scrollContainer}
+                    showsVerticalScrollIndicator={false}>
 
                     <View style={styles.whiteCardContainer}>
                         {/*Phần điều chỉnh account*/}
@@ -233,23 +233,23 @@ export default function SettingScreen({navigation}) {
                             <Text style={styles.accountSettingTitle}>ACCOUNT</Text>
 
                             <TouchableOpacity style={styles.accountSettingItem} onPress={handleLogout}>
-                                <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
+                                <View style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
                                     <Text style={styles.accountSettingLabel}>Log Out</Text>
                                     <Text style={styles.accountSettingSubLabel}>Log out of your account</Text>
                                 </View>
-                                
+
                                 <Image source={require('../assets/arrow_right.png')} style={{ width: 20, height: 20, resizeMode: 'contain' }} />
-                                
+
                             </TouchableOpacity>
                             <TouchableOpacity style={styles.accountSettingItem} onPress={openChangePassword}>
-                                <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
+                                <View style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
                                     <Text style={styles.accountSettingLabel}>Change Password</Text>
                                     <Text style={styles.accountSettingSubLabel}>Update your password</Text>
                                 </View>
                                 <Image source={require('../assets/arrow_right.png')} style={{ width: 20, height: 20, resizeMode: 'contain' }} />
                             </TouchableOpacity>
                             <TouchableOpacity style={styles.accountSettingItem} onPress={handleDeleteAccount}>
-                                <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
+                                <View style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
                                     <Text style={styles.accountDeleteLabel}>Delete Account</Text>
                                     <Text style={styles.accountSettingSubLabel}>Permanently delete your account</Text>
                                 </View>
@@ -260,10 +260,10 @@ export default function SettingScreen({navigation}) {
 
                         <View style={styles.appearenceSetting}>
                             <Text style={styles.accountSettingTitle}>APPEARANCE</Text>
-                            
+
                             {/*Chuyển đổi Font Size và Language*/}
                             <TouchableOpacity style={styles.accountSettingItem} onPress={handleFontSizePress}>
-                                <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
+                                <View style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
                                     <Text style={styles.accountSettingLabel}>Font Size</Text>
                                     <Text style={styles.accountSettingSubLabel}>Adjust the font size</Text>
                                 </View>
@@ -272,19 +272,19 @@ export default function SettingScreen({navigation}) {
 
                             {/*Tắt/Bật Theme*/}
                             <View style={styles.accountSettingItem}>
-                                <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
+                                <View style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
                                     <Text style={styles.accountSettingLabel}>Theme</Text>
                                     <Text style={styles.accountSettingSubLabel}>Light / Dark Mode</Text>
                                 </View>
-                                <TouchableOpacity 
+                                <TouchableOpacity
                                     style={[styles.customToggle, isDarkMode && styles.customToggleActive]}
                                     onPress={handleDarkModeToggle}
                                 >
                                     <View style={[styles.customToggleThumb, isDarkMode && styles.customToggleThumbActive]}>
-                                        <Ionicons 
-                                            name={isDarkMode ? 'moon' : 'sunny'} 
-                                            size={12} 
-                                            color="#ffffff" 
+                                        <Ionicons
+                                            name={isDarkMode ? 'moon' : 'sunny'}
+                                            size={12}
+                                            color="#ffffff"
                                         />
                                     </View>
                                 </TouchableOpacity>
@@ -292,11 +292,11 @@ export default function SettingScreen({navigation}) {
 
                             {/*Chuyển đổi ngôn ngữ*/}
                             <View style={styles.accountSettingItem}>
-                                <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
+                                <View style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
                                     <Text style={styles.accountSettingLabel}>Language</Text>
                                     <Text style={styles.accountSettingSubLabel}>English / Vietnamese</Text>
                                 </View>
-                                <TouchableOpacity 
+                                <TouchableOpacity
                                     style={[styles.customToggle, isVietnamese && styles.customToggleActive]}
                                     onPress={() => {
                                         const nextValue = !isVietnamese;
@@ -309,7 +309,7 @@ export default function SettingScreen({navigation}) {
                                     }}
                                 >
                                     <View style={[styles.customToggleThumb, isVietnamese && styles.customToggleThumbActive]}>
-                                        <Text style={{fontSize: 8, fontWeight: '700', color: '#ffffff'}}>
+                                        <Text style={{ fontSize: 8, fontWeight: '700', color: '#ffffff' }}>
                                             {isVietnamese ? 'VI' : 'EN'}
                                         </Text>
                                     </View>
@@ -320,18 +320,18 @@ export default function SettingScreen({navigation}) {
                         <View style={styles.learningSetting}>
                             <Text style={styles.accountSettingTitle}>LEARNING</Text>
                             <View style={styles.accountSettingItem}>
-                                <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
+                                <View style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
                                     <Text style={styles.accountSettingLabel}>Daily Goal</Text>
                                     <Text style={styles.accountSettingSubLabel}>Set your daily learning goal</Text>
                                 </View>
                                 <Text style={styles.learningGoal}>{dailyGoal} words</Text>
                             </View>
                             <View style={styles.accountSettingItem}>
-                                <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
+                                <View style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
                                     <Text style={styles.accountSettingLabel}>Notification Reminder</Text>
                                     <Text style={styles.accountSettingSubLabel}>Daily at 8:00 AM</Text>
                                 </View>
-                                <TouchableOpacity 
+                                <TouchableOpacity
                                     style={[styles.customToggle, notifications && styles.customToggleActive]}
                                     onPress={() => {
                                         const nextValue = !notifications;
@@ -354,11 +354,11 @@ export default function SettingScreen({navigation}) {
                             </View>
 
                             <View style={styles.accountSettingItem}>
-                                <View style={{flexDirection: 'column', alignItems: 'flex-start'}}>
+                                <View style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
                                     <Text style={styles.accountSettingLabel}>Sound Effects</Text>
                                     <Text style={styles.accountSettingSubLabel}>Plays sounds during practice</Text>
                                 </View>
-                                <TouchableOpacity 
+                                <TouchableOpacity
                                     style={[styles.customToggle, soundEffects && styles.customToggleActive]}
                                     onPress={() => setSoundEffects(!soundEffects)}
                                 >
@@ -548,16 +548,16 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
 
-    
+
     phoneContainer: {
-        
+
         width: Platform.OS === 'web' ? Math.min(screenWidth, 400) : '100%',
         height: Platform.OS === 'web' ? Math.min(screenHeight, 800) : '100%',
-        
+
         // Tạo hiệu ứng giống chiếc điện thoại khi xem trên máy tính
         borderRadius: Platform.OS === 'web' ? 35 : 0,
         overflow: 'hidden',
-        
+
         // Đổ bóng cho khung trên Web
         ...Platform.select({
             web: {
@@ -571,7 +571,7 @@ const styles = StyleSheet.create({
 
     // Cấu hình chuẩn cho ScrollView con bên trong
     scrollContainer: {
-        flexGrow: 1, 
+        flexGrow: 1,
         justifyContent: 'space-between', // Đẩy Header lên đỉnh, Card trắng xuống đáy
     },
 
@@ -580,6 +580,7 @@ const styles = StyleSheet.create({
         width: '100%',
         paddingTop: Platform.OS === 'ios' ? 60 : 40, // Chừa khoảng trống an toàn cho tai thỏ điện thoại
         paddingHorizontal: 20,
+        paddingBottom: 20
     },
     appName: {
         fontSize: 29,
@@ -595,7 +596,7 @@ const styles = StyleSheet.create({
         opacity: 0.9,
     },
 
-    
+
     whiteCardContainer: {
         flex: 1, // Tự động chiếm trọn phần không gian trống bên dưới
         backgroundColor: '#F0F2FF',
@@ -604,8 +605,8 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingHorizontal: 24,
 
-        marginTop: 34, // Tạo khoảng cách giữa phần header và card trắng
-        paddingTop: 10, // Tạo khoảng cách giữa phần trên của card và nội dung bên trong
+
+        paddinTop: 10
     },
 
     appWelcome: {
@@ -650,7 +651,7 @@ const styles = StyleSheet.create({
         fontSize: 18,
         color: '#ffffff',
         fontWeight: '600',
-        
+
     },
 
     facebookButtonContainer: {
@@ -677,7 +678,7 @@ const styles = StyleSheet.create({
         marginBottom: 8,
     },
     emailInput: {
-        
+
         backgroundColor: '#FFFBFB',
         borderRadius: 20,
         padding: 10,
@@ -690,7 +691,7 @@ const styles = StyleSheet.create({
     //Password Section styles
     passwordSection: {
         marginTop: 20,
-        width: '100%',  
+        width: '100%',
     },
 
     passwordSectionTitle: {
@@ -700,8 +701,8 @@ const styles = StyleSheet.create({
     },
 
     passwordInput: {
-        
-        backgroundColor: '#FFFBFB',    
+
+        backgroundColor: '#FFFBFB',
         borderRadius: 20,
         padding: 10,
         fontSize: 16,
@@ -736,7 +737,7 @@ const styles = StyleSheet.create({
     },
 
 
-    
+
     statsRow: {
         flexDirection: 'row',
         marginTop: 20,
@@ -744,16 +745,16 @@ const styles = StyleSheet.create({
     },
 
     statsCard: {
-        flex: 1,                  
+        flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        paddingVertical: 10,      
-        borderRadius: 18,         
+        paddingVertical: 10,
+        borderRadius: 18,
 
         //Độ opacity và màu sắc của tấm kính mờ
-        backgroundColor: 'rgba(255, 255, 255, 0.12)', 
+        backgroundColor: 'rgba(255, 255, 255, 0.12)',
         borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.25)',  
+        borderColor: 'rgba(255, 255, 255, 0.25)',
 
         // Đổ bóng dịu nhẹ phía dưới tấm kính 
         shadowColor: 'rgba(31, 38, 135, 0.15)',
@@ -761,12 +762,12 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.2,
         shadowRadius: 10,
 
-        
+
         elevation: 3,
 
-        marginHorizontal: 5,    
+        marginHorizontal: 5,
     },
-    
+
     statsValue: {
         fontSize: 16,
         fontWeight: '700',
@@ -854,7 +855,7 @@ const styles = StyleSheet.create({
 
 
 
-    }, 
+    },
 
     buttonIcon: {
         width: 26,
@@ -886,9 +887,9 @@ const styles = StyleSheet.create({
         backgroundColor: '#ffffff',
         flexDirection: 'row',
 
-        width: '100%', 
+        width: '100%',
         alignSelf: 'stretch',
-    
+
     },
 
     notificationButton: {
@@ -898,13 +899,13 @@ const styles = StyleSheet.create({
         width: 32,
         height: 32,
         alignItems: 'center',
-        justifyContent: 'center',     
-        borderRadius: 22,         
+        justifyContent: 'center',
+        borderRadius: 22,
 
         //Độ opacity và màu sắc của tấm kính mờ
-        backgroundColor: 'rgba(255, 255, 255, 0.12)', 
+        backgroundColor: 'rgba(255, 255, 255, 0.12)',
         borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.25)',  
+        borderColor: 'rgba(255, 255, 255, 0.25)',
 
         // Đổ bóng dịu nhẹ phía dưới tấm kính 
         shadowColor: 'rgba(31, 38, 135, 0.15)',
@@ -912,7 +913,7 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.2,
         shadowRadius: 10,
 
-        
+
         elevation: 3,
     },
 
@@ -923,13 +924,13 @@ const styles = StyleSheet.create({
         width: 32,
         height: 32,
         alignItems: 'center',
-        justifyContent: 'center',     
+        justifyContent: 'center',
         borderRadius: 22,
 
         //Độ opacity và màu sắc của tấm kính mờ
-        backgroundColor: 'rgba(255, 255, 255, 0.12)', 
+        backgroundColor: 'rgba(255, 255, 255, 0.12)',
         borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.25)',  
+        borderColor: 'rgba(255, 255, 255, 0.25)',
 
         // Đổ bóng dịu nhẹ phía dưới tấm kính 
         shadowColor: 'rgba(31, 38, 135, 0.15)',
@@ -937,7 +938,7 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.2,
         shadowRadius: 10,
 
-        
+
         elevation: 3,
     },
 
@@ -948,13 +949,13 @@ const styles = StyleSheet.create({
         width: 32,
         height: 32,
         alignItems: 'center',
-        justifyContent: 'center',     
+        justifyContent: 'center',
         borderRadius: 12,
 
         //Độ opacity và màu sắc của tấm kính mờ
-        backgroundColor: 'rgba(255, 255, 255, 0.12)', 
+        backgroundColor: 'rgba(255, 255, 255, 0.12)',
         borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.25)',  
+        borderColor: 'rgba(255, 255, 255, 0.25)',
 
         // Đổ bóng dịu nhẹ phía dưới tấm kính 
         shadowColor: 'rgba(31, 38, 135, 0.15)',
@@ -962,7 +963,7 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.2,
         shadowRadius: 10,
 
-        
+
         elevation: 3,
     },
 
@@ -973,13 +974,13 @@ const styles = StyleSheet.create({
         width: 32,
         height: 32,
         alignItems: 'center',
-        justifyContent: 'center',     
-        borderRadius:15,
+        justifyContent: 'center',
+        borderRadius: 15,
 
         //Độ opacity và màu sắc của tấm kính mờ
-        backgroundColor: 'rgba(255, 255, 255, 0.12)', 
+        backgroundColor: 'rgba(255, 255, 255, 0.12)',
         borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.25)',  
+        borderColor: 'rgba(255, 255, 255, 0.25)',
 
         // Đổ bóng dịu nhẹ phía dưới tấm kính 
         shadowColor: 'rgba(31, 38, 135, 0.15)',
@@ -987,14 +988,14 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.2,
         shadowRadius: 10,
 
-        
+
         elevation: 3,
     },
 
     avatarSection: {
         marginTop: 20,
         alignItems: 'center',
-        
+
     },
 
     avatarWrapper: {
@@ -1006,7 +1007,7 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(255, 255, 255, 0.16)',
         borderColor: 'rgba(255, 255, 255, 0.28)',
 
-        borderWidth: 2,         
+        borderWidth: 2,
         shadowColor: '#1f2937',
         shadowOffset: { width: 0, height: 12 },
         shadowOpacity: 0.18,
@@ -1120,24 +1121,24 @@ const styles = StyleSheet.create({
 
     levelWrapper: {
         flexDirection: 'row',
-        paddingHorizontal: 16,  
+        paddingHorizontal: 16,
         justifyContent: 'center',
         alignItems: 'center',
 
         gap: 12, // Khoảng cách giữa English Level và Level
-        
-    },
-    
 
-    statsGridCard: { 
+    },
+
+
+    statsGridCard: {
         marginTop: -30,
-        backgroundColor: '#ffffff', 
-        borderRadius: 24, 
+        backgroundColor: '#ffffff',
+        borderRadius: 24,
         paddingVertical: 12,
         paddingHorizontal: 16,
-        shadowColor: '#000', 
-        shadowOpacity: 0.04, 
-        shadowRadius: 14, 
+        shadowColor: '#000',
+        shadowOpacity: 0.04,
+        shadowRadius: 14,
         shadowOffset: { width: 0, height: 8 },
         elevation: 3,
 
@@ -1145,113 +1146,113 @@ const styles = StyleSheet.create({
         width: '100%',
     },
 
-    gridRow: { 
-        flexDirection: 'row', 
+    gridRow: {
+        flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'stretch',
         gap: 10,
     },
-    gridItem: { 
-        flex: 1, 
-        alignItems: 'center', 
+    gridItem: {
+        flex: 1,
+        alignItems: 'center',
         justifyContent: 'center',
         minHeight: 76,
         paddingVertical: 6,
         paddingHorizontal: 10,
         marginHorizontal: 0,
-       
+
     },
     gridLabel: {
-        fontSize: 11, 
-        color: '#64748b', 
-        marginTop: 4, 
+        fontSize: 11,
+        color: '#64748b',
+        marginTop: 4,
         fontWeight: '600',
         letterSpacing: 0.8,
         textTransform: 'uppercase',
         textAlign: 'center',
     },
 
-    chartCard: { 
-        backgroundColor: '#fff', 
+    chartCard: {
+        backgroundColor: '#fff',
         borderRadius: 24,
-        paddingVertical: 16, 
-        paddingHorizontal: 16, 
-        marginTop: 16, 
+        paddingVertical: 16,
+        paddingHorizontal: 16,
+        marginTop: 16,
         marginBottom: 10,
-        shadowColor: '#000', 
-        shadowOpacity: 0.03, 
-        shadowRadius: 10, 
-        elevation: 2, 
-        borderWidth: 1, 
+        shadowColor: '#000',
+        shadowOpacity: 0.03,
+        shadowRadius: 10,
+        elevation: 2,
+        borderWidth: 1,
         borderColor: '#eef2ff',
-        width: '100%' 
+        width: '100%'
     },
 
-    chartHeader: { 
-        flexDirection: 'row', 
-        justifyContent: 'space-between', 
-        alignItems: 'center', 
-        marginBottom: 10 
+    chartHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 10
     },
-    chartTitle: { 
-        fontSize: 18, 
-        fontWeight: '700', 
-        color: '#1e293b' 
-    
+    chartTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#1e293b'
+
     },
-    fullHistoryText: { 
-        fontSize: 14, 
-        color: '#6366f1', 
-        fontWeight: '600' 
+    fullHistoryText: {
+        fontSize: 14,
+        color: '#6366f1',
+        fontWeight: '600'
     },
-    chartBarWrapper: { 
-        flexDirection: 'row', 
-        justifyContent: 'space-between', 
-        alignItems: 'flex-end', 
-        height: 110, 
-         
+    chartBarWrapper: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-end',
+        height: 110,
+
     },
     chartColumn: {
-        alignItems: 'center', 
-        flex: 1, 
-        justifyContent: 'flex-end', 
+        alignItems: 'center',
+        flex: 1,
+        justifyContent: 'flex-end',
     },
-    barBackground: { 
-        height: 82, 
+    barBackground: {
+        height: 82,
         width: '72%',
-        maxWidth: 30, 
-        backgroundColor: '#eef2ff', 
-        borderRadius: 10, 
-        justifyContent: 'flex-end', 
-        overflow: 'hidden' 
+        maxWidth: 30,
+        backgroundColor: '#eef2ff',
+        borderRadius: 10,
+        justifyContent: 'flex-end',
+        overflow: 'hidden'
     },
-    barFill: { 
-        width: '100%', 
-        borderTopLeftRadius: 10, 
-        borderTopRightRadius: 10, 
-        borderBottomLeftRadius: 10, 
-        borderBottomRightRadius: 10 
+    barFill: {
+        width: '100%',
+        borderTopLeftRadius: 10,
+        borderTopRightRadius: 10,
+        borderBottomLeftRadius: 10,
+        borderBottomRightRadius: 10
     },
-    chartDayText: { 
-        fontSize: 12, 
-        color: '#94a3b8', 
-        marginTop: 6, 
-        fontWeight: '600' 
+    chartDayText: {
+        fontSize: 12,
+        color: '#94a3b8',
+        marginTop: 6,
+        fontWeight: '600'
     },
-    chartSubText: { 
-        fontSize: 13, 
-        color: '#64748b', 
-        textAlign: 'center', 
-        marginTop: 14, 
-        fontWeight: '500' 
+    chartSubText: {
+        fontSize: 13,
+        color: '#64748b',
+        textAlign: 'center',
+        marginTop: 14,
+        fontWeight: '500'
     },
 
-    
+
     achievementsSection: {
         width: '100%',
         marginBottom: 20,
     },
-    
+
     // Cấu hình khoảng đệm (padding) cho vùng nội dung bên trong thanh cuộn ngang
     horizontalScrollContent: {
         paddingHorizontal: 4, // Tránh việc card đầu và cuối bị dính sát viền
@@ -1265,7 +1266,7 @@ const styles = StyleSheet.create({
         borderRadius: 20,
         padding: 10,
         alignItems: 'center', // Căn giữa tất cả icon và chữ theo chiều dọc
-        
+
         // Đổ bóng nhẹ cho từng ô thành tựu nổi lên
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
@@ -1315,7 +1316,7 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: '#000000',
         opacity: 0.6,
-       
+
         borderBottomWidth: 1,
         borderBottomColor: '#e5e7eb',
         paddingBottom: 8,
@@ -1328,7 +1329,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#ffffff',
         borderRadius: 20,
         padding: 16,
-    
+
     },
     accountSettingItem: {
         flexDirection: 'row',
