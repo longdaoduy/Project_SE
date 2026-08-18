@@ -21,7 +21,7 @@ const WORD_TYPES = [
 ];
 
 export default function WordlistScreen({ navigation }) {
-  const { userId, topics, loadTopics, starredWordIds, toggleStar } = useData();
+  const { userId, topics, loadTopics, starredWordIds, starredWords, toggleStar } = useData();
 
   // ── Data state ──────────────────────────────────────────────────────────────
   const [vocabularies,  setVocabularies]  = useState([]);
@@ -123,18 +123,40 @@ export default function WordlistScreen({ navigation }) {
   };
 
   // ── Filtered list ────────────────────────────────────────────────────────────
-  const displayList = vocabularies.filter((item) => {
-    const q = searchQuery.toLowerCase().trim();
-    const matchSearch = !q ||
-      item.word.toLowerCase().includes(q) ||
-      item.definition.toLowerCase().includes(q);
-    const matchFilter =
-      selectedFilter === 'all'       ? true :
-      selectedFilter === 'starred'   ? starredWordIds.has(item.id) :
-      selectedFilter === 'studied'   ? item.wordStatus === 'studied' :
-      selectedFilter === 'unstudied' ? item.wordStatus === 'unstudied' : true;
-    return matchSearch && matchFilter;
-  });
+  // Khi filter 'starred': lấy từ starredWords (DataContext) — bao gồm từ mọi topic
+  // Các filter khác: lọc từ vocabularies hiện tại
+  const displayList = (() => {
+    if (selectedFilter === 'starred') {
+      const q = searchQuery.toLowerCase().trim();
+      return starredWords
+        .map((s) => ({
+          id:         s.word_id,
+          word:       s.word?.word       ?? '',
+          type:       s.word?.part_of_speech ?? 'word',
+          phonetic:   s.word?.phonetic   ?? '',
+          definition: s.word?.meaning_vi ?? '',
+          example:    s.word?.example_en ?? s.word?.example_vi ?? '',
+          topicId:    s.word?.topic_id,
+          wordStatus: 'studied',
+        }))
+        .filter((item) =>
+          !q ||
+          item.word.toLowerCase().includes(q) ||
+          item.definition.toLowerCase().includes(q)
+        );
+    }
+    return vocabularies.filter((item) => {
+      const q = searchQuery.toLowerCase().trim();
+      const matchSearch = !q ||
+        item.word.toLowerCase().includes(q) ||
+        item.definition.toLowerCase().includes(q);
+      const matchFilter =
+        selectedFilter === 'all'       ? true :
+        selectedFilter === 'studied'   ? item.wordStatus === 'studied' :
+        selectedFilter === 'unstudied' ? item.wordStatus === 'unstudied' : true;
+      return matchSearch && matchFilter;
+    });
+  })();
 
   // ── Render word card ─────────────────────────────────────────────────────────
   const renderVocabularyCard = ({ item }) => {
