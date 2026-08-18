@@ -314,6 +314,27 @@ export const retakeAIReading = (readingId, userId) =>
 export const submitAIAnswer = (questionId, userAnswer) =>
   patch(`/ai-reading-questions/${questionId}/answer`, { user_answer: userAnswer });
 
+// ─── Starred Words ────────────────────────────────────────────────────────────
+
+/**
+ * Star a word for a user. Idempotent — calling twice returns same record.
+ */
+export const starWord = (userId, wordId) =>
+  post('/starred-words', { user_id: userId, word_id: wordId });
+
+/**
+ * Remove a star from a word.
+ */
+export const unstarWord = (userId, wordId) =>
+  del(`/starred-words?user_id=${userId}&word_id=${wordId}`);
+
+/**
+ * Fetch all starred words for a user.
+ * Returns array of StarredWordRead (each has .word: WordRead nested inside).
+ */
+export const getStarredWords = (userId, limit = 200) =>
+  get(`/users/${userId}/starred-words`, { limit });
+
 // ─── Words (add to topic) ─────────────────────────────────────────────────────
 
 export const addWord = (payload) =>

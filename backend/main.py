@@ -733,6 +733,22 @@ def create_ai_reading(payload: schemas.AIReadingCreate, db: Session = Depends(ge
     if not crud.get_user_by_id(db, payload.user_id):
         raise HTTPException(404, "User not found")
 
+    # ── Profanity / inappropriate-input guard ─────────────────────────────
+    # Validate ALL user-supplied text fields BEFORE calling the AI.
+    # This check runs server-side and cannot be bypassed by frontend clients.
+    from .profanity_filter import contains_profanity
+
+    fields_to_check = [
+        payload.input_vocabulary or "",
+        payload.topic_param or "",
+    ]
+    if any(contains_profanity(field) for field in fields_to_check):
+        raise HTTPException(
+            status_code=422,
+            detail="INAPPROPRIATE_INPUT",
+        )
+    # ─────────────────────────────────────────────────────────────────────
+
     from .seed_gemini import (
         generate_reading_passage,
         generate_comprehension_questions,

@@ -13,6 +13,63 @@ import {
   View,
 } from 'react-native';
 
+// ── Client-side profanity pre-check ──────────────────────────────────────────
+// Mirrors the backend list so the UI can reject input immediately.
+// NOTE: This is a UX convenience only. The backend always re-validates
+// independently and is the authoritative guard.
+const PROFANITY_WORDS = new Set([
+  'fuck','fucker','fucked','fucking','fucks','f*ck','f**k',
+  'shit','shits','shitting','shitty','bullshit',
+  'ass','asses','asshole','assholes','jackass',
+  'bitch','bitches','bitching',
+  'bastard','bastards',
+  'damn','damned',
+  'crap','crappy',
+  'piss','pissed','pisses',
+  'dick','dicks',
+  'cock','cocks',
+  'pussy','pussies',
+  'cunt','cunts',
+  'whore','whores',
+  'slut','sluts',
+  'nigger','nigga','niggas',
+  'faggot','faggots','fag',
+  'dyke','dykes',
+  'retard','retarded',
+  'spic','spics','kike','kikes','chink','chinks','gook','gooks','wop','wops',
+  'twat','twats','wanker','wankers','tosser','tossers',
+  'motherfucker','motherfuckers','dumbass','dumbasses','dipshit','shithead',
+  'asshat','arsehole','arseholes','arse','bollocks','bugger','knob','knobs',
+  'prick','pricks',
+  'blowjob','blowjobs','handjob','handjobs','rimjob','rimjobs',
+  'cumshot','cumshots','cum','cums','jizz','boner',
+  'penis','penises','vagina','vaginas','boobs','boob','tits','tit',
+  'nipple','nipples','butthole','anal','anus',
+  'masturbate','masturbation','orgasm',
+  'pornography','porn','dildo','dildos','vibrator',
+  'rape','raping','rapist','molest','molested','molester',
+  'pedophile','paedophile','incest','bestiality',
+  'fuk','fuq','phuck','phuk','sh1t','sh!t','b1tch','b!tch','a55','a$$',
+  'd1ck','d!ck','c0ck','n1gger','n!gger',
+  'dit','dich','lon','buoi','cac','lol','cu',
+  'dm','dcm','vcl','vl','clgt','clm','cc','ccc',
+  'ngu','kho','suc','deo','du',
+]);
+
+const INAPPROPRIATE_USER_MESSAGE =
+  'Your input contains inappropriate or offensive language. Please remove it and try again.';
+
+function clientSideProfanityCheck(text) {
+  if (!text || !text.trim()) return false;
+  const tokens = text.toLowerCase().split(/[\s,;|/\\_.!?@#$%^&*()\[\]{}<>"'+~`\-]+/);
+  return tokens.some(tok => PROFANITY_WORDS.has(tok.replace(/^\W+|\W+$/, '')));
+}
+
+function isInappropriateApiError(err) {
+  // Backend returns HTTP 422 with detail: "INAPPROPRIATE_INPUT"
+  return err && err.message && err.message.includes('INAPPROPRIATE_INPUT');
+}
+
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -223,6 +280,15 @@ export default function AIReadingScreen({ navigation, route }) {
 
     const vocab = combined.join(', ');
 
+    // ── Client-side profanity pre-check ──────────────────────────────────
+    // Runs BEFORE the API call so the user gets instant feedback.
+    // The backend independently re-validates – this is a UX shortcut only.
+    if (clientSideProfanityCheck(manualInput)) {
+      setScreenError(INAPPROPRIATE_USER_MESSAGE);
+      return;
+    }
+    // ─────────────────────────────────────────────────────────────────────
+
     try {
       setGenerating(true);
       setScreenError('');
@@ -236,7 +302,12 @@ export default function AIReadingScreen({ navigation, route }) {
       setViewState('test');
       await loadHistory();
     } catch (e) {
-      setScreenError(e.message || 'Generate reading failed');
+      // ── Translate backend profanity rejection into a safe UI message ──
+      if (isInappropriateApiError(e)) {
+        setScreenError(INAPPROPRIATE_USER_MESSAGE);
+      } else {
+        setScreenError(e.message || 'Generate reading failed');
+      }
     } finally {
       setGenerating(false);
     }

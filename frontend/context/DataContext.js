@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getMe, getTopics } from '../api';
+import { getMe, getTopics, getStarredWords, starWord, unstarWord } from '../api';
 
 async function clearAuthStorage() {
   await Promise.all([
@@ -192,6 +192,60 @@ export function DataProvider({ children }) {
     });
   }, []);
 
+  // ── Starred Words ───────────────────────────────────────────────────────────
+  // starredWordIds: Set<number> — quick O(1) lookup for any screen
+  // starredWords: array of full word objects (for WordlistScreen)
+  const [starredWordIds, setStarredWordIds] = useState(new Set());
+  const [starredWords,   setStarredWords]   = useState([]);
+  const [starredLoading, setStarredLoading] = useState(false);
+
+  const loadStarredWords = useCallback(async (uid) => {
+    if (!uid) return;
+    try {
+      setStarredLoading(true);
+      const data = await getStarredWords(uid, 200);
+      setStarredWords(data || []);
+      setStarredWordIds(new Set((data || []).map(s => s.word_id)));
+    } catch (e) {
+      console.warn('loadStarredWords error:', e.message);
+    } finally {
+      setStarredLoading(false);
+    }
+  }, []);
+
+  // Re-load whenever userId becomes available (after login / restore)
+  useEffect(() => {
+    if (userId) loadStarredWords(userId);
+  }, [userId, loadStarredWords]);
+
+  const toggleStar = useCallback(async (wordId) => {
+    if (!userId) return;
+    const isStarred = starredWordIds.has(wordId);
+    // Optimistic update
+    setStarredWordIds(prev => {
+      const next = new Set(prev);
+      isStarred ? next.delete(wordId) : next.add(wordId);
+      return next;
+    });
+    try {
+      if (isStarred) {
+        await unstarWord(userId, wordId);
+        setStarredWords(prev => prev.filter(s => s.word_id !== wordId));
+      } else {
+        const record = await starWord(userId, wordId);
+        setStarredWords(prev => [record, ...prev]);
+      }
+    } catch (e) {
+      // Revert optimistic update on failure
+      setStarredWordIds(prev => {
+        const next = new Set(prev);
+        isStarred ? next.add(wordId) : next.delete(wordId);
+        return next;
+      });
+      console.warn('toggleStar error:', e.message);
+    }
+  }, [userId, starredWordIds]);
+
   return (
     <DataContext.Provider value={{
       token, setToken,
@@ -200,6 +254,7 @@ export function DataProvider({ children }) {
       authReady,
       topics, topicsLoading, topicsError, loadTopics,
       decks, addDeck, saveDeckEdit, updateDeckProgress, deleteDeck,
+      starredWordIds, starredWords, starredLoading, loadStarredWords, toggleStar,
     }}>
       {children}
     </DataContext.Provider>

@@ -20,14 +20,25 @@ const CARDS_PER_SESSION = 15;
 const TOPICS_PER_PAGE = 5;
 
 export default function FlashcardScreen({ navigation }) {
-  const { userId, topics, topicsLoading, loadTopics, decks, addDeck, saveDeckEdit, deleteDeck } = useData();
+  const {
+    userId, topics, topicsLoading, loadTopics,
+    decks, addDeck, saveDeckEdit, deleteDeck,
+    starredWordIds, toggleStar,
+  } = useData();
 
   // ── Screen navigation state ─────────────────────────────────────────────────
-  // viewState: 'select' | 'add' (create/edit) | phase: 'select' | 'study' | 'done'
+  // viewState: 'select' | 'add' (create/edit) | phase: 'select' | 'preview' | 'study' | 'done'
   const [viewState, setViewState] = useState('select');
   const [phase, setPhase] = useState('select');
   const [selectedTopic, setSelectedTopic] = useState(null);
   const [selectedLocalDeck, setSelectedLocalDeck] = useState(null);
+
+  // ── Topic preview state ──────────────────────────────────────────────────────
+  const [previewTopic, setPreviewTopic]   = useState(null);
+  const [previewWords, setPreviewWords]   = useState([]);   // review + new cards for today
+  const [previewStatus, setPreviewStatus] = useState(null); // DailyStatus object
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError]   = useState('');
 
   // ── Deck search / filter ─────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
@@ -261,6 +272,13 @@ export default function FlashcardScreen({ navigation }) {
 
   // ── Header back handler ──────────────────────────────────────────────────────
   const handleBack = () => {
+    if (phase === 'preview') {
+      setPhase('select');
+      setPreviewTopic(null);
+      setPreviewWords([]);
+      setPreviewStatus(null);
+      return;
+    }
     if (phase !== 'select') {
       setPhase('select');
       return;
@@ -272,6 +290,36 @@ export default function FlashcardScreen({ navigation }) {
     }
     navigation.goBack();
   };
+
+  // ── Open topic preview screen ────────────────────────────────────────────────
+  // CHỈ load DailyStatus + danh sách từ bằng getWords để HIỂN THỊ.
+  // getFlashcardQueue (tạo daily_learning_log) chỉ gọi khi user bấm Start.
+  const openTopicPreview = useCallback(async (topic) => {
+    setPreviewTopic(topic);
+    setPreviewWords([]);
+    setPreviewStatus(null);
+    setPreviewError('');
+    setPreviewLoading(true);
+    setPhase('preview');
+    try {
+      // getDailyStatus: chỉ đọc, không tạo entries
+      const [status, wordsData] = await Promise.all([
+        getDailyStatus(userId, topic.topic_id),
+        // Import getWords để lấy danh sách từ của topic để preview
+        (async () => {
+          const { getWords } = await import('../api');
+          return getWords(topic.topic_id, 50);
+        })(),
+      ]);
+      setPreviewStatus(status);
+      // Hiển thị tất cả từ của topic (chỉ để xem / star), không phân loại review/new
+      setPreviewWords(wordsData || []);
+    } catch (e) {
+      setPreviewError(e.message || 'Could not load vocabulary for this topic');
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [userId]);
 
   // ── Start session (backend topic) – now uses SRS queue ───────────────────────
   const startSession = useCallback(async (topic) => {
@@ -825,7 +873,7 @@ export default function FlashcardScreen({ navigation }) {
                       <TouchableOpacity
                         key={topic.topic_id}
                         style={s.topicRow}
-                        onPress={() => startSession(topic)}
+                        onPress={() => openTopicPreview(topic)}
                       >
                         <View style={s.topicIcon}>
                           <Ionicons name="albums-outline" size={20} color="#5b65d6" />
@@ -875,6 +923,161 @@ export default function FlashcardScreen({ navigation }) {
                 )
               )}
             </ScrollView>
+          </View>
+
+          <BottomNav navigation={navigation} active="FlashcardScreen" />
+        </LinearGradient>
+      </View>
+    );
+  }
+
+  // ══ TOPIC PREVIEW VIEW (phase = 'preview') ═══════════════════════════════════
+  // Hiển thị danh sách từ của topic để xem & star, sau đó bắt đầu học
+  // getFlashcardQueue (tạo DB entries) chỉ gọi khi bấm Start
+  if (phase === 'preview' && previewTopic) {
+    // Dùng DailyStatus để hiển thị badge thông tin
+    const dueReview  = previewStatus?.due_review_count ?? 0;
+    const newRemain  = previewStatus?.daily_remaining   ?? 0;
+    const totalToday = dueReview + Math.min(newRemain, previewWords.length);
+
+    return (
+      <View style={s.wrapper}>
+        <LinearGradient colors={['#4c3b7a', '#5b65d6']} style={s.phone}>
+          <StatusBar barStyle="light-content" />
+
+          {/* Header */}
+          <View style={s.headerSection}>
+            <View style={s.headerTopRow}>
+              <TouchableOpacity onPress={handleBack} style={s.backButton}>
+                <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, resizeMode: 'contain' }} />
+              </TouchableOpacity>
+              <View style={s.headerTextContainer}>
+                <Text style={s.appName}>{previewTopic.topic_name}</Text>
+                <Text style={s.subTitleText}>Topic vocabulary</Text>
+              </View>
+              <View style={{ width: 32 }} />
+            </View>
+          </View>
+
+          {/* Body */}
+          <View style={s.card}>
+            {previewLoading ? (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                <ActivityIndicator size="large" color="#5b65d6" />
+                <Text style={{ marginTop: 12, color: '#64748b', fontSize: 14 }}>Loading vocabulary…</Text>
+              </View>
+            ) : previewError ? (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+                <Ionicons name="alert-circle-outline" size={48} color="#ef4444" />
+                <Text style={{ marginTop: 12, color: '#ef4444', textAlign: 'center' }}>{previewError}</Text>
+                <TouchableOpacity
+                  style={[s.startStudyBtn, { marginTop: 16, backgroundColor: '#e2e8f0' }]}
+                  onPress={() => openTopicPreview(previewTopic)}
+                >
+                  <Text style={{ color: '#475569', fontWeight: '700' }}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <>
+                {/* Stats bar từ DailyStatus */}
+                <View style={s.previewStatsRow}>
+                  {dueReview > 0 && (
+                    <View style={[s.previewStatPill, { backgroundColor: '#dbeafe' }]}>
+                      <Ionicons name="refresh" size={13} color="#1d4ed8" />
+                      <Text style={[s.previewStatText, { color: '#1d4ed8' }]}>{dueReview} due review</Text>
+                    </View>
+                  )}
+                  {newRemain > 0 ? (
+                    <View style={[s.previewStatPill, { backgroundColor: '#dcfce7' }]}>
+                      <Ionicons name="sparkles" size={13} color="#15803d" />
+                      <Text style={[s.previewStatText, { color: '#15803d' }]}>{newRemain} new available</Text>
+                    </View>
+                  ) : (
+                    <View style={[s.previewStatPill, { backgroundColor: '#fef9c3' }]}>
+                      <Ionicons name="checkmark-circle" size={13} color="#a16207" />
+                      <Text style={[s.previewStatText, { color: '#a16207' }]}>Daily limit reached</Text>
+                    </View>
+                  )}
+                  <View style={[s.previewStatPill, { backgroundColor: '#f1f5f9' }]}>
+                    <Ionicons name="layers-outline" size={13} color="#475569" />
+                    <Text style={[s.previewStatText, { color: '#475569' }]}>{previewWords.length} words</Text>
+                  </View>
+                </View>
+
+                {/* Word list — chỉ để xem & star, không tạo DB entries */}
+                <ScrollView
+                  style={{ flex: 1, width: '100%' }}
+                  contentContainerStyle={{ paddingBottom: 16, paddingHorizontal: 4 }}
+                  showsVerticalScrollIndicator={false}
+                >
+                  {previewWords.length === 0 ? (
+                    <View style={{ alignItems: 'center', paddingVertical: 32 }}>
+                      <Ionicons name="book-outline" size={40} color="#cbd5e1" />
+                      <Text style={{ color: '#94a3b8', marginTop: 8 }}>No words in this topic yet</Text>
+                    </View>
+                  ) : (
+                    previewWords.map((word) => {
+                      const isStarred = starredWordIds.has(word.word_id);
+                      return (
+                        <View key={word.word_id} style={s.previewWordRow}>
+                          <View style={{ flex: 1 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              <Text style={s.previewWordText}>{word.word}</Text>
+                              {word.part_of_speech ? (
+                                <View style={s.previewTagNew}>
+                                  <Text style={s.previewTagNewText}>{word.part_of_speech}</Text>
+                                </View>
+                              ) : null}
+                            </View>
+                            {word.phonetic ? (
+                              <Text style={s.previewPhonetic}>/{word.phonetic}/</Text>
+                            ) : null}
+                            <Text style={s.previewMeaning} numberOfLines={1}>{word.meaning_vi}</Text>
+                          </View>
+
+                          {/* Star button */}
+                          <TouchableOpacity
+                            style={s.starBtn}
+                            onPress={() => toggleStar(word.word_id)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          >
+                            <Ionicons
+                              name={isStarred ? 'star' : 'star-outline'}
+                              size={22}
+                              color={isStarred ? '#eab308' : '#cbd5e1'}
+                            />
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })
+                  )}
+                </ScrollView>
+
+                {/* Start button — đây mới là lúc gọi getFlashcardQueue */}
+                {(dueReview > 0 || newRemain > 0) ? (
+                  <TouchableOpacity
+                    style={s.startStudyBtn}
+                    activeOpacity={0.85}
+                    onPress={() => startSession(previewTopic)}
+                  >
+                    {loading ? (
+                      <ActivityIndicator color="#ffffff" style={{ marginRight: 8 }} />
+                    ) : (
+                      <Ionicons name="play" size={18} color="#ffffff" style={{ marginRight: 8 }} />
+                    )}
+                    <Text style={s.startStudyBtnText}>
+                      Start Studying
+                      {totalToday > 0 ? ` (${totalToday} cards)` : ''}
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={[s.startStudyBtn, { backgroundColor: '#94a3b8' }]}>
+                    <Ionicons name="checkmark-circle" size={18} color="#ffffff" style={{ marginRight: 8 }} />
+                    <Text style={s.startStudyBtnText}>All done for today!</Text>
+                  </View>
+                )}
+              </>
+            )}
           </View>
 
           <BottomNav navigation={navigation} active="FlashcardScreen" />
@@ -1402,4 +1605,47 @@ const s = StyleSheet.create({
   // Focused practice button
   focusBtn: { flexDirection: 'row', backgroundColor: '#ef4444', paddingVertical: 14, borderRadius: 16, alignItems: 'center', justifyContent: 'center', width: '100%', marginBottom: 10 },
   focusBtnText: { color: '#ffffff', fontSize: 14, fontWeight: '700' },
+
+  // ── Topic Preview screen ───────────────────────────────────────────────────
+  previewStatsRow: { flexDirection: 'row', gap: 8, marginBottom: 14, flexWrap: 'wrap' },
+  previewStatPill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20 },
+  previewStatText: { fontSize: 12, fontWeight: '700' },
+
+  previewWordRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 8,
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+  },
+  previewWordText: { fontSize: 16, fontWeight: '700', color: '#0f172a' },
+  previewPhonetic: { fontSize: 12, color: '#64748b', marginTop: 2 },
+  previewMeaning: { fontSize: 13, color: '#475569', marginTop: 2 },
+  previewTagReview: { backgroundColor: '#dbeafe', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8 },
+  previewTagReviewText: { fontSize: 10, fontWeight: '700', color: '#1d4ed8' },
+  previewTagNew: { backgroundColor: '#dcfce7', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8 },
+  previewTagNewText: { fontSize: 10, fontWeight: '700', color: '#15803d' },
+
+  starBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 10 },
+
+  startStudyBtn: {
+    flexDirection: 'row',
+    backgroundColor: '#5b65d6',
+    paddingVertical: 15,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  startStudyBtnText: { color: '#ffffff', fontSize: 15, fontWeight: '700' },
+
+  // Inline error in add-deck form
+  inlineErrorBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', borderRadius: 10, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: '#fecaca' },
+  inlineErrorText: { color: '#b91c1c', fontSize: 13, fontWeight: '500', flex: 1 },
 });
