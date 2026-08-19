@@ -170,9 +170,12 @@ def get_words(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     topic_id: int | None = Query(default=None, ge=1),
+    user_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
 ):
-    return crud.list_words(db, limit=limit, offset=offset, topic_id=topic_id)
+    return crud.list_words(
+        db, limit=limit, offset=offset, topic_id=topic_id, user_id=user_id
+    )
 
 
 @app.get("/words/{word_id}", response_model=schemas.WordRead, tags=["vocabulary"])

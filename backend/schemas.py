@@ -51,6 +51,8 @@ class WordRead(BaseModel):
     meaning_vi: str
     example_en: str
     example_vi: str
+    # Computed per requesting user by GET /words; it is not persisted on Word.
+    is_studied: bool = False
     created_at: datetime | None = None
 
 

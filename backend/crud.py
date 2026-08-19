@@ -70,13 +70,37 @@ def get_word_by_id(db: Session, word_id: int) -> models.Word | None:
     return db.query(models.Word).filter(models.Word.word_id == word_id).first()
 
 
+# === SỬA KHAI BÁO HÀM: Thêm user_id ===
 def list_words(
-    db: Session, limit: int = 100, offset: int = 0, topic_id: int | None = None
+    db: Session, limit: int = 100, offset: int = 0, topic_id: int | None = None, user_id: int | None = None
 ) -> list[models.Word]:
     q = db.query(models.Word)
     if topic_id is not None:
         q = q.filter(models.Word.topic_id == topic_id)
-    return q.order_by(models.Word.word_id.asc()).offset(offset).limit(limit).all()
+    
+    words = q.order_by(models.Word.word_id.asc()).offset(offset).limit(limit).all()
+
+    # Nếu không có user_id (chưa đăng nhập), mặc định tất cả là chưa học
+    if not user_id:
+        for w in words:
+            w.is_studied = False
+        return words
+
+    # === LẤY TRẠNG THÁI ĐÃ HỌC TỪ BẢNG UserCardSRS ===
+    studied_records = (
+        db.query(models.UserCardSRS.word_id)
+        .filter(models.UserCardSRS.user_id == user_id)
+        .all()
+    )
+    
+    # Tạo một set chứa ID của các từ đã học để dò tìm cho nhanh
+    studied_word_ids = {r.word_id for r in studied_records}
+
+    # Gán trạng thái is_studied cho từng từ vựng
+    for w in words:
+        w.is_studied = w.word_id in studied_word_ids
+
+    return words
 
 
 def get_random_words(db: Session, limit: int = 10, topic_id: int | None = None) -> list[models.Word]:
