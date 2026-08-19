@@ -497,6 +497,28 @@ def get_my_weekly_activity(current_user=Depends(get_current_user), db: Session =
 # FR2 – Flashcard Learning
 # ============================================================
 
+@app.get(
+    "/users/{user_id}/flashcard-sessions/active",
+    response_model=schemas.FlashcardSessionRead | None,
+    tags=["flashcards"],
+)
+def get_active_session(
+    user_id: int,
+    topic_id: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    """
+    Return the most recent *unfinished* session for (user, topic), or null.
+    The frontend uses this to resume an in-progress session instead of
+    creating a duplicate on re-entry.
+    """
+    if not crud.get_user_by_id(db, user_id):
+        raise HTTPException(404, "User not found")
+    if not crud.get_topic_by_id(db, topic_id):
+        raise HTTPException(404, "Topic not found")
+    return crud.get_active_flashcard_session_for_topic(db, user_id, topic_id)
+
+
 @app.post("/flashcard-sessions", response_model=schemas.FlashcardSessionRead, tags=["flashcards"])
 def start_flashcard_session(payload: schemas.FlashcardSessionCreate, db: Session = Depends(get_db)):
     if not crud.get_user_by_id(db, payload.user_id):

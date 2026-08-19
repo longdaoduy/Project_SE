@@ -429,6 +429,27 @@ def _update_statistics_after_reading(
 # FR2 – Flashcard Learning
 # ============================================================
 
+def get_active_flashcard_session_for_topic(
+    db: Session, user_id: int, topic_id: int
+) -> models.FlashcardSession | None:
+    """
+    Return the most recent unfinished (is_completed=False) session for a
+    (user, topic) pair, or None if every session is completed / none exist.
+    Eagerly loads progresses so the caller can reconstruct word_id→progress_id map.
+    """
+    return (
+        db.query(models.FlashcardSession)
+        .options(joinedload(models.FlashcardSession.progresses))
+        .filter(
+            models.FlashcardSession.user_id == user_id,
+            models.FlashcardSession.topic_id == topic_id,
+            models.FlashcardSession.is_completed == False,  # noqa: E712
+        )
+        .order_by(models.FlashcardSession.started_at.desc())
+        .first()
+    )
+
+
 def create_flashcard_session(
     db: Session, payload: schemas.FlashcardSessionCreate
 ) -> models.FlashcardSession:
@@ -524,18 +545,20 @@ def update_flashcard_progress(
         progress.is_flipped = payload.is_flipped
 
     if payload.difficulty_rating is not None:
-        first_rating = progress.difficulty_rating is None
+        # Snapshot "was this card unrated before?" BEFORE mutating the field
+        is_first_rating = progress.difficulty_rating is None
         progress.difficulty_rating = payload.difficulty_rating
         progress.reviewed_at = datetime.now(timezone.utc)
 
-        if first_rating:
+        # Increment cards_reviewed only the FIRST time each card is rated.
+        # We do NOT auto-complete the session here — the frontend calls
+        # POST /flashcard-sessions/{id}/complete explicitly when the user
+        # finishes all cards and reaches the done screen.
+        if is_first_rating:
             sess = progress.session
             sess.cards_reviewed = min(sess.cards_reviewed + 1, sess.total_cards)
-            if sess.cards_reviewed >= sess.total_cards:
-                # complete_flashcard_session uses flush (no commit), safe here
-                complete_flashcard_session(db, sess)
 
-    # Single commit for progress + any session changes above
+    # Single commit
     db.commit()
     db.refresh(progress)
     return progress
@@ -652,8 +675,11 @@ def _apply_srs(srs: models.UserCardSRS, rating: str) -> models.UserCardSRS:
 
 def get_or_create_srs(
     db: Session, user_id: int, word_id: int, topic_id: int
-) -> models.UserCardSRS:
-    """Return existing SRS record or create a fresh one."""
+) -> tuple["models.UserCardSRS", bool]:
+    """
+    Return (srs_record, is_new) — is_new=True when the record did not exist yet.
+    The caller must commit after this (or after further mutations).
+    """
     srs = (
         db.query(models.UserCardSRS)
         .filter(
@@ -663,18 +689,57 @@ def get_or_create_srs(
         .first()
     )
     if srs:
-        return srs
+        return srs, False
     srs = models.UserCardSRS(user_id=user_id, word_id=word_id, topic_id=topic_id)
     db.add(srs)
     db.flush()
-    return srs
+    return srs, True
+
+
+def _ensure_daily_log(
+    db: Session, user_id: int, word_id: int, topic_id: int, today: date
+) -> None:
+    """Write a DailyLearningLog row for today if one does not exist yet."""
+    existing = (
+        db.query(models.DailyLearningLog)
+        .filter(
+            models.DailyLearningLog.user_id == user_id,
+            models.DailyLearningLog.topic_id == topic_id,
+            models.DailyLearningLog.word_id == word_id,
+            models.DailyLearningLog.learned_at == today,
+        )
+        .first()
+    )
+    if not existing:
+        db.add(models.DailyLearningLog(
+            user_id=user_id,
+            topic_id=topic_id,
+            word_id=word_id,
+            learned_at=today,
+        ))
 
 
 def apply_srs_rating(
     db: Session, user_id: int, word_id: int, topic_id: int, rating: str
 ) -> models.UserCardSRS:
-    """Rate a card, update SRS params, persist. Returns updated record."""
-    srs = get_or_create_srs(db, user_id, word_id, topic_id)
+    """
+    Rate a card, update SRS params, persist.
+
+    For brand-new words (SRS record does not exist yet), also writes the
+    DailyLearningLog row so the daily limit is only consumed when the user
+    actually reviews the word — not when the queue is built.
+
+    For words that had card_status='new' (introduced by old code but never rated),
+    also writes the DailyLearningLog row on first actual rating.
+
+    Returns the updated SRS record.
+    """
+    srs, is_new = get_or_create_srs(db, user_id, word_id, topic_id)
+    # Write the daily log for:
+    # - brand-new words (no SRS record existed)
+    # - words that were in 'new' status (introduced but never rated)
+    if is_new or srs.card_status == "new":
+        _ensure_daily_log(db, user_id, word_id, topic_id, date.today())
     _apply_srs(srs, rating)
     db.commit()
     db.refresh(srs)
@@ -684,8 +749,16 @@ def apply_srs_rating(
 def get_daily_status(
     db: Session, user_id: int, topic_id: int
 ) -> dict:
-    """Return daily learning stats for a (user, topic) pair."""
+    """
+    Return daily learning stats for a (user, topic) pair.
+
+    'daily_learned' counts words the user has already rated today (DailyLearningLog).
+    Words that have a 'new' SRS record but haven't been rated yet are also counted
+    against the daily limit to avoid over-queuing.
+    """
     today = date.today()
+
+    # Words actually rated today
     learned_today = (
         db.query(func.count(models.DailyLearningLog.log_id))
         .filter(
@@ -695,6 +768,20 @@ def get_daily_status(
         )
         .scalar() or 0
     )
+
+    # Words introduced but not yet rated (card_status='new' in SRS)
+    unrated_new_count = (
+        db.query(func.count(models.UserCardSRS.srs_id))
+        .filter(
+            models.UserCardSRS.user_id == user_id,
+            models.UserCardSRS.topic_id == topic_id,
+            models.UserCardSRS.card_status == "new",
+        )
+        .scalar() or 0
+    )
+
+    total_accounted = learned_today + unrated_new_count
+
     now = datetime.now(timezone.utc)
     due_review_count = (
         db.query(func.count(models.UserCardSRS.srs_id))
@@ -710,7 +797,7 @@ def get_daily_status(
         "topic_id": topic_id,
         "daily_learned": learned_today,
         "daily_limit": DAILY_NEW_LIMIT,
-        "daily_remaining": max(0, DAILY_NEW_LIMIT - learned_today),
+        "daily_remaining": max(0, DAILY_NEW_LIMIT - total_accounted),
         "due_review_count": due_review_count,
     }
 
@@ -723,14 +810,23 @@ def build_session_queue(
 
     Priority:
       1. Due review / learning cards  (sorted by due_date ASC, shown first)
-      2. New cards up to the remaining daily limit
+      2. Due 'new' cards (introduced but never rated — picked up by old code or
+         partially-started sessions, shown second)
+      3. Brand-new words up to the remaining daily limit
+
+    IMPORTANT: This function is READ-ONLY — it does NOT write DailyLearningLog
+    or UserCardSRS records.  Those are written lazily in apply_srs_rating()
+    the first time the user actually rates a card.  This ensures that merely
+    opening the Flashcard screen or building a session does not mark words
+    as "learned today".
 
     Returns a dict with:
-      review_cards   – Word objects due for review
-      new_cards      – Word objects being introduced today
-      daily_learned  – new words already introduced today
-      daily_limit    – cap constant
-      daily_remaining– slots left for new words today
+      review_cards   – Word objects due for review (review/learning/new status, due now)
+      new_cards      – Word objects with no SRS record yet (first time seeing them)
+      daily_learned  – new words already rated today
+      daily_limit    – cap constant (DAILY_NEW_LIMIT)
+      daily_remaining– slots still available for new words today
+      due_review_count – count of review/learning cards due now
     """
     now = datetime.now(timezone.utc)
     today = date.today()
@@ -750,7 +846,26 @@ def build_session_queue(
     )
     review_cards = [srs.word for srs in due_srs if srs.word is not None]
 
-    # ── 2. Daily-limit check ───────────────────────────────────────────────────
+    # ── 1b. 'new' status cards — introduced (SRS record exists) but never rated
+    # These exist when the old build_session_queue wrote the SRS record eagerly,
+    # or when a previous session was created but the user exited before rating.
+    # We include them as new-type cards (they haven't been studied yet).
+    unrated_srs = (
+        db.query(models.UserCardSRS)
+        .options(joinedload(models.UserCardSRS.word))
+        .filter(
+            models.UserCardSRS.user_id == user_id,
+            models.UserCardSRS.topic_id == topic_id,
+            models.UserCardSRS.card_status == "new",
+        )
+        .order_by(models.UserCardSRS.due_date.asc())
+        .all()
+    )
+    # Collect unrated words — they go into new_cards (user hasn't studied them yet)
+    unrated_new_words = [srs.word for srs in unrated_srs if srs.word is not None]
+
+    # ── 2. How many new words has the user already RATED today? ───────────────
+    # DailyLearningLog rows are written when a word is first rated.
     learned_today = (
         db.query(func.count(models.DailyLearningLog.log_id))
         .filter(
@@ -760,10 +875,13 @@ def build_session_queue(
         )
         .scalar() or 0
     )
-    remaining_slots = max(0, DAILY_NEW_LIMIT - learned_today)
 
-    # ── 3. New words not yet seen by this user in this topic ──────────────────
-    new_cards: list[models.Word] = []
+    # ── 3. New words not yet seen at all (no SRS record) ─────────────────────
+    # Cap: daily_limit minus already-learned AND already-introduced (unrated 'new')
+    already_accounted = learned_today + len(unrated_srs)
+    remaining_slots = max(0, DAILY_NEW_LIMIT - already_accounted)
+
+    brand_new_cards: list[models.Word] = []
     if remaining_slots > 0:
         seen_word_ids_subq = (
             db.query(models.UserCardSRS.word_id)
@@ -773,7 +891,7 @@ def build_session_queue(
             )
             .subquery()
         )
-        new_words = (
+        brand_new_cards = (
             db.query(models.Word)
             .filter(
                 models.Word.topic_id == topic_id,
@@ -783,47 +901,18 @@ def build_session_queue(
             .limit(remaining_slots)
             .all()
         )
+        # NOTE: No DB writes here — SRS + daily log are written on first rating.
 
-        # Register each new word in SRS + daily log
-        for word in new_words:
-            # SRS record (status = 'new', due now so it appears immediately)
-            srs = models.UserCardSRS(
-                user_id=user_id,
-                word_id=word.word_id,
-                topic_id=topic_id,
-                card_status="new",
-                due_date=now,
-            )
-            db.add(srs)
-            # Daily log (ignore duplicate key if client retries)
-            existing_log = (
-                db.query(models.DailyLearningLog)
-                .filter(
-                    models.DailyLearningLog.user_id == user_id,
-                    models.DailyLearningLog.topic_id == topic_id,
-                    models.DailyLearningLog.word_id == word.word_id,
-                    models.DailyLearningLog.learned_at == today,
-                )
-                .first()
-            )
-            if not existing_log:
-                db.add(models.DailyLearningLog(
-                    user_id=user_id,
-                    topic_id=topic_id,
-                    word_id=word.word_id,
-                    learned_at=today,
-                ))
-
-        db.commit()
-        new_cards = new_words
-        learned_today += len(new_words)
+    # Combine: unrated 'new' status words first, then truly brand-new words
+    new_cards = unrated_new_words + brand_new_cards
 
     return {
         "review_cards": review_cards,
         "new_cards": new_cards,
         "daily_learned": learned_today,
         "daily_limit": DAILY_NEW_LIMIT,
-        "daily_remaining": max(0, DAILY_NEW_LIMIT - learned_today),
+        "daily_remaining": max(0, DAILY_NEW_LIMIT - already_accounted),
+        "due_review_count": len([s for s in due_srs if s.word is not None]),
     }
 
 

@@ -13,6 +13,7 @@ import {
   getDailyStatus,
   createFlashcardSession, completeFlashcardSession,
   createFlashcardProgress, updateFlashcardProgress,
+  getActiveFlashcardSession,
 } from '../api';
 import * as Speech from 'expo-speech';
 
@@ -35,8 +36,9 @@ export default function FlashcardScreen({ navigation }) {
 
   // ── Topic preview state ──────────────────────────────────────────────────────
   const [previewTopic, setPreviewTopic]   = useState(null);
-  const [previewWords, setPreviewWords]   = useState([]);   // review + new cards for today
-  const [previewStatus, setPreviewStatus] = useState(null); // DailyStatus object
+  const [previewWords, setPreviewWords]   = useState([]);   // today's queue (review + new)
+  const [previewQueue, setPreviewQueue]   = useState(null); // raw queue from getFlashcardQueue
+  const [previewStatus, setPreviewStatus] = useState(null); // synthetic DailyStatus object
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError]   = useState('');
 
@@ -92,8 +94,9 @@ export default function FlashcardScreen({ navigation }) {
   }, []);
 
   // Load daily status for all visible topics so we can show badges
+  // Re-runs whenever userId/topics change, OR when returning to the select screen
   useEffect(() => {
-    if (!userId || topics.length === 0) return;
+    if (!userId || topics.length === 0 || phase !== 'select') return;
     const loadStatuses = async () => {
       const results = {};
       for (const topic of topics) {
@@ -105,7 +108,7 @@ export default function FlashcardScreen({ navigation }) {
       setTopicDailyStatus(results);
     };
     loadStatuses();
-  }, [userId, topics]);
+  }, [userId, topics, phase]);
 
   // ── Deck search/filter derived values ────────────────────────────────────────
   // No level filter — show all decks, just search by title
@@ -276,6 +279,7 @@ export default function FlashcardScreen({ navigation }) {
       setPhase('select');
       setPreviewTopic(null);
       setPreviewWords([]);
+      setPreviewQueue(null);
       setPreviewStatus(null);
       return;
     }
@@ -292,28 +296,32 @@ export default function FlashcardScreen({ navigation }) {
   };
 
   // ── Open topic preview screen ────────────────────────────────────────────────
-  // CHỈ load DailyStatus + danh sách từ bằng getWords để HIỂN THỊ.
-  // getFlashcardQueue (tạo daily_learning_log) chỉ gọi khi user bấm Start.
+  // Gọi getFlashcardQueue để lấy đúng danh sách từ sẽ học hôm nay (review + new).
+  // Hàm này chỉ đọc — không ghi DB entries cho đến khi user thực sự rate 1 thẻ.
   const openTopicPreview = useCallback(async (topic) => {
     setPreviewTopic(topic);
     setPreviewWords([]);
+    setPreviewQueue(null);
     setPreviewStatus(null);
     setPreviewError('');
     setPreviewLoading(true);
     setPhase('preview');
     try {
-      // getDailyStatus: chỉ đọc, không tạo entries
-      const [status, wordsData] = await Promise.all([
-        getDailyStatus(userId, topic.topic_id),
-        // Import getWords để lấy danh sách từ của topic để preview
-        (async () => {
-          const { getWords } = await import('../api');
-          return getWords(topic.topic_id, 50);
-        })(),
-      ]);
-      setPreviewStatus(status);
-      // Hiển thị tất cả từ của topic (chỉ để xem / star), không phân loại review/new
-      setPreviewWords(wordsData || []);
+      const queue = await getFlashcardQueue(userId, topic.topic_id);
+      setPreviewQueue(queue);
+
+      // Build a synthetic DailyStatus-like object for the stats bar
+      setPreviewStatus({
+        due_review_count: queue.due_review_count ?? queue.review_cards.length,
+        daily_remaining:  queue.daily_remaining,
+        daily_limit:      queue.daily_limit,
+        daily_learned:    queue.daily_learned,
+      });
+
+      // Tag each word with its type so the list can show Review / New badges
+      const reviewWords = (queue.review_cards || []).map(w => ({ ...w, _cardType: 'review' }));
+      const newWords    = (queue.new_cards    || []).map(w => ({ ...w, _cardType: 'new' }));
+      setPreviewWords([...reviewWords, ...newWords]);
     } catch (e) {
       setPreviewError(e.message || 'Could not load vocabulary for this topic');
     } finally {
@@ -326,40 +334,67 @@ export default function FlashcardScreen({ navigation }) {
     try {
       setLoading(true);
       setError('');
+      setPreviewError('');
 
-      // Fetch SRS-ordered queue from backend
-      const queue = await getFlashcardQueue(userId, topic.topic_id);
+      // ── Step 1: Check for an existing unfinished session to resume ──────────
+      let existingSession = null;
+      try {
+        existingSession = await getActiveFlashcardSession(userId, topic.topic_id);
+      } catch (_) { /* non-critical — fall through to create a new session */ }
 
-      // Combine: review cards first, then new cards
+      // ── Step 2: Use the cached queue from preview, or re-fetch if needed ────
+      // getFlashcardQueue is READ-ONLY — no DB writes until first rating.
+      let queue = previewQueue;
+      if (!queue || queue.review_cards === undefined) {
+        queue = await getFlashcardQueue(userId, topic.topic_id);
+      }
+
       const allCards = [...queue.review_cards, ...queue.new_cards];
 
       if (!allCards.length) {
-        // Nothing to study: no reviews due and daily limit reached
-        setError(
-          queue.daily_remaining === 0
-            ? `You've reached the daily limit of ${queue.daily_limit} new words for this topic. Come back tomorrow!`
-            : 'No cards available for this topic yet.'
-        );
+        const msg =
+          queue.daily_remaining === 0 && (queue.due_review_count ?? 0) === 0
+            ? `You've completed today's session!\nCheck back when cards are due for review.`
+            : 'No cards available for review right now. Check back later!';
+        setPreviewError(msg);
         return;
       }
 
-      // Build card-type map so UI can badge Review vs New
+      // Build card-type map for the study screen badges
       const types = {};
       queue.review_cards.forEach(w => { types[w.word_id] = 'review'; });
       queue.new_cards.forEach(w => { types[w.word_id] = 'new'; });
       setCardTypes(types);
 
-      // Create a backend session (for history tracking)
-      const session = await createFlashcardSession(userId, topic.topic_id, allCards.length);
+      // ── Step 3: Reuse existing session or create a new one ─────────────────
+      let session;
+      let pIds = {};
 
-      // Pre-create progress records (kept for backward-compat flip tracking)
-      const pIds = {};
-      for (const w of allCards) {
-        try {
-          const prog = await createFlashcardProgress(session.session_id, w.word_id);
-          pIds[w.word_id] = prog.progress_id;
-        } catch (_) { /* non-critical */ }
+      if (existingSession) {
+        session = existingSession;
+        if (session.progresses && session.progresses.length > 0) {
+          session.progresses.forEach(p => { pIds[p.word_id] = p.progress_id; });
+        }
+        for (const w of allCards) {
+          if (!pIds[w.word_id]) {
+            try {
+              const prog = await createFlashcardProgress(session.session_id, w.word_id);
+              pIds[w.word_id] = prog.progress_id;
+            } catch (_) { /* non-critical */ }
+          }
+        }
+      } else {
+        session = await createFlashcardSession(userId, topic.topic_id, allCards.length);
+        for (const w of allCards) {
+          try {
+            const prog = await createFlashcardProgress(session.session_id, w.word_id);
+            pIds[w.word_id] = prog.progress_id;
+          } catch (_) { /* non-critical */ }
+        }
       }
+
+      const store = {};
+      allCards.forEach(w => { store[w.word_id] = w; });
 
       setCards(allCards);
       setProgressIds(pIds);
@@ -369,18 +404,17 @@ export default function FlashcardScreen({ navigation }) {
       setRatings({});
       setSrsResults({});
       setCardStats({});
-      // Pre-populate cardStore so done screen can look up word objects
-      const store = {};
-      allCards.forEach(w => { store[w.word_id] = w; });
       setCardStore(store);
       setSelectedTopic(topic);
       setPhase('study');
     } catch (e) {
+      console.error('[startSession] error:', e.message, e);
       setError(e.message);
+      setPreviewError(e.message || 'Could not start session. Please try again.');
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, previewQueue]);
 
   // ── Start local session (user-created deck) ─────────────────────────────────
   const startLocalSession = useCallback((deck) => {
@@ -883,6 +917,11 @@ export default function FlashcardScreen({ navigation }) {
                           {/* SRS daily-status badges */}
                           {topicDailyStatus[topic.topic_id] && (() => {
                             const st = topicDailyStatus[topic.topic_id];
+                            // Three distinct states:
+                            // 1) due_review_count > 0  → cards waiting for review
+                            // 2) daily_remaining > 0   → new words available
+                            // 3) neither               → no words due right now (check back later)
+                            const nothingDue = st.due_review_count === 0 && st.daily_remaining === 0;
                             return (
                               <View style={s.srsStatusRow}>
                                 {st.due_review_count > 0 && (
@@ -890,13 +929,14 @@ export default function FlashcardScreen({ navigation }) {
                                     <Text style={s.srsBadgeText}>🔄 {st.due_review_count} due</Text>
                                   </View>
                                 )}
-                                {st.daily_remaining > 0 ? (
+                                {st.daily_remaining > 0 && (
                                   <View style={s.srsBadgeNew}>
                                     <Text style={s.srsBadgeText}>✨ {st.daily_remaining} new</Text>
                                   </View>
-                                ) : (
+                                )}
+                                {nothingDue && (
                                   <View style={s.srsBadgeDone}>
-                                    <Text style={s.srsBadgeText}>✅ limit reached</Text>
+                                    <Text style={s.srsBadgeText}>⏳ check back later</Text>
                                   </View>
                                 )}
                               </View>
@@ -932,13 +972,11 @@ export default function FlashcardScreen({ navigation }) {
   }
 
   // ══ TOPIC PREVIEW VIEW (phase = 'preview') ═══════════════════════════════════
-  // Hiển thị danh sách từ của topic để xem & star, sau đó bắt đầu học
-  // getFlashcardQueue (tạo DB entries) chỉ gọi khi bấm Start
   if (phase === 'preview' && previewTopic) {
-    // Dùng DailyStatus để hiển thị badge thông tin
     const dueReview  = previewStatus?.due_review_count ?? 0;
     const newRemain  = previewStatus?.daily_remaining   ?? 0;
-    const totalToday = dueReview + Math.min(newRemain, previewWords.length);
+    // Words that are actually queued for today
+    const totalToday = previewWords.length;
 
     return (
       <View style={s.wrapper}>
@@ -953,7 +991,7 @@ export default function FlashcardScreen({ navigation }) {
               </TouchableOpacity>
               <View style={s.headerTextContainer}>
                 <Text style={s.appName}>{previewTopic.topic_name}</Text>
-                <Text style={s.subTitleText}>Topic vocabulary</Text>
+                <Text style={s.subTitleText}>Today's vocabulary</Text>
               </View>
               <View style={{ width: 32 }} />
             </View>
@@ -964,7 +1002,7 @@ export default function FlashcardScreen({ navigation }) {
             {previewLoading ? (
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                 <ActivityIndicator size="large" color="#5b65d6" />
-                <Text style={{ marginTop: 12, color: '#64748b', fontSize: 14 }}>Loading vocabulary…</Text>
+                <Text style={{ marginTop: 12, color: '#64748b', fontSize: 14 }}>Loading today's words…</Text>
               </View>
             ) : previewError ? (
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
@@ -979,18 +1017,23 @@ export default function FlashcardScreen({ navigation }) {
               </View>
             ) : (
               <>
-                {/* Stats bar từ DailyStatus */}
+                {/* Stats bar */}
                 <View style={s.previewStatsRow}>
                   {dueReview > 0 && (
                     <View style={[s.previewStatPill, { backgroundColor: '#dbeafe' }]}>
                       <Ionicons name="refresh" size={13} color="#1d4ed8" />
-                      <Text style={[s.previewStatText, { color: '#1d4ed8' }]}>{dueReview} due review</Text>
+                      <Text style={[s.previewStatText, { color: '#1d4ed8' }]}>{dueReview} review</Text>
                     </View>
                   )}
                   {newRemain > 0 ? (
                     <View style={[s.previewStatPill, { backgroundColor: '#dcfce7' }]}>
                       <Ionicons name="sparkles" size={13} color="#15803d" />
-                      <Text style={[s.previewStatText, { color: '#15803d' }]}>{newRemain} new available</Text>
+                      <Text style={[s.previewStatText, { color: '#15803d' }]}>{newRemain} new</Text>
+                    </View>
+                  ) : dueReview === 0 ? (
+                    <View style={[s.previewStatPill, { backgroundColor: '#f1f5f9' }]}>
+                      <Ionicons name="time-outline" size={13} color="#64748b" />
+                      <Text style={[s.previewStatText, { color: '#64748b' }]}>No words due now</Text>
                     </View>
                   ) : (
                     <View style={[s.previewStatPill, { backgroundColor: '#fef9c3' }]}>
@@ -998,31 +1041,50 @@ export default function FlashcardScreen({ navigation }) {
                       <Text style={[s.previewStatText, { color: '#a16207' }]}>Daily limit reached</Text>
                     </View>
                   )}
-                  <View style={[s.previewStatPill, { backgroundColor: '#f1f5f9' }]}>
-                    <Ionicons name="layers-outline" size={13} color="#475569" />
-                    <Text style={[s.previewStatText, { color: '#475569' }]}>{previewWords.length} words</Text>
-                  </View>
+                  {totalToday > 0 && (
+                    <View style={[s.previewStatPill, { backgroundColor: '#ede9fe' }]}>
+                      <Ionicons name="layers-outline" size={13} color="#7c3aed" />
+                      <Text style={[s.previewStatText, { color: '#7c3aed' }]}>{totalToday} cards today</Text>
+                    </View>
+                  )}
                 </View>
 
-                {/* Word list — chỉ để xem & star, không tạo DB entries */}
+                {/* Word list — today's session queue */}
                 <ScrollView
                   style={{ flex: 1, width: '100%' }}
                   contentContainerStyle={{ paddingBottom: 16, paddingHorizontal: 4 }}
                   showsVerticalScrollIndicator={false}
                 >
                   {previewWords.length === 0 ? (
-                    <View style={{ alignItems: 'center', paddingVertical: 32 }}>
-                      <Ionicons name="book-outline" size={40} color="#cbd5e1" />
-                      <Text style={{ color: '#94a3b8', marginTop: 8 }}>No words in this topic yet</Text>
+                    /* No words due today */
+                    <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+                      <Ionicons name="checkmark-circle-outline" size={52} color="#cbd5e1" />
+                      <Text style={{ color: '#475569', marginTop: 12, fontWeight: '700', fontSize: 15 }}>
+                        All caught up!
+                      </Text>
+                      <Text style={{ color: '#94a3b8', marginTop: 6, textAlign: 'center', fontSize: 13 }}>
+                        No words are scheduled for review today.{'\n'}Check back later when cards become due.
+                      </Text>
                     </View>
                   ) : (
                     previewWords.map((word) => {
-                      const isStarred = starredWordIds.has(word.word_id);
+                      const isStarred  = starredWordIds.has(word.word_id);
+                      const isReview   = word._cardType === 'review';
                       return (
                         <View key={word.word_id} style={s.previewWordRow}>
                           <View style={{ flex: 1 }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                               <Text style={s.previewWordText}>{word.word}</Text>
+                              {/* Card-type badge */}
+                              {isReview ? (
+                                <View style={[s.previewTagNew, { backgroundColor: '#dbeafe', borderColor: '#93c5fd' }]}>
+                                  <Text style={[s.previewTagNewText, { color: '#1d4ed8' }]}>🔄 Review</Text>
+                                </View>
+                              ) : (
+                                <View style={[s.previewTagNew, { backgroundColor: '#dcfce7', borderColor: '#86efac' }]}>
+                                  <Text style={[s.previewTagNewText, { color: '#15803d' }]}>✨ New</Text>
+                                </View>
+                              )}
                               {word.part_of_speech ? (
                                 <View style={s.previewTagNew}>
                                   <Text style={s.previewTagNewText}>{word.part_of_speech}</Text>
@@ -1053,8 +1115,8 @@ export default function FlashcardScreen({ navigation }) {
                   )}
                 </ScrollView>
 
-                {/* Start button — đây mới là lúc gọi getFlashcardQueue */}
-                {(dueReview > 0 || newRemain > 0) ? (
+                {/* Start button */}
+                {totalToday > 0 ? (
                   <TouchableOpacity
                     style={s.startStudyBtn}
                     activeOpacity={0.85}
@@ -1066,14 +1128,18 @@ export default function FlashcardScreen({ navigation }) {
                       <Ionicons name="play" size={18} color="#ffffff" style={{ marginRight: 8 }} />
                     )}
                     <Text style={s.startStudyBtnText}>
-                      Start Studying
-                      {totalToday > 0 ? ` (${totalToday} cards)` : ''}
+                      Start Studying ({totalToday} cards)
                     </Text>
                   </TouchableOpacity>
                 ) : (
-                  <View style={[s.startStudyBtn, { backgroundColor: '#94a3b8' }]}>
-                    <Ionicons name="checkmark-circle" size={18} color="#ffffff" style={{ marginRight: 8 }} />
-                    <Text style={s.startStudyBtnText}>All done for today!</Text>
+                  <View style={[s.startStudyBtn, { backgroundColor: '#94a3b8', flexDirection: 'column', height: 'auto', paddingVertical: 14 }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                      <Ionicons name="checkmark-circle" size={18} color="#ffffff" style={{ marginRight: 8 }} />
+                      <Text style={s.startStudyBtnText}>No words due right now</Text>
+                    </View>
+                    <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, textAlign: 'center' }}>
+                      Your cards are scheduled for a future date.{'\n'}Check back later!
+                    </Text>
                   </View>
                 )}
               </>
@@ -1348,8 +1414,17 @@ export default function FlashcardScreen({ navigation }) {
                   style={s.actionBtn}
                   onPress={() => {
                     const next = currentIndex + 1;
-                    if (next >= cards.length) setPhase('done');
-                    else { setCurrentIndex(next); setShowMeaning(false); }
+                    if (next >= cards.length) {
+                      // User skipped the last card — complete the session properly
+                      (async () => {
+                        try { if (sessionId) await completeFlashcardSession(sessionId); }
+                        catch (e) { console.warn('complete session on skip:', e.message); }
+                      })();
+                      setPhase('done');
+                    } else {
+                      setCurrentIndex(next);
+                      setShowMeaning(false);
+                    }
                   }}
                 >
                   <Ionicons name="play-skip-forward-outline" size={18} color="#64748b" />

@@ -81,6 +81,14 @@ export const getUserFlashcardSessions = (userId, limit = 20, offset = 0) =>
 export const completeFlashcardSession = (sessionId) =>
   post(`/flashcard-sessions/${sessionId}/complete`, {});
 
+/**
+ * Get the most recent unfinished session for a (user, topic) pair.
+ * Returns the session object, or null if none exists.
+ * Used to resume an in-progress session instead of creating a duplicate.
+ */
+export const getActiveFlashcardSession = (userId, topicId) =>
+  get(`/users/${userId}/flashcard-sessions/active`, { topic_id: topicId });
+
 export const createFlashcardProgress = (sessionId, wordId) =>
   post('/flashcard-progress', { session_id: sessionId, word_id: wordId });
 
