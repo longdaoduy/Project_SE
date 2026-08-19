@@ -270,14 +270,28 @@ export function buildMatchingPairs(words, count = 6) {
  * Returns array of {word_id, sentence, answer} objects.
  */
 export function buildFillQuestions(words, count) {
-  const shuffled = [...words].sort(() => Math.random() - 0.5);
-  return shuffled.slice(0, Math.min(count, shuffled.length)).map((w) => ({
-    word_id: w.word_id,
-    sentence: w.example_en.replace(new RegExp(`\\b${w.word}\\b`, 'i'), '______'),
-    answer: w.word,
-    hint: w.phonetic || '',
-    _word: w,
-  }));
+  const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const candidates = (words || []).filter((word) =>
+    typeof word?.word === 'string' && word.word.trim().length > 0
+  );
+  const shuffled = [...candidates].sort(() => Math.random() - 0.5);
+
+  return shuffled.slice(0, Math.min(count, shuffled.length)).map((w) => {
+    const answer = w.word.trim();
+    const example = typeof w.example_en === 'string' ? w.example_en.trim() : '';
+    const wordPattern = new RegExp(`\\b${escapeRegExp(answer)}\\b`, 'i');
+    const sentence = example && wordPattern.test(example)
+      ? example.replace(wordPattern, '______')
+      : `${w.meaning_vi || 'This vocabulary word'}: ______`;
+
+    return {
+      word_id: w.word_id,
+      sentence,
+      answer,
+      hint: w.phonetic || '',
+      _word: w,
+    };
+  });
 }
 
 // ─── AI Reading ───────────────────────────────────────────────────────────────

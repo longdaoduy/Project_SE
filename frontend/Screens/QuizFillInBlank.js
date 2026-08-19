@@ -24,9 +24,9 @@ export default function QuizFillInBlank({ navigation, route }) {
     try {
       setPhase('loading');
       const words = deckWords ? deckWords : await getWords(topicId, Math.max(limit * 2, 60));
-      if (words.length < 3) throw new Error('Not enough words to start a quiz (need at least 3).');
+      if (!words?.length) throw new Error('This deck has no words to create a quiz.');
       const built = buildFillQuestions(words, limit);
-      if (!built.length) throw new Error('Could not build questions from this deck.');
+      if (!built.length) throw new Error('Could not build questions. Add a word to each flashcard first.');
       setQuestions(built);
       setCurrentIndex(0);
       setUserAnswer('');

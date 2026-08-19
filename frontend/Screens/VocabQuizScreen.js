@@ -17,8 +17,8 @@ export default function VocabQuizScreen({ navigation, route }) {
   const routeDeckTitle = route.params?.deckTitle || null;
 
   const [selectedTopic, setSelectedTopic] = useState(null);
-  const [selectedDeck,  setSelectedDeck]  = useState(null);
-  const [selectedMode,  setSelectedMode]  = useState('mc');
+  const [selectedDeck, setSelectedDeck] = useState(null);
+  const [selectedMode, setSelectedMode] = useState('mc');
   const [viewState, setViewState] = useState(routeDeckWords ? 'select_mode' : 'select_deck');
   const [numQuestions, setNumQuestions] = useState('10');
   const [alertVisible, setAlertVisible] = useState(false);
@@ -31,6 +31,7 @@ export default function VocabQuizScreen({ navigation, route }) {
   const [countLoading, setCountLoading] = useState(false);
 
   const visibleTopics = topics.slice(0, visibleTopicsCount);
+  const isUserDeckSource = Boolean(routeDeckWords || selectedDeck?.words);
 
   const fetchStats = useCallback(async () => {
     try {
@@ -48,6 +49,12 @@ export default function VocabQuizScreen({ navigation, route }) {
     fetchStats();
     if (topics.length === 0) loadTopics();
   }, []);
+
+  // User-created flashcards do not provide reliable example sentences, so this
+  // quiz mode is only available for the built-in topic decks.
+  useEffect(() => {
+    if (isUserDeckSource && selectedMode === 'fill') setSelectedMode('mc');
+  }, [isUserDeckSource, selectedMode]);
 
   const modeScreenMap = {
     mc: 'QuizMultipleChoice',
@@ -82,6 +89,11 @@ export default function VocabQuizScreen({ navigation, route }) {
 
     // For deck-based quiz: validate against deck word count
     if (activeDeckWords) {
+      if (selectedMode === 'fill') {
+        setSelectedMode('mc');
+        showAlert('Dạng Điền vào chỗ trống chỉ dùng cho các bộ Flashcard có sẵn.');
+        return;
+      }
       let limitNumber = parseInt(numQuestions, 10);
       if (isNaN(limitNumber) || limitNumber <= 0) {
         showAlert('Vui lòng nhập số câu hỏi hợp lệ!');
@@ -94,12 +106,13 @@ export default function VocabQuizScreen({ navigation, route }) {
         return;
       }
       const screenName = modeScreenMap[selectedMode];
-      const quizType   = modeTypeMap[selectedMode];
+      const quizType = modeTypeMap[selectedMode];
       navigation.navigate(screenName, {
-        deckWords:  activeDeckWords.slice(0, limitNumber),
+        deckWords: activeDeckWords.slice(0, limitNumber),
         topicTitle: activeDeckTitle,
         quizType,
         userId,
+        limit: limitNumber,
       });
       return;
     }
@@ -124,9 +137,9 @@ export default function VocabQuizScreen({ navigation, route }) {
     }
 
     const screenName = modeScreenMap[selectedMode];
-    const quizType   = modeTypeMap[selectedMode];
+    const quizType = modeTypeMap[selectedMode];
     navigation.navigate(screenName, {
-      topicId:    selectedTopic.topic_id,
+      topicId: selectedTopic.topic_id,
       topicTitle: selectedTopic.topic_name,
       quizType,
       userId,
@@ -179,8 +192,8 @@ export default function VocabQuizScreen({ navigation, route }) {
   };
 
   const totalQuizzes = userStats?.total_quizzes ?? 0;
-  const avgScore     = userStats?.average_score ?? 0;
-  const maxAllowed   = getMaxQuestions();
+  const avgScore = userStats?.average_score ?? 0;
+  const maxAllowed = getMaxQuestions();
 
   return (
     <View style={styles.webWrapper}>
@@ -326,11 +339,11 @@ export default function VocabQuizScreen({ navigation, route }) {
               <View style={styles.sectionBlock}>
                 <Text style={styles.sectionTitle}>Quiz Mode</Text>
                 {[
-                  { key: 'mc',    label: 'Multiple Choice',  sub: 'Pick correct definition',  icon: 'checkbox-outline',     bg: '#E3D5FF', color: '#5500FF' },
-                  { key: 'fill',  label: 'Fill in the blank', sub: 'Complete the sentence',   icon: 'create-outline',       bg: '#85FFC3', color: '#16A487' },
-                  { key: 'match', label: 'Word Matching',     sub: 'Match words with meaning', icon: 'git-compare-outline',  bg: '#A7CDFE', color: '#006FFF' },
-                  { key: 'speed', label: 'Speed Round',       sub: 'Race against the clock',  icon: 'flash-outline',        bg: '#FFF9A5', color: '#FFCE0A' },
-                ].map((m) => (
+                  { key: 'mc', label: 'Multiple Choice', sub: 'Pick correct definition', icon: 'checkbox-outline', bg: '#E3D5FF', color: '#5500FF' },
+                  { key: 'fill', label: 'Fill in the blank', sub: 'Complete the sentence', icon: 'create-outline', bg: '#85FFC3', color: '#16A487' },
+                  { key: 'match', label: 'Word Matching', sub: 'Match words with meaning', icon: 'git-compare-outline', bg: '#A7CDFE', color: '#006FFF' },
+                  { key: 'speed', label: 'Speed Round', sub: 'Race against the clock', icon: 'flash-outline', bg: '#FFF9A5', color: '#FFCE0A' },
+                ].filter((m) => !isUserDeckSource || m.key !== 'fill').map((m) => (
                   <TouchableOpacity key={m.key}
                     style={[styles.modeCard, selectedMode === m.key && styles.modeCardActive]}
                     onPress={() => setSelectedMode(m.key)}>
@@ -413,11 +426,11 @@ export default function VocabQuizScreen({ navigation, route }) {
         {/* BOTTOM NAV */}
         <View style={styles.bottomNav}>
           {[
-            { icon: 'home',             label: 'Home',    screen: 'Home' },
-            { icon: 'albums',           label: 'Cards',   screen: 'FlashcardScreen' },
-            { icon: 'book',             label: 'Words',   screen: 'WordlistScreen' },
-            { icon: 'sparkles',         label: 'Reading', screen: 'AIReadingScreen' },
-            { icon: 'checkmark-circle', label: 'Quiz',    screen: null },
+            { icon: 'home', label: 'Home', screen: 'Home' },
+            { icon: 'albums', label: 'Cards', screen: 'FlashcardScreen' },
+            { icon: 'book', label: 'Words', screen: 'WordlistScreen' },
+            { icon: 'sparkles', label: 'Reading', screen: 'AIReadingScreen' },
+            { icon: 'checkmark-circle', label: 'Quiz', screen: null },
           ].map((item) => {
             const active = item.screen === null;
             return (
