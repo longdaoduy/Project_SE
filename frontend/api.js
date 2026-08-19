@@ -39,16 +39,16 @@ async function request(method, path, body = null, token = null) {
   return res.json();
 }
 
-const get   = (path, params = {}, token = null) => {
+const get = (path, params = {}, token = null) => {
   const qs = Object.entries(params)
     .filter(([, v]) => v !== null && v !== undefined)
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
     .join('&');
   return request('GET', qs ? `${path}?${qs}` : path, null, token);
 };
-const post  = (path, body, token = null)  => request('POST',  path, body, token);
-const patch = (path, body, token = null)  => request('PATCH', path, body, token);
-const del   = (path, body = null, token = null) => request('DELETE', path, body, token);
+const post = (path, body, token = null) => request('POST', path, body, token);
+const patch = (path, body, token = null) => request('PATCH', path, body, token);
+const del = (path, body = null, token = null) => request('DELETE', path, body, token);
 
 // ─── Vocabulary / Topics ──────────────────────────────────────────────────────
 
@@ -58,8 +58,10 @@ export const getTopics = (limit = 100) =>
 export const getTopic = (topicId) =>
   get(`/topics/${topicId}`);
 
-export const getWords = (topicId, limit = 50) =>
-  get('/words', { topic_id: topicId, limit });
+// userId is optional because most callers only need the vocabulary itself.
+// Keep `limit` second to preserve the existing call sites.
+export const getWords = (topicId, limit = 50, userId = null) =>
+  get('/words', { topic_id: topicId, user_id: userId, limit });
 
 export const getWord = (wordId) =>
   get(`/words/${wordId}`);
@@ -218,26 +220,26 @@ export function buildMCQuestions(words, count) {
   if (unique.length < 4) return [];
 
   const shuffled = [...unique].sort(() => Math.random() - 0.5);
-  const chosen   = shuffled.slice(0, Math.min(count, shuffled.length));
+  const chosen = shuffled.slice(0, Math.min(count, shuffled.length));
 
   return chosen.map((w) => {
     const correct = w.meaning_vi.trim();
-    const pool    = unique
+    const pool = unique
       .filter((x) => x.word_id !== w.word_id)
       .map((x) => x.meaning_vi.trim());
     const distractors = pool.sort(() => Math.random() - 0.5).slice(0, 3);
     const options = [...distractors, correct].sort(() => Math.random() - 0.5);
-    const letter  = ['A', 'B', 'C', 'D'][options.indexOf(correct)];
+    const letter = ['A', 'B', 'C', 'D'][options.indexOf(correct)];
     return {
-      word_id:        w.word_id,
-      question_text:  `Which definition best matches "${w.word}"?`,
-      option_a:       options[0],
-      option_b:       options[1],
-      option_c:       options[2],
-      option_d:       options[3],
+      word_id: w.word_id,
+      question_text: `Which definition best matches "${w.word}"?`,
+      option_a: options[0],
+      option_b: options[1],
+      option_c: options[2],
+      option_d: options[3],
       correct_option: letter,
       // local helpers used by screen UI (not sent to backend)
-      _word:          w,
+      _word: w,
     };
   });
 }
@@ -249,8 +251,8 @@ export function buildMCQuestions(words, count) {
 export function buildMatchingPairs(words, count = 6) {
   const shuffled = [...words].sort(() => Math.random() - 0.5);
   return shuffled.slice(0, Math.min(count, shuffled.length)).map((w) => ({
-    word_id:    w.word_id,
-    word:       w.word,
+    word_id: w.word_id,
+    word: w.word,
     definition: w.meaning_vi,
   }));
 }
@@ -262,11 +264,11 @@ export function buildMatchingPairs(words, count = 6) {
 export function buildFillQuestions(words, count) {
   const shuffled = [...words].sort(() => Math.random() - 0.5);
   return shuffled.slice(0, Math.min(count, shuffled.length)).map((w) => ({
-    word_id:  w.word_id,
+    word_id: w.word_id,
     sentence: w.example_en.replace(new RegExp(`\\b${w.word}\\b`, 'i'), '______'),
-    answer:   w.word,
-    hint:     w.phonetic || '',
-    _word:    w,
+    answer: w.word,
+    hint: w.phonetic || '',
+    _word: w,
   }));
 }
 
@@ -279,9 +281,9 @@ export function buildFillQuestions(words, count) {
  */
 export const generateAIReading = (userId, vocabulary, topicParam = null, difficultyParam = null) =>
   post('/ai-readings', {
-    user_id:          userId,
+    user_id: userId,
     input_vocabulary: vocabulary,
-    topic_param:      topicParam  || null,
+    topic_param: topicParam || null,
     difficulty_param: difficultyParam || null,
   });
 
@@ -314,28 +316,7 @@ export const retakeAIReading = (readingId, userId) =>
 export const submitAIAnswer = (questionId, userAnswer) =>
   patch(`/ai-reading-questions/${questionId}/answer`, { user_answer: userAnswer });
 
-// ─── Starred Words ────────────────────────────────────────────────────────────
 
-/**
- * Star a word for a user. Idempotent — calling twice returns same record.
- */
-export const starWord = (userId, wordId) =>
-  post('/starred-words', { user_id: userId, word_id: wordId });
-
-/**
- * Remove a star from a word.
- */
-export const unstarWord = (userId, wordId) =>
-  del(`/starred-words?user_id=${userId}&word_id=${wordId}`);
-
-/**
- * Fetch all starred words for a user.
- * Returns array of StarredWordRead (each has .word: WordRead nested inside).
- */
-export const getStarredWords = (userId, limit = 200) =>
-  get(`/users/${userId}/starred-words`, { limit });
-
-// ─── Words (add to topic) ─────────────────────────────────────────────────────
 
 export const addWord = (payload) =>
   post('/words', payload);
@@ -354,12 +335,12 @@ export async function saveLocalQuizResult(userId, topicId, quizType, results) {
   if (!results.length) return null;
   try {
     const questionsPayload = results.map((r) => ({
-      word_id:        r.word_id,
-      question_text:  `${quizType} question`,
-      option_a:       'Correct',
-      option_b:       'Wrong',
-      option_c:       'Wrong2',
-      option_d:       'Wrong3',
+      word_id: r.word_id,
+      question_text: `${quizType} question`,
+      option_a: 'Correct',
+      option_b: 'Wrong',
+      option_c: 'Wrong2',
+      option_d: 'Wrong3',
       correct_option: 'A',
     }));
 

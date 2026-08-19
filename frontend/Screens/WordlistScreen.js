@@ -13,38 +13,38 @@ import { useData } from '../context/DataContext';
 const { width: screenWidth } = Dimensions.get('window');
 
 const WORD_TYPES = [
-  { id: 'noun',      label: 'Noun'  },
-  { id: 'verb',      label: 'Verb'  },
-  { id: 'adjective', label: 'Adj'   },
-  { id: 'adverb',    label: 'Adv'   },
-  { id: 'phrase',    label: 'Phrase'},
+  { id: 'noun', label: 'Noun' },
+  { id: 'verb', label: 'Verb' },
+  { id: 'adjective', label: 'Adj' },
+  { id: 'adverb', label: 'Adv' },
+  { id: 'phrase', label: 'Phrase' },
 ];
 
 export default function WordlistScreen({ navigation }) {
   const { userId, topics, loadTopics, starredWordIds, toggleStar } = useData();
 
   // ── Data state ──────────────────────────────────────────────────────────────
-  const [vocabularies,  setVocabularies]  = useState([]);
-  const [loading,       setLoading]       = useState(true);
-  const [refreshing,    setRefreshing]    = useState(false);
-  const [error,         setError]         = useState(null);
+  const [vocabularies, setVocabularies] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(null);
 
   // ── UI / filter state ────────────────────────────────────────────────────────
-  const [selectedTopicId,      setSelectedTopicId]      = useState(null);
-  const [searchQuery,          setSearchQuery]          = useState('');
-  const [selectedFilter,       setSelectedFilter]       = useState('all');
-  const [viewState,            setViewState]            = useState('list');
-  const [isTopicModalVisible,  setIsTopicModalVisible]  = useState(false);
+  const [selectedTopicId, setSelectedTopicId] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedFilter, setSelectedFilter] = useState('all');
+  const [viewState, setViewState] = useState('list');
+  const [isTopicModalVisible, setIsTopicModalVisible] = useState(false);
 
   // ── Add-word form state ──────────────────────────────────────────────────────
-  const [newWord,         setNewWord]         = useState('');
-  const [newPhonetic,     setNewPhonetic]     = useState('');
-  const [newMeaningVi,    setNewMeaningVi]    = useState('');
-  const [newExampleEn,    setNewExampleEn]    = useState('');
-  const [newExampleVi,    setNewExampleVi]    = useState('');
-  const [newTopicId,      setNewTopicId]      = useState(null);
-  const [selectedType,    setSelectedType]    = useState('noun');
-  const [submitting,      setSubmitting]      = useState(false);
+  const [newWord, setNewWord] = useState('');
+  const [newPhonetic, setNewPhonetic] = useState('');
+  const [newMeaningVi, setNewMeaningVi] = useState('');
+  const [newExampleEn, setNewExampleEn] = useState('');
+  const [newExampleVi, setNewExampleVi] = useState('');
+  const [newTopicId, setNewTopicId] = useState(null);
+  const [selectedType, setSelectedType] = useState('noun');
+  const [submitting, setSubmitting] = useState(false);
 
   const selectedTopic = topics?.find((t) => t.topic_id === selectedTopicId) || null;
 
@@ -53,17 +53,17 @@ export default function WordlistScreen({ navigation }) {
     try {
       setLoading(true);
       setError(null);
-      const data = await getWords(selectedTopicId, 200);
+      const data = await getWords(selectedTopicId, 200, userId);
       const normalized = (data || []).map((w) => ({
-        id:         w.word_id,
-        word:       w.word,
-        type:       w.part_of_speech || 'word',
-        phonetic:   w.phonetic || '',
+        id: w.word_id,
+        word: w.word,
+        type: w.part_of_speech || 'word',
+        phonetic: w.phonetic || '',
         definition: w.meaning_vi || '',
-        example:    w.example_en || w.example_vi || '',
-        exampleVi:  w.example_vi || '',
-        topicId:    w.topic_id,
-        wordStatus: 'unstudied',
+        example: w.example_en || w.example_vi || '',
+        exampleVi: w.example_vi || '',
+        topicId: w.topic_id,
+        wordStatus: w.is_studied ? 'studied' : 'unstudied',
       }));
       setVocabularies(normalized);
     } catch (err) {
@@ -73,7 +73,7 @@ export default function WordlistScreen({ navigation }) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [selectedTopicId]);
+  }, [selectedTopicId, userId]);
 
   useEffect(() => { if (topics.length === 0) loadTopics(); }, []);
   useEffect(() => { fetchVocabularies(); }, [fetchVocabularies]);
@@ -89,12 +89,12 @@ export default function WordlistScreen({ navigation }) {
 
   // ── Add word submit ──────────────────────────────────────────────────────────
   const handleAddWordSubmit = async () => {
-    const w  = newWord.trim();
-    const m  = newMeaningVi.trim();
+    const w = newWord.trim();
+    const m = newMeaningVi.trim();
     const en = newExampleEn.trim();
     const vi = newExampleVi.trim();
-    if (!w)  { Alert.alert('Validation', 'Please enter the word or phrase.'); return; }
-    if (!m)  { Alert.alert('Validation', 'Please enter the Vietnamese meaning.'); return; }
+    if (!w) { Alert.alert('Validation', 'Please enter the word or phrase.'); return; }
+    if (!m) { Alert.alert('Validation', 'Please enter the Vietnamese meaning.'); return; }
     if (!en) { Alert.alert('Validation', 'Please enter an English example sentence.'); return; }
     if (!vi) { Alert.alert('Validation', 'Please enter the Vietnamese translation of the example.'); return; }
     const topicToUse = newTopicId || selectedTopicId || topics?.[0]?.topic_id;
@@ -129,10 +129,10 @@ export default function WordlistScreen({ navigation }) {
       item.word.toLowerCase().includes(q) ||
       item.definition.toLowerCase().includes(q);
     const matchFilter =
-      selectedFilter === 'all'       ? true :
-      selectedFilter === 'starred'   ? starredWordIds.has(item.id) :
-      selectedFilter === 'studied'   ? item.wordStatus === 'studied' :
-      selectedFilter === 'unstudied' ? item.wordStatus === 'unstudied' : true;
+      selectedFilter === 'all' ? true :
+        selectedFilter === 'starred' ? starredWordIds.has(item.id) :
+          selectedFilter === 'studied' ? item.wordStatus === 'studied' :
+            selectedFilter === 'unstudied' ? item.wordStatus === 'unstudied' : true;
     return matchSearch && matchFilter;
   });
 
@@ -239,9 +239,9 @@ export default function WordlistScreen({ navigation }) {
               <View style={styles.filterRow}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterTabsScroll}>
                   {[
-                    { key: 'all',       label: 'All' },
-                    { key: 'starred',   label: `⭐ Starred (${starredWordIds.size})` },
-                    { key: 'studied',   label: 'Studied' },
+                    { key: 'all', label: 'All' },
+                    { key: 'starred', label: `⭐ Starred (${starredWordIds.size})` },
+                    { key: 'studied', label: 'Studied' },
                     { key: 'unstudied', label: 'Unstudied' },
                   ].map((f) => (
                     <TouchableOpacity
