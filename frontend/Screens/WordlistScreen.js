@@ -21,7 +21,7 @@ const WORD_TYPES = [
 ];
 
 export default function WordlistScreen({ navigation }) {
-  const { userId, topics, loadTopics, starredWordIds, toggleStar } = useData();
+  const { userId, topics, loadTopics, starredWordIds, starredWords, toggleStar } = useData();
 
   // ── Data state ──────────────────────────────────────────────────────────────
   const [vocabularies, setVocabularies] = useState([]);
