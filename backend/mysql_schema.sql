@@ -28,9 +28,22 @@ CREATE TABLE IF NOT EXISTS users (
     daily_goal     INT          NOT NULL DEFAULT 20,
     role           ENUM('student','admin') NOT NULL DEFAULT 'student',
     is_active      TINYINT(1)   NOT NULL DEFAULT 1,
+    is_email_verified TINYINT(1) NOT NULL DEFAULT 0,
     created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_users_email (email)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS email_verification_codes (
+    verification_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id          INT          NOT NULL,
+    code_hash        VARCHAR(64)  NOT NULL,
+    expires_at       TIMESTAMP    NOT NULL,
+    attempts         INT          NOT NULL DEFAULT 0,
+    used_at          TIMESTAMP    NULL,
+    created_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_evc_user_id (user_id),
+    CONSTRAINT fk_evc_users FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 -- --------------------------------------------------------------------------

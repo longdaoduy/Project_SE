@@ -312,3 +312,61 @@ export async function saveLocalQuizResult(userId, topicId, quizType, results) {
     return null;
   }
 }
+
+// ─── User Management ────────────────────────────────────────────────────────
+
+export const registerUser = (payload) =>
+  post('/users', payload);
+
+export const verifyEmail = (payload) =>
+  post('/users/verify-email', payload);
+
+export const resendVerification = (email) =>
+  post('/users/resend-verification', { email });
+
+export const loginUser = (payload) =>
+  post('/users/login', payload);
+
+export const getUser = (userId) =>
+  get(`/users/${userId}`);
+
+export const updateUser = (userId, payload) =>
+  patch(`/users/${userId}`, payload);
+
+export const getMe = (token) =>
+  get('/me', {}, token);
+
+export const updateMe = (token, payload) =>
+  patch('/me', payload, token);
+
+export const logoutMe = (token) =>
+  post('/me/logout', null, token);
+
+export const logoutUserBySessionId = (sessionId) =>
+  post(`/users/logout?session_id=${encodeURIComponent(sessionId)}`, null);
+
+export const getMyStatistics = (token) =>
+  get('/me/statistics', {}, token);
+
+export const getMyWeeklyActivity = (token) =>
+  get('/me/weekly-activity', {}, token);
+
+export const getMyHistory = (token, params = {}) =>
+  get('/me/history', params, token);
+
+export const changeMyPassword = (token, payload) =>
+  post('/me/change-password', payload, token);
+
+export const deleteMe = (token, payload) =>
+  del('/me', payload, token);
+
+export const getProfileSettings = (userId) =>
+  get(`/users/${userId}/profile-settings`);
+
+export const updateProfileSettings = (userId, payload) =>
+  patch(`/users/${userId}/profile-settings`, payload);
+
+// Backward-compatible aliases for screens already importing these names.
+export const logoutUser = logoutMe;
+export const changePassword = changeMyPassword;
+export const deleteAccount = deleteMe;

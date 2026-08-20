@@ -26,6 +26,7 @@ from .security import (
     create_access_token, decode_access_token,
     hash_password, needs_rehash, verify_password,
 )
+from .email_service import send_verification_email
 
 app = FastAPI(title="SmartEng API", version="3.1.0")
 bearer = HTTPBearer(auto_error=False)
@@ -55,6 +56,15 @@ def _auto_migrate_columns() -> None:
     This bridges the gap between model changes and unrun manual migrations.
     """
     inspector = inspect(engine)
+
+    # Existing accounts predate email verification, so preserve their access.
+    user_cols = {c["name"] for c in inspector.get_columns("users")}
+    if "is_email_verified" not in user_cols:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "ALTER TABLE users ADD COLUMN is_email_verified "
+                "TINYINT(1) NOT NULL DEFAULT 1"
+            ))
 
     # ── ai_readings missing columns ──────────────────────────────────────────
     ai_cols = {c["name"] for c in inspector.get_columns("ai_readings")}
@@ -201,12 +211,64 @@ def register_user(payload: schemas.UserCreate, db: Session = Depends(get_db)):
     if crud.get_user_by_email(db, payload.email):
         raise HTTPException(400, "Email already registered")
     try:
-        return crud.create_user(db, payload, hashed_password=hash_password(payload.password))
+        user = crud.create_user(db, payload, hashed_password=hash_password(payload.password))
+        code = crud.create_email_verification_code(db, user)
+        try:
+            send_verification_email(user.email, user.full_name, code)
+        except Exception:
+            # Do not strand an unusable account when initial delivery fails;
+            # deleting it lets the person retry after SMTP is corrected.
+            logging.exception("Could not send registration verification email")
+            crud.delete_user_account(db, user)
+            raise HTTPException(503, "Could not send verification email. Please try again later.")
+        return user
+    except HTTPException:
+        raise
     except Exception as exc:
+        db.rollback()
         # Log full traceback to server logs for debugging, then return an HTTP 500.
         logging.exception("Registration failed while creating user")
         # Return the original message in the response to aid debugging in this dev workspace.
         raise HTTPException(status_code=500, detail=f"Registration failed: {exc}")
+
+
+@app.post("/users/verify-email", tags=["users"])
+def verify_email(payload: schemas.EmailVerificationRequest, db: Session = Depends(get_db)):
+    user = crud.get_user_by_email(db, payload.email)
+    if not user:
+        raise HTTPException(400, "Invalid email or verification code")
+    result = crud.verify_email_code(db, user, payload.code)
+    messages = {
+        "verified": "Email verified successfully",
+        "already_verified": "Email is already verified",
+        "invalid": "Invalid email or verification code",
+        "expired": "Verification code has expired. Request a new code.",
+        "locked": "Too many incorrect attempts. Request a new code.",
+    }
+    if result in {"verified", "already_verified"}:
+        return {"detail": messages[result]}
+    raise HTTPException(400, messages[result])
+
+
+@app.post("/users/resend-verification", tags=["users"])
+def resend_verification(
+    payload: schemas.ResendVerificationRequest, db: Session = Depends(get_db)
+):
+    user = crud.get_user_by_email(db, payload.email)
+    # Do not reveal whether an email address has an account.
+    if not user or user.is_email_verified:
+        return {"detail": "If the account needs verification, a code has been sent."}
+    wait = crud.seconds_until_verification_resend(db, user.user_id)
+    if wait:
+        raise HTTPException(429, f"Please wait {wait} seconds before requesting another code")
+    try:
+        code = crud.create_email_verification_code(db, user)
+        send_verification_email(user.email, user.full_name, code)
+    except Exception:
+        db.rollback()
+        logging.exception("Could not resend verification email")
+        raise HTTPException(503, "Could not send verification email. Please try again later.")
+    return {"detail": "A new verification code has been sent."}
 
 
 @app.get("/users/{user_id}", response_model=schemas.UserRead, tags=["users"])
@@ -239,6 +301,8 @@ def login_user(payload: schemas.UserLoginRequest, db: Session = Depends(get_db))
                                   ip_address=payload.ip_address,
                                   device_name=payload.device_name)
         raise HTTPException(401, "Invalid email or password")
+    if not user.is_email_verified:
+        raise HTTPException(403, "Please verify your email before logging in")
 
     # Transparently upgrade legacy SHA-256 hashes to PBKDF2
     if needs_rehash(user.password_hash):

@@ -78,7 +78,17 @@ class UserRead(BaseModel):
     daily_goal: int
     role: str
     is_active: bool
+    is_email_verified: bool
     created_at: datetime | None = None
+
+
+class EmailVerificationRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(..., pattern=r"^\d{6}$")
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
 
 
 class UserUpdate(BaseModel):
