@@ -316,7 +316,7 @@ def delete_user(
         raise HTTPException(404, "User not found")
     if not verify_password(payload.password, user.password_hash):
         raise HTTPException(400, "Incorrect password")
-    if payload.confirmation.strip().upper() != "DELETE":
+    if payload.confirmation != "DELETE":
         raise HTTPException(400, 'Confirmation must be "DELETE"')
     crud.delete_user_account(db, user)
     return {"detail": "Account deleted successfully"}
