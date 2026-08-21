@@ -309,6 +309,7 @@ const styles = StyleSheet.create({
 
         paddingHorizontal: 10,
         paddingVertical: 20,
+        opacity: 0.6,
     },
 
     emailInputContainer: {
