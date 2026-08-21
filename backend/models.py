@@ -58,6 +58,7 @@ class User(Base):
         Enum("student", "admin", name="role_enum"), nullable=False, default="student"
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[str] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[str] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -91,6 +92,26 @@ class User(Base):
     ai_readings: Mapped[list["AIReading"]] = relationship(
         "AIReading", back_populates="user", cascade="all, delete-orphan"
     )
+    email_verification_codes: Mapped[list["EmailVerificationCode"]] = relationship(
+        "EmailVerificationCode", back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class EmailVerificationCode(Base):
+    """Short-lived, single-use code sent after account registration."""
+    __tablename__ = "email_verification_codes"
+
+    verification_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[str] = mapped_column(DateTime(timezone=True), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    used_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped[User] = relationship("User", back_populates="email_verification_codes")
 
 
 class UserSession(Base):

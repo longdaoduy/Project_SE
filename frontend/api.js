@@ -389,6 +389,12 @@ export async function saveLocalQuizResult(userId, topicId, quizType, results) {
 export const registerUser = (payload) =>
   post('/users', payload);
 
+export const verifyEmail = (payload) =>
+  post('/users/verify-email', payload);
+
+export const resendVerification = (email) =>
+  post('/users/resend-verification', { email });
+
 export const loginUser = (payload) =>
   post('/users/login', payload);
 

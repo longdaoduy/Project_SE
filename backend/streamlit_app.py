@@ -17,13 +17,26 @@ st.sidebar.title("⚙️ SmartEng")
 api_base = st.sidebar.text_input("Backend URL", API_DEFAULT).rstrip("/")
 
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
+def _raise_api_error(response):
+    """Show FastAPI's useful `detail` message instead of a generic HTTP status."""
+    if response.ok:
+        return
+    try:
+        payload = response.json()
+        detail = payload.get("detail", payload)
+        if isinstance(detail, list):
+            detail = "; ".join(item.get("msg", str(item)) for item in detail)
+    except ValueError:
+        detail = response.text or response.reason
+    raise RuntimeError(f"{response.status_code}: {detail}")
+
 def _headers():
     token = st.session_state.get("jwt_token")
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 def api_get(path: str, **params):
     r = requests.get(f"{api_base}{path}", params=params, headers=_headers(), timeout=15)
-    r.raise_for_status()
+    _raise_api_error(r)
     return r.json()
 
 def api_post(path: str, body: dict, auth: bool = False):
@@ -31,17 +44,17 @@ def api_post(path: str, body: dict, auth: bool = False):
     if auth:
         h.update(_headers())
     r = requests.post(f"{api_base}{path}", json=body, headers=h, timeout=30)
-    r.raise_for_status()
+    _raise_api_error(r)
     return r.json()
 
 def api_patch(path: str, body: dict):
     r = requests.patch(f"{api_base}{path}", json=body, headers=_headers(), timeout=15)
-    r.raise_for_status()
+    _raise_api_error(r)
     return r.json()
 
 def api_delete(path: str, body: dict):
     r = requests.delete(f"{api_base}{path}", json=body, headers=_headers(), timeout=15)
-    r.raise_for_status()
+    _raise_api_error(r)
     return r.json()
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -205,9 +218,53 @@ with tab_auth:
                         api_post("/users",
                                  {"full_name": r_name, "email": r_email,
                                   "password": r_pass, "english_level": r_level})
-                        st.success("Account created! Please log in.")
+                        st.session_state["verification_email"] = r_email.strip().lower()
+                        st.session_state["verification_password"] = r_pass
+                        st.success("Account created! Check your email for the 6-digit code.")
                     except Exception as exc:
                         st.error(f"Registration failed: {exc}")
+
+            st.divider()
+            st.subheader("✉️ Verify email")
+            verify_email = st.text_input(
+                "Account email",
+                value=st.session_state.get("verification_email", ""),
+                key="verify_email_input",
+            )
+            with st.form("verify_email_form"):
+                verify_code = st.text_input(
+                    "6-digit verification code", max_chars=6, placeholder="000000"
+                )
+                if st.form_submit_button("Verify and log in", type="primary"):
+                    try:
+                        api_post("/users/verify-email", {
+                            "email": verify_email,
+                            "code": verify_code,
+                        })
+                        saved_password = st.session_state.get("verification_password")
+                        if saved_password:
+                            resp = api_post("/users/login", {
+                                "email": verify_email,
+                                "password": saved_password,
+                                "device_name": "Streamlit Demo",
+                            })
+                            st.session_state["jwt_token"] = resp["jwt_token"]
+                            st.session_state["session_id"] = resp["session_id"]
+                            st.session_state["current_user"] = resp["user"]
+                            st.session_state.pop("verification_password", None)
+                            st.success("Email verified. You are now logged in!")
+                            st.rerun()
+                        else:
+                            st.success("Email verified. You can now log in.")
+                    except Exception as exc:
+                        st.error(f"Verification failed: {exc}")
+
+            if st.button("Send a new verification code", key="resend_verification"):
+                try:
+                    api_post("/users/resend-verification", {"email": verify_email})
+                    st.success("If this account needs verification, a new code was sent.")
+                except Exception as exc:
+                    st.error(f"Could not resend code: {exc}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2 – FLASHCARDS (FR2)

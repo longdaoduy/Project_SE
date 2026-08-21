@@ -11,6 +11,10 @@ Groups:
 """
 
 from datetime import datetime, timezone, timedelta, date
+import hashlib
+import hmac
+import os
+import secrets
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
@@ -125,6 +129,14 @@ def _duration_minutes(start, end) -> int | None:
 # FR1 – User Management
 # ============================================================
 
+def _verification_code_hash(user_id: int, code: str) -> str:
+    """Key the digest so a leaked database cannot cheaply reveal six-digit codes."""
+    secret = os.getenv("EMAIL_VERIFICATION_SECRET") or os.getenv("JWT_SECRET")
+    if not secret:
+        raise RuntimeError("EMAIL_VERIFICATION_SECRET or JWT_SECRET must be configured")
+    value = f"{user_id}:{code}".encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), value, hashlib.sha256).hexdigest()
+
 def create_user(
     db: Session, payload: schemas.UserCreate, hashed_password: str
 ) -> models.User:
@@ -137,6 +149,7 @@ def create_user(
         english_level=payload.english_level,
         daily_goal=payload.daily_goal,
         role=payload.role,
+        is_email_verified=False,
     )
     db.add(user)
     db.flush()   # get user_id before creating dependants
@@ -150,6 +163,71 @@ def create_user(
     db.commit()
     db.refresh(user)
     return user
+
+
+def create_email_verification_code(
+    db: Session, user: models.User, expires_minutes: int = 10
+) -> str:
+    """Invalidate older codes and store only a SHA-256 digest of the new code."""
+    now = datetime.now(timezone.utc)
+    (db.query(models.EmailVerificationCode)
+       .filter(models.EmailVerificationCode.user_id == user.user_id,
+               models.EmailVerificationCode.used_at.is_(None))
+       .update({models.EmailVerificationCode.used_at: now}, synchronize_session=False))
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    db.add(models.EmailVerificationCode(
+        user_id=user.user_id,
+        code_hash=_verification_code_hash(user.user_id, code),
+        expires_at=now + timedelta(minutes=expires_minutes),
+    ))
+    db.commit()
+    return code
+
+
+def verify_email_code(db: Session, user: models.User, code: str) -> str:
+    """Return verified/invalid/expired/locked/already_verified."""
+    if user.is_email_verified:
+        return "already_verified"
+    record = (db.query(models.EmailVerificationCode)
+              .filter(models.EmailVerificationCode.user_id == user.user_id,
+                      models.EmailVerificationCode.used_at.is_(None))
+              .order_by(models.EmailVerificationCode.created_at.desc())
+              .first())
+    if not record:
+        return "invalid"
+    now = datetime.now(timezone.utc)
+    expires_at = record.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < now:
+        record.used_at = now
+        db.commit()
+        return "expired"
+    if record.attempts >= 5:
+        return "locked"
+    supplied_hash = _verification_code_hash(user.user_id, code)
+    if not hmac.compare_digest(record.code_hash, supplied_hash):
+        record.attempts += 1
+        db.commit()
+        return "locked" if record.attempts >= 5 else "invalid"
+    record.used_at = now
+    user.is_email_verified = True
+    db.commit()
+    db.refresh(user)
+    return "verified"
+
+
+def seconds_until_verification_resend(db: Session, user_id: int, cooldown: int = 60) -> int:
+    latest = (db.query(models.EmailVerificationCode)
+              .filter(models.EmailVerificationCode.user_id == user_id)
+              .order_by(models.EmailVerificationCode.created_at.desc())
+              .first())
+    if not latest or not latest.created_at:
+        return 0
+    created_at = latest.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return max(0, cooldown - int((datetime.now(timezone.utc) - created_at).total_seconds()))
 
 
 def get_user_by_id(db: Session, user_id: int) -> models.User | None:
