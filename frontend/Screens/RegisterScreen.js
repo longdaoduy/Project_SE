@@ -15,7 +15,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { loginUser, registerUser } from '../api';
+import { loginUser, registerUser, resendVerification, verifyEmail } from '../api';
 import { useData } from '../context/DataContext';
 
 const LEVELS = [
@@ -40,8 +40,9 @@ export default function RegisterScreen({ navigation }) {
     const { setToken, setCurrentUser, setUserId } = useData();
 
     // 1. Quản lý Step hiện tại
-    const [step, setStep] = useState(1); // 1 | 2 | 3
+    const [step, setStep] = useState(1); // 1 | 2 | 3 | 4 (email verification)
     const [loading, setLoading] = useState(false);
+    const [verificationCode, setVerificationCode] = useState('');
 
     // Hiện/ẩn mật khẩu
     const [showPassword, setShowPassword] = useState(false);
@@ -95,7 +96,9 @@ export default function RegisterScreen({ navigation }) {
     };
 
     const handleBack = () => {
-        if (step > 1) {
+        if (step === 4) {
+            navigation?.navigate('Login');
+        } else if (step > 1) {
             setStep(step - 1);
         } else {
             navigation?.goBack();
@@ -118,6 +121,23 @@ export default function RegisterScreen({ navigation }) {
 
             await registerUser(payload);
 
+            setStep(4);
+            Alert.alert('Check your email', `We sent a 6-digit code to ${formData.email}.`);
+        } catch (err) {
+            Alert.alert('Đăng ký thất bại', err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleVerifyEmail = async () => {
+        if (!/^\d{6}$/.test(verificationCode)) {
+            Alert.alert('Invalid code', 'Enter the 6-digit code from your email.');
+            return;
+        }
+        try {
+            setLoading(true);
+            await verifyEmail({ email: formData.email, code: verificationCode });
             const loginResponse = await loginUser({
                 email: formData.email,
                 password: formData.password,
@@ -133,7 +153,7 @@ export default function RegisterScreen({ navigation }) {
             setCurrentUser(loginResponse.user);
             setToken(loginResponse.jwt_token);
 
-            Alert.alert('Thành công', 'Tạo tài khoản thành công!');
+            Alert.alert('Success', 'Your email is verified and your account is ready.');
 
             // Điều hướng sang Home hoặc Main App
             navigation?.reset({
@@ -141,7 +161,20 @@ export default function RegisterScreen({ navigation }) {
                 routes: [{ name: 'Home' }],
             });
         } catch (err) {
-            Alert.alert('Đăng ký thất bại', err.message);
+            Alert.alert('Verification failed', err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleResendCode = async () => {
+        try {
+            setLoading(true);
+            await resendVerification(formData.email);
+            setVerificationCode('');
+            Alert.alert('Code sent', 'A new verification code was sent to your email.');
+        } catch (err) {
+            Alert.alert('Could not resend code', err.message);
         } finally {
             setLoading(false);
         }
@@ -174,14 +207,17 @@ export default function RegisterScreen({ navigation }) {
                                 {step === 1 && 'Create account'}
                                 {step === 2 && 'Your level'}
                                 {step === 3 && 'Your goal'}
+                                {step === 4 && 'Verify email'}
                             </Text>
-                            <Text style={styles.stepSubtitle}>Step {step} of 3</Text>
+                            <Text style={styles.stepSubtitle}>
+                                {step === 4 ? 'Final step' : `Step ${step} of 3`}
+                            </Text>
                         </View>
                     </View>
 
                     {/* PROGRESS BAR 3 ĐOẠN */}
                     <View style={styles.progressSection}>
-                        {[1, 2, 3].map((i) => (
+                        {[1, 2, 3, 4].map((i) => (
                             <View
                                 key={i}
                                 style={[
@@ -401,10 +437,37 @@ export default function RegisterScreen({ navigation }) {
                             </View>
                         )}
 
+                        {step === 4 && (
+                            <View style={styles.stepContent}>
+                                <View style={styles.verificationIcon}>
+                                    <Ionicons name="mail-unread-outline" size={42} color="#7c3aed" />
+                                </View>
+                                <Text style={[styles.questionTitle, styles.centerText]}>
+                                    Check your inbox
+                                </Text>
+                                <Text style={[styles.questionSub, styles.centerText]}>
+                                    Enter the 6-digit code sent to {formData.email}. It expires in 10 minutes.
+                                </Text>
+                                <TextInput
+                                    style={styles.codeInput}
+                                    value={verificationCode}
+                                    onChangeText={(value) => setVerificationCode(value.replace(/\D/g, '').slice(0, 6))}
+                                    placeholder="000000"
+                                    placeholderTextColor="#cbd5e1"
+                                    keyboardType="number-pad"
+                                    maxLength={6}
+                                    autoFocus
+                                />
+                                <TouchableOpacity onPress={handleResendCode} disabled={loading}>
+                                    <Text style={styles.resendText}>Didn’t receive it? Send a new code</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+
                         {/* NÚT ACTION CHÍNH (CONTINUE / START LEARNING) */}
                         <TouchableOpacity
                             style={styles.actionBtn}
-                            onPress={handleNext}
+                            onPress={step === 4 ? handleVerifyEmail : handleNext}
                             disabled={loading}
                             activeOpacity={0.8}
                         >
@@ -412,7 +475,7 @@ export default function RegisterScreen({ navigation }) {
                                 <ActivityIndicator color="#fff" />
                             ) : (
                                 <Text style={styles.actionBtnText}>
-                                    {step === 3 ? 'Start learning' : 'Continue'}
+                                    {step === 4 ? 'Verify email' : step === 3 ? 'Create account' : 'Continue'}
                                 </Text>
                             )}
                         </TouchableOpacity>
@@ -731,5 +794,40 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 20,
         fontWeight: '700',
+    },
+    verificationIcon: {
+        width: 82,
+        height: 82,
+        borderRadius: 41,
+        alignSelf: 'center',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#F3E8FF',
+        marginTop: 28,
+        marginBottom: 16,
+    },
+    centerText: {
+        textAlign: 'center',
+    },
+    codeInput: {
+        height: 64,
+        backgroundColor: '#fff',
+        borderWidth: 1.5,
+        borderColor: '#c4b5fd',
+        borderRadius: 16,
+        color: '#1e293b',
+        fontSize: 28,
+        fontWeight: '700',
+        letterSpacing: 12,
+        textAlign: 'center',
+        paddingLeft: 12,
+        marginTop: 12,
+    },
+    resendText: {
+        color: '#6d28d9',
+        fontSize: 13,
+        fontWeight: '600',
+        textAlign: 'center',
+        marginTop: 18,
     },
 });
