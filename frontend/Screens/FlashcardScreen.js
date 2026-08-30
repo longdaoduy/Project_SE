@@ -13,6 +13,7 @@ import {
   getDailyStatus,
   createFlashcardSession, completeFlashcardSession,
   createFlashcardProgress, updateFlashcardProgress,
+  getActiveFlashcardSession,
 } from '../api';
 import * as Speech from 'expo-speech';
 
@@ -20,19 +21,34 @@ const CARDS_PER_SESSION = 15;
 const TOPICS_PER_PAGE = 5;
 
 export default function FlashcardScreen({ navigation }) {
-  const { userId, topics, topicsLoading, loadTopics, decks, addDeck, deleteDeck } = useData();
+  const {
+    userId, topics, topicsLoading, loadTopics,
+    decks, addDeck, saveDeckEdit, deleteDeck,
+    starredWordIds, toggleStar,
+  } = useData();
 
   // ── Screen navigation state ─────────────────────────────────────────────────
-  // viewState: 'select' (choose deck / list) | 'add' (create deck form)
-  // phase:     'select' | 'study' | 'done'
+  // viewState: 'select' | 'add' (create/edit) | phase: 'select' | 'preview' | 'study' | 'done'
   const [viewState, setViewState] = useState('select');
   const [phase, setPhase] = useState('select');
   const [selectedTopic, setSelectedTopic] = useState(null);
   const [selectedLocalDeck, setSelectedLocalDeck] = useState(null);
 
-  // ── Deck search / filter (for user-created decks) ───────────────────────────
+  // ── Topic preview state ──────────────────────────────────────────────────────
+  const [previewTopic, setPreviewTopic]   = useState(null);
+  const [previewWords, setPreviewWords]   = useState([]);   // today's queue (review + new)
+  const [previewQueue, setPreviewQueue]   = useState(null); // raw queue from getFlashcardQueue
+  const [previewStatus, setPreviewStatus] = useState(null); // synthetic DailyStatus object
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError]   = useState('');
+
+  // ── Deck search / filter ─────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedFilter, setSelectedFilter] = useState('All');
+
+  // ── Add/Edit-deck form state ─────────────────────────────────────────────────
+  // editingDeck: null → CREATE mode | non-null → EDIT mode
+  const [editingDeck, setEditingDeck] = useState(null);
+  const [deckFormError, setDeckFormError] = useState('');
   const [visibleTopicsCount, setVisibleTopicsCount] = useState(TOPICS_PER_PAGE);
   const [topicsExpanded, setTopicsExpanded] = useState(true);
 
@@ -78,8 +94,9 @@ export default function FlashcardScreen({ navigation }) {
   }, []);
 
   // Load daily status for all visible topics so we can show badges
+  // Re-runs whenever userId/topics change, OR when returning to the select screen
   useEffect(() => {
-    if (!userId || topics.length === 0) return;
+    if (!userId || topics.length === 0 || phase !== 'select') return;
     const loadStatuses = async () => {
       const results = {};
       for (const topic of topics) {
@@ -91,23 +108,20 @@ export default function FlashcardScreen({ navigation }) {
       setTopicDailyStatus(results);
     };
     loadStatuses();
-  }, [userId, topics]);
+  }, [userId, topics, phase]);
 
   // ── Deck search/filter derived values ────────────────────────────────────────
-  const deckFilters = ['All', ...Array.from(new Set(decks.map((d) => d.level)))];
-
-  const filteredDecks = decks.filter((deck) => {
-    const matchesSearch = deck.title.toLowerCase().includes(searchQuery.toLowerCase());
-    if (selectedFilter === 'All') return matchesSearch;
-    return matchesSearch && deck.level === selectedFilter;
-  });
+  // No level filter — show all decks, just search by title
+  const filteredDecks = decks.filter((deck) =>
+    deck.title.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   const filteredTopics = topics.filter((t) =>
     t.topic_name.toLowerCase().includes(searchQuery.toLowerCase())
   );
   const visibleTopics = filteredTopics.slice(0, visibleTopicsCount);
 
-  // ── Add-deck handlers ────────────────────────────────────────────────────────
+  // ── Add/Edit-deck handlers ────────────────────────────────────────────────────
   const handleAddTermRow = () => {
     setTermRows((prev) => [...prev, { id: Date.now(), term: '', definition: '' }]);
   };
@@ -126,30 +140,84 @@ export default function FlashcardScreen({ navigation }) {
     setTermRows((prev) => prev.filter((row) => row.id !== id));
   };
 
-  const handleCreateDeck = () => {
+  // Unified save — works for both CREATE and EDIT mode
+  const handleCreateDeck = async () => {
     const trimmedTitle = deckTitle.trim();
+    setDeckFormError('');
+
     if (!trimmedTitle) {
-      Alert.alert('Missing Title', 'Please enter a deck title.');
+      setDeckFormError('Please enter a deck title.');
       return;
     }
 
-    const filledRows = termRows.filter((row) => row.term.trim() && row.definition.trim());
+    // Only rows with a term value count (blank trailing rows are ignored)
+    const filledRows = termRows.filter((row) => row.term.trim());
     if (filledRows.length === 0) {
-      Alert.alert('Empty Terms', 'Please add at least one term and definition.');
+      setDeckFormError('Please add at least one term.');
       return;
     }
 
-    addDeck({
-      title: trimmedTitle,
-      level: 'Beginner',
-      totalWords: filledRows.length,
-      terms: filledRows.map((row) => ({ term: row.term.trim(), definition: row.definition.trim() })),
-    });
+    if (editingDeck) {
+      // ── EDIT MODE: full save (update + delete + add) ──────────────────────
+      // Check for in-list duplicates
+      const seen = new Set();
+      for (const row of filledRows) {
+        const key = row.term.trim().toLowerCase();
+        if (seen.has(key)) {
+          setDeckFormError(`Duplicate word "${row.term.trim()}" in the deck.`);
+          return;
+        }
+        seen.add(key);
+      }
+
+      const result = await saveDeckEdit(
+        editingDeck.id,
+        trimmedTitle,
+        filledRows.map((r) => ({
+          id: r.id,
+          term: r.term.trim(),
+          definition: r.definition.trim(),
+        }))
+      );
+
+      if (!result.success) {
+        setDeckFormError(result.error || 'Could not save deck.');
+        return;
+      }
+
+      _resetDeckForm();
+      setViewState('select');
+    } else {
+      // ── CREATE MODE ─────────────────────────────────────────────────────────
+      const validRows = filledRows.filter((row) => row.definition.trim());
+      if (validRows.length === 0) {
+        setDeckFormError('Please add at least one term and definition.');
+        return;
+      }
+
+      const result = await addDeck({
+        title: trimmedTitle,
+        level: 'Beginner',
+        terms: validRows.map((row) => ({ term: row.term.trim(), definition: row.definition.trim() })),
+      });
+
+      if (!result.success) {
+        setDeckFormError(result.error || 'Could not create deck.');
+        return;
+      }
+
+      _resetDeckForm();
+      setViewState('select');
+    }
+  };
+
+  const _resetDeckForm = () => {
+    setEditingDeck(null);
+    setDeckFormError('');
     setDeckTitle('');
     setDescription('');
     setShowDescription(false);
     setTermRows([{ id: 1, term: '', definition: '' }]);
-    setViewState('select');
   };
 
   const confirmDeleteDeck = (deck) => {
@@ -159,58 +227,174 @@ export default function FlashcardScreen({ navigation }) {
     ]);
   };
 
+  // ── Navigate to Quiz using deck vocabulary ───────────────────────────────
+  const openDeckQuiz = (deck) => {
+    const words = (deck.terms || []).map((t, i) => ({
+      word_id: `local-${deck.id}-${i}`,
+      word: t.term,
+      meaning_vi: t.definition,
+      part_of_speech: '',
+      phonetic: '',
+      example_en: t.term,   // fallback so fill-in-blank has something
+      example_vi: t.definition,
+      topic_id: null,
+    }));
+    navigation.navigate('VocabQuizScreen', {
+      deckId: deck.id,
+      deckTitle: deck.title,
+      deckWords: words,
+      userId,
+    });
+  };
+
+  // ── Navigate to AI Reading using deck vocabulary ──────────────────────────
+  const openDeckAIReading = (deck) => {
+    const vocab = (deck.terms || []).map((t) => t.term.trim()).filter(Boolean).join(', ');
+    navigation.navigate('AIReadingScreen', {
+      presetDeckTitle: deck.title,
+      presetVocab: vocab,
+    });
+  };
+
+  // ── Open Edit Deck — pre-fills all existing terms (fully editable) ────────────
+  const openEditDeck = (deck) => {
+    setEditingDeck(deck);
+    setDeckTitle(deck.title);
+    setDescription('');
+    setShowDescription(false);
+    setDeckFormError('');
+    const rows = (deck.terms || []).map((t) => ({
+      id: t.id || `${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      term: t.term || '',
+      definition: t.definition || '',
+    }));
+    // Add one blank row for new entries
+    setTermRows([...rows, { id: `new_${Date.now()}`, term: '', definition: '' }]);
+    setViewState('add');
+  };
+
   // ── Header back handler ──────────────────────────────────────────────────────
   const handleBack = () => {
+    if (phase === 'preview') {
+      setPhase('select');
+      setPreviewTopic(null);
+      setPreviewWords([]);
+      setPreviewQueue(null);
+      setPreviewStatus(null);
+      return;
+    }
     if (phase !== 'select') {
       setPhase('select');
       return;
     }
     if (viewState === 'add') {
+      _resetDeckForm();
       setViewState('select');
       return;
     }
     navigation.goBack();
   };
 
+  // ── Open topic preview screen ────────────────────────────────────────────────
+  // Gọi getFlashcardQueue để lấy đúng danh sách từ sẽ học hôm nay (review + new).
+  // Hàm này chỉ đọc — không ghi DB entries cho đến khi user thực sự rate 1 thẻ.
+  const openTopicPreview = useCallback(async (topic) => {
+    setPreviewTopic(topic);
+    setPreviewWords([]);
+    setPreviewQueue(null);
+    setPreviewStatus(null);
+    setPreviewError('');
+    setPreviewLoading(true);
+    setPhase('preview');
+    try {
+      const queue = await getFlashcardQueue(userId, topic.topic_id);
+      setPreviewQueue(queue);
+
+      // Build a synthetic DailyStatus-like object for the stats bar
+      setPreviewStatus({
+        due_review_count: queue.due_review_count ?? queue.review_cards.length,
+        daily_remaining:  queue.daily_remaining,
+        daily_limit:      queue.daily_limit,
+        daily_learned:    queue.daily_learned,
+      });
+
+      // Tag each word with its type so the list can show Review / New badges
+      const reviewWords = (queue.review_cards || []).map(w => ({ ...w, _cardType: 'review' }));
+      const newWords    = (queue.new_cards    || []).map(w => ({ ...w, _cardType: 'new' }));
+      setPreviewWords([...reviewWords, ...newWords]);
+    } catch (e) {
+      setPreviewError(e.message || 'Could not load vocabulary for this topic');
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [userId]);
+
   // ── Start session (backend topic) – now uses SRS queue ───────────────────────
   const startSession = useCallback(async (topic) => {
     try {
       setLoading(true);
       setError('');
+      setPreviewError('');
 
-      // Fetch SRS-ordered queue from backend
-      const queue = await getFlashcardQueue(userId, topic.topic_id);
+      // ── Step 1: Check for an existing unfinished session to resume ──────────
+      let existingSession = null;
+      try {
+        existingSession = await getActiveFlashcardSession(userId, topic.topic_id);
+      } catch (_) { /* non-critical — fall through to create a new session */ }
 
-      // Combine: review cards first, then new cards
+      // ── Step 2: Use the cached queue from preview, or re-fetch if needed ────
+      // getFlashcardQueue is READ-ONLY — no DB writes until first rating.
+      let queue = previewQueue;
+      if (!queue || queue.review_cards === undefined) {
+        queue = await getFlashcardQueue(userId, topic.topic_id);
+      }
+
       const allCards = [...queue.review_cards, ...queue.new_cards];
 
       if (!allCards.length) {
-        // Nothing to study: no reviews due and daily limit reached
-        setError(
-          queue.daily_remaining === 0
-            ? `You've reached the daily limit of ${queue.daily_limit} new words for this topic. Come back tomorrow!`
-            : 'No cards available for this topic yet.'
-        );
+        const msg =
+          queue.daily_remaining === 0 && (queue.due_review_count ?? 0) === 0
+            ? `You've completed today's session!\nCheck back when cards are due for review.`
+            : 'No cards available for review right now. Check back later!';
+        setPreviewError(msg);
         return;
       }
 
-      // Build card-type map so UI can badge Review vs New
+      // Build card-type map for the study screen badges
       const types = {};
       queue.review_cards.forEach(w => { types[w.word_id] = 'review'; });
       queue.new_cards.forEach(w => { types[w.word_id] = 'new'; });
       setCardTypes(types);
 
-      // Create a backend session (for history tracking)
-      const session = await createFlashcardSession(userId, topic.topic_id, allCards.length);
+      // ── Step 3: Reuse existing session or create a new one ─────────────────
+      let session;
+      let pIds = {};
 
-      // Pre-create progress records (kept for backward-compat flip tracking)
-      const pIds = {};
-      for (const w of allCards) {
-        try {
-          const prog = await createFlashcardProgress(session.session_id, w.word_id);
-          pIds[w.word_id] = prog.progress_id;
-        } catch (_) { /* non-critical */ }
+      if (existingSession) {
+        session = existingSession;
+        if (session.progresses && session.progresses.length > 0) {
+          session.progresses.forEach(p => { pIds[p.word_id] = p.progress_id; });
+        }
+        for (const w of allCards) {
+          if (!pIds[w.word_id]) {
+            try {
+              const prog = await createFlashcardProgress(session.session_id, w.word_id);
+              pIds[w.word_id] = prog.progress_id;
+            } catch (_) { /* non-critical */ }
+          }
+        }
+      } else {
+        session = await createFlashcardSession(userId, topic.topic_id, allCards.length);
+        for (const w of allCards) {
+          try {
+            const prog = await createFlashcardProgress(session.session_id, w.word_id);
+            pIds[w.word_id] = prog.progress_id;
+          } catch (_) { /* non-critical */ }
+        }
       }
+
+      const store = {};
+      allCards.forEach(w => { store[w.word_id] = w; });
 
       setCards(allCards);
       setProgressIds(pIds);
@@ -220,18 +404,17 @@ export default function FlashcardScreen({ navigation }) {
       setRatings({});
       setSrsResults({});
       setCardStats({});
-      // Pre-populate cardStore so done screen can look up word objects
-      const store = {};
-      allCards.forEach(w => { store[w.word_id] = w; });
       setCardStore(store);
       setSelectedTopic(topic);
       setPhase('study');
     } catch (e) {
+      console.error('[startSession] error:', e.message, e);
       setError(e.message);
+      setPreviewError(e.message || 'Could not start session. Please try again.');
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, previewQueue]);
 
   // ── Start local session (user-created deck) ─────────────────────────────────
   const startLocalSession = useCallback((deck) => {
@@ -417,8 +600,10 @@ export default function FlashcardScreen({ navigation }) {
   const totalCards = reviewed + remaining;
   const progressPct = totalCards > 0 ? (reviewed / totalCards) * 100 : 0;
 
-  // ══ ADD DECK VIEW (viewState = 'add') ════════════════════════════════════════
+  // ══ ADD / EDIT DECK VIEW (viewState = 'add') ═════════════════════════════════
+  // editingDeck == null → CREATE  |  non-null → EDIT (full save)
   if (phase === 'select' && viewState === 'add') {
+    const isEditMode = !!editingDeck;
     return (
       <View style={s.wrapper}>
         <LinearGradient colors={['#4c3b7a', '#5b65d6']} style={s.phone}>
@@ -426,12 +611,12 @@ export default function FlashcardScreen({ navigation }) {
 
           <View style={s.headerSection}>
             <View style={s.headerTopRow}>
-              <TouchableOpacity onPress={() => setViewState('select')} style={s.backButton}>
+              <TouchableOpacity onPress={handleBack} style={s.backButton}>
                 <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, resizeMode: 'contain' }} />
               </TouchableOpacity>
               <View style={s.headerTextContainer}>
-                <Text style={s.appName}>New FlashCard</Text>
-                <Text style={s.subTitleText}>Create new Deck</Text>
+                <Text style={s.appName}>{isEditMode ? 'Edit FlashCard' : 'New FlashCard'}</Text>
+                <Text style={s.subTitleText}>{isEditMode ? 'Edit Deck' : 'Create new Deck'}</Text>
               </View>
               <View style={s.addHeaderActions}>
                 <TouchableOpacity style={s.addIconButton}>
@@ -446,16 +631,25 @@ export default function FlashcardScreen({ navigation }) {
 
           <ScrollView contentContainerStyle={s.scrollContainer} showsVerticalScrollIndicator={false}>
             <View style={s.card}>
+              {/* Deck name — always editable (user can rename in edit mode) */}
               <View style={s.titleInputWrapper}>
                 <TextInput
                   style={s.titleUnderlineInput}
                   placeholder="Title"
                   placeholderTextColor="#94a3b8"
                   value={deckTitle}
-                  onChangeText={setDeckTitle}
+                  onChangeText={(v) => { setDeckTitle(v); setDeckFormError(''); }}
                 />
                 <View style={s.titleUnderline} />
               </View>
+
+              {/* Inline error (duplicate name, empty, duplicate word, etc.) */}
+              {!!deckFormError && (
+                <View style={s.inlineErrorBox}>
+                  <Ionicons name="warning-outline" size={14} color="#b91c1c" style={{ marginRight: 6 }} />
+                  <Text style={s.inlineErrorText}>{deckFormError}</Text>
+                </View>
+              )}
 
               <View style={s.actionRow}>
                 <View style={s.lockedScanRow}>
@@ -487,6 +681,7 @@ export default function FlashcardScreen({ navigation }) {
                 </View>
               )}
 
+              {/* All rows fully editable — existing words shown with current values */}
               {termRows.map((row, index) => (
                 <View key={row.id} style={s.termCard}>
                   <View style={s.termCardHeader}>
@@ -588,25 +783,11 @@ export default function FlashcardScreen({ navigation }) {
                   </View>
                 ) : (
                   <>
-                    <View style={s.filtersContainer}>
-                      {deckFilters.map((filter) => (
-                        <TouchableOpacity
-                          key={filter}
-                          style={[s.filterChip, selectedFilter === filter && s.filterChipActive]}
-                          onPress={() => setSelectedFilter(filter)}
-                        >
-                          <Text style={[s.filterText, selectedFilter === filter && s.filterTextActive]}>
-                            {filter}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-
                     {filteredDecks.length === 0 ? (
                       <View style={s.emptyBox}>
                         <Ionicons name="search-outline" size={36} color="#94a3b8" />
                         <Text style={s.emptyText}>No decks found</Text>
-                        <Text style={s.emptySubText}>Try a different search or filter</Text>
+                        <Text style={s.emptySubText}>Try a different search keyword</Text>
                       </View>
                     ) : (
                       filteredDecks.map((deck) => (
@@ -617,16 +798,8 @@ export default function FlashcardScreen({ navigation }) {
                             </View>
                             <View style={s.deckTitleContainer}>
                               <Text style={s.deckTitle} numberOfLines={1}>{deck.title}</Text>
-                              <View style={s.badgeContainer}>
-                                <Text style={s.badgeText}>{deck.level}</Text>
-                              </View>
+                              <Text style={s.deckWordCount}>{(deck.terms || []).length} words</Text>
                             </View>
-                            <TouchableOpacity
-                              style={s.deleteButton}
-                              onPress={() => confirmDeleteDeck(deck)}
-                            >
-                              <Ionicons name="trash-outline" size={16} color="#ef4444" />
-                            </TouchableOpacity>
                           </View>
 
                           <View style={s.progressInfo}>
@@ -640,14 +813,56 @@ export default function FlashcardScreen({ navigation }) {
                             <View style={[s.progressBar, { width: `${deck.progress || 0}%` }]} />
                           </View>
 
-                          <TouchableOpacity
-                            style={s.startButton}
-                            activeOpacity={0.8}
-                            onPress={() => startLocalSession(deck)}
-                          >
-                            <Ionicons name="play-outline" size={16} color="#ffffff" />
-                            <Text style={s.startButtonText}>START LEARNING</Text>
-                          </TouchableOpacity>
+                          {/* ── Primary actions: Study | Quiz | AI Reading ── */}
+                          <View style={s.deckPrimaryRow}>
+                            <TouchableOpacity
+                              style={s.deckStudyBtn}
+                              activeOpacity={0.8}
+                              onPress={() => startLocalSession(deck)}
+                            >
+                              <Ionicons name="play-outline" size={14} color="#ffffff" />
+                              <Text style={s.deckStudyBtnText}>Study</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={s.deckQuizBtn}
+                              activeOpacity={0.8}
+                              onPress={() => openDeckQuiz(deck)}
+                            >
+                              <Ionicons name="checkmark-circle-outline" size={14} color="#16a34a" />
+                              <Text style={s.deckQuizBtnText}>Quiz</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={s.deckReadingBtn}
+                              activeOpacity={0.8}
+                              onPress={() => openDeckAIReading(deck)}
+                            >
+                              <Ionicons name="sparkles-outline" size={14} color="#7c3aed" />
+                              <Text style={s.deckReadingBtnText}>AI Reading</Text>
+                            </TouchableOpacity>
+                          </View>
+
+                          {/* ── Secondary actions: Edit Deck | Delete ── */}
+                          <View style={s.deckSecondaryRow}>
+                            <TouchableOpacity
+                              style={s.deckEditBtn}
+                              activeOpacity={0.8}
+                              onPress={() => openEditDeck(deck)}
+                            >
+                              <Ionicons name="pencil-outline" size={13} color="#4f46e5" />
+                              <Text style={s.deckEditBtnText}>Edit Deck</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={s.deckDeleteBtn}
+                              activeOpacity={0.8}
+                              onPress={() => confirmDeleteDeck(deck)}
+                            >
+                              <Ionicons name="trash-outline" size={13} color="#ef4444" />
+                              <Text style={s.deckDeleteBtnText}>Delete</Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
                       ))
                     )}
@@ -692,7 +907,7 @@ export default function FlashcardScreen({ navigation }) {
                       <TouchableOpacity
                         key={topic.topic_id}
                         style={s.topicRow}
-                        onPress={() => startSession(topic)}
+                        onPress={() => openTopicPreview(topic)}
                       >
                         <View style={s.topicIcon}>
                           <Ionicons name="albums-outline" size={20} color="#5b65d6" />
@@ -702,6 +917,11 @@ export default function FlashcardScreen({ navigation }) {
                           {/* SRS daily-status badges */}
                           {topicDailyStatus[topic.topic_id] && (() => {
                             const st = topicDailyStatus[topic.topic_id];
+                            // Three distinct states:
+                            // 1) due_review_count > 0  → cards waiting for review
+                            // 2) daily_remaining > 0   → new words available
+                            // 3) neither               → no words due right now (check back later)
+                            const nothingDue = st.due_review_count === 0 && st.daily_remaining === 0;
                             return (
                               <View style={s.srsStatusRow}>
                                 {st.due_review_count > 0 && (
@@ -709,13 +929,14 @@ export default function FlashcardScreen({ navigation }) {
                                     <Text style={s.srsBadgeText}>🔄 {st.due_review_count} due</Text>
                                   </View>
                                 )}
-                                {st.daily_remaining > 0 ? (
+                                {st.daily_remaining > 0 && (
                                   <View style={s.srsBadgeNew}>
                                     <Text style={s.srsBadgeText}>✨ {st.daily_remaining} new</Text>
                                   </View>
-                                ) : (
+                                )}
+                                {nothingDue && (
                                   <View style={s.srsBadgeDone}>
-                                    <Text style={s.srsBadgeText}>✅ limit reached</Text>
+                                    <Text style={s.srsBadgeText}>⏳ check back later</Text>
                                   </View>
                                 )}
                               </View>
@@ -742,6 +963,187 @@ export default function FlashcardScreen({ navigation }) {
                 )
               )}
             </ScrollView>
+          </View>
+
+          <BottomNav navigation={navigation} active="FlashcardScreen" />
+        </LinearGradient>
+      </View>
+    );
+  }
+
+  // ══ TOPIC PREVIEW VIEW (phase = 'preview') ═══════════════════════════════════
+  if (phase === 'preview' && previewTopic) {
+    const dueReview  = previewStatus?.due_review_count ?? 0;
+    const newRemain  = previewStatus?.daily_remaining   ?? 0;
+    // Words that are actually queued for today
+    const totalToday = previewWords.length;
+
+    return (
+      <View style={s.wrapper}>
+        <LinearGradient colors={['#4c3b7a', '#5b65d6']} style={s.phone}>
+          <StatusBar barStyle="light-content" />
+
+          {/* Header */}
+          <View style={s.headerSection}>
+            <View style={s.headerTopRow}>
+              <TouchableOpacity onPress={handleBack} style={s.backButton}>
+                <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, resizeMode: 'contain' }} />
+              </TouchableOpacity>
+              <View style={s.headerTextContainer}>
+                <Text style={s.appName}>{previewTopic.topic_name}</Text>
+                <Text style={s.subTitleText}>Today's vocabulary</Text>
+              </View>
+              <View style={{ width: 32 }} />
+            </View>
+          </View>
+
+          {/* Body */}
+          <View style={s.card}>
+            {previewLoading ? (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                <ActivityIndicator size="large" color="#5b65d6" />
+                <Text style={{ marginTop: 12, color: '#64748b', fontSize: 14 }}>Loading today's words…</Text>
+              </View>
+            ) : previewError ? (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+                <Ionicons name="alert-circle-outline" size={48} color="#ef4444" />
+                <Text style={{ marginTop: 12, color: '#ef4444', textAlign: 'center' }}>{previewError}</Text>
+                <TouchableOpacity
+                  style={[s.startStudyBtn, { marginTop: 16, backgroundColor: '#e2e8f0' }]}
+                  onPress={() => openTopicPreview(previewTopic)}
+                >
+                  <Text style={{ color: '#475569', fontWeight: '700' }}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <>
+                {/* Stats bar */}
+                <View style={s.previewStatsRow}>
+                  {dueReview > 0 && (
+                    <View style={[s.previewStatPill, { backgroundColor: '#dbeafe' }]}>
+                      <Ionicons name="refresh" size={13} color="#1d4ed8" />
+                      <Text style={[s.previewStatText, { color: '#1d4ed8' }]}>{dueReview} review</Text>
+                    </View>
+                  )}
+                  {newRemain > 0 ? (
+                    <View style={[s.previewStatPill, { backgroundColor: '#dcfce7' }]}>
+                      <Ionicons name="sparkles" size={13} color="#15803d" />
+                      <Text style={[s.previewStatText, { color: '#15803d' }]}>{newRemain} new</Text>
+                    </View>
+                  ) : dueReview === 0 ? (
+                    <View style={[s.previewStatPill, { backgroundColor: '#f1f5f9' }]}>
+                      <Ionicons name="time-outline" size={13} color="#64748b" />
+                      <Text style={[s.previewStatText, { color: '#64748b' }]}>No words due now</Text>
+                    </View>
+                  ) : (
+                    <View style={[s.previewStatPill, { backgroundColor: '#fef9c3' }]}>
+                      <Ionicons name="checkmark-circle" size={13} color="#a16207" />
+                      <Text style={[s.previewStatText, { color: '#a16207' }]}>Daily limit reached</Text>
+                    </View>
+                  )}
+                  {totalToday > 0 && (
+                    <View style={[s.previewStatPill, { backgroundColor: '#ede9fe' }]}>
+                      <Ionicons name="layers-outline" size={13} color="#7c3aed" />
+                      <Text style={[s.previewStatText, { color: '#7c3aed' }]}>{totalToday} cards today</Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Word list — today's session queue */}
+                <ScrollView
+                  style={{ flex: 1, width: '100%' }}
+                  contentContainerStyle={{ paddingBottom: 16, paddingHorizontal: 4 }}
+                  showsVerticalScrollIndicator={false}
+                >
+                  {previewWords.length === 0 ? (
+                    /* No words due today */
+                    <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+                      <Ionicons name="checkmark-circle-outline" size={52} color="#cbd5e1" />
+                      <Text style={{ color: '#475569', marginTop: 12, fontWeight: '700', fontSize: 15 }}>
+                        All caught up!
+                      </Text>
+                      <Text style={{ color: '#94a3b8', marginTop: 6, textAlign: 'center', fontSize: 13 }}>
+                        No words are scheduled for review today.{'\n'}Check back later when cards become due.
+                      </Text>
+                    </View>
+                  ) : (
+                    previewWords.map((word) => {
+                      const isStarred  = starredWordIds.has(word.word_id);
+                      const isReview   = word._cardType === 'review';
+                      return (
+                        <View key={word.word_id} style={s.previewWordRow}>
+                          <View style={{ flex: 1 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                              <Text style={s.previewWordText}>{word.word}</Text>
+                              {/* Card-type badge */}
+                              {isReview ? (
+                                <View style={[s.previewTagNew, { backgroundColor: '#dbeafe', borderColor: '#93c5fd' }]}>
+                                  <Text style={[s.previewTagNewText, { color: '#1d4ed8' }]}>🔄 Review</Text>
+                                </View>
+                              ) : (
+                                <View style={[s.previewTagNew, { backgroundColor: '#dcfce7', borderColor: '#86efac' }]}>
+                                  <Text style={[s.previewTagNewText, { color: '#15803d' }]}>✨ New</Text>
+                                </View>
+                              )}
+                              {word.part_of_speech ? (
+                                <View style={s.previewTagNew}>
+                                  <Text style={s.previewTagNewText}>{word.part_of_speech}</Text>
+                                </View>
+                              ) : null}
+                            </View>
+                            {word.phonetic ? (
+                              <Text style={s.previewPhonetic}>/{word.phonetic}/</Text>
+                            ) : null}
+                            <Text style={s.previewMeaning} numberOfLines={1}>{word.meaning_vi}</Text>
+                          </View>
+
+                          {/* Star button */}
+                          <TouchableOpacity
+                            style={s.starBtn}
+                            onPress={() => toggleStar(word.word_id)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          >
+                            <Ionicons
+                              name={isStarred ? 'star' : 'star-outline'}
+                              size={22}
+                              color={isStarred ? '#eab308' : '#cbd5e1'}
+                            />
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })
+                  )}
+                </ScrollView>
+
+                {/* Start button */}
+                {totalToday > 0 ? (
+                  <TouchableOpacity
+                    style={s.startStudyBtn}
+                    activeOpacity={0.85}
+                    onPress={() => startSession(previewTopic)}
+                  >
+                    {loading ? (
+                      <ActivityIndicator color="#ffffff" style={{ marginRight: 8 }} />
+                    ) : (
+                      <Ionicons name="play" size={18} color="#ffffff" style={{ marginRight: 8 }} />
+                    )}
+                    <Text style={s.startStudyBtnText}>
+                      Start Studying ({totalToday} cards)
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={[s.startStudyBtn, { backgroundColor: '#94a3b8', flexDirection: 'column', height: 'auto', paddingVertical: 14 }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                      <Ionicons name="checkmark-circle" size={18} color="#ffffff" style={{ marginRight: 8 }} />
+                      <Text style={s.startStudyBtnText}>No words due right now</Text>
+                    </View>
+                    <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, textAlign: 'center' }}>
+                      Your cards are scheduled for a future date.{'\n'}Check back later!
+                    </Text>
+                  </View>
+                )}
+              </>
+            )}
           </View>
 
           <BottomNav navigation={navigation} active="FlashcardScreen" />
@@ -1012,8 +1414,17 @@ export default function FlashcardScreen({ navigation }) {
                   style={s.actionBtn}
                   onPress={() => {
                     const next = currentIndex + 1;
-                    if (next >= cards.length) setPhase('done');
-                    else { setCurrentIndex(next); setShowMeaning(false); }
+                    if (next >= cards.length) {
+                      // User skipped the last card — complete the session properly
+                      (async () => {
+                        try { if (sessionId) await completeFlashcardSession(sessionId); }
+                        catch (e) { console.warn('complete session on skip:', e.message); }
+                      })();
+                      setPhase('done');
+                    } else {
+                      setCurrentIndex(next);
+                      setShowMeaning(false);
+                    }
                   }}
                 >
                   <Ionicons name="play-skip-forward-outline" size={18} color="#64748b" />
@@ -1126,29 +1537,41 @@ const s = StyleSheet.create({
   showMoreBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#ffffff', paddingVertical: 12, borderRadius: 16, borderWidth: 1.5, borderColor: '#c7d2fe', gap: 6, marginTop: 2 },
   showMoreText: { fontSize: 14, fontWeight: '700', color: '#5b65d6' },
 
-  // Filters (user-created decks)
-  filtersContainer: { flexDirection: 'row', width: '100%', marginBottom: 16, gap: 10, flexWrap: 'wrap' },
-  filterChip: { backgroundColor: '#e0e7ff', paddingVertical: 8, paddingHorizontal: 20, borderRadius: 20 },
-  filterChipActive: { backgroundColor: '#4f46e5' },
-  filterText: { color: '#4f46e5', fontWeight: '600', fontSize: 14 },
-  filterTextActive: { color: '#ffffff' },
-
-  // User-created deck card (from PracticeScreen)
-  deckCard: { backgroundColor: '#ffffff', borderRadius: 20, padding: 18, width: '100%', marginBottom: 14, borderWidth: 1, borderColor: '#e2e8f0' },
-  deckHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  // User-created deck card
+  deckCard: { backgroundColor: '#ffffff', borderRadius: 20, padding: 16, width: '100%', marginBottom: 14, borderWidth: 1, borderColor: '#e2e8f0' },
+  deckHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   deckIconContainer: { width: 40, height: 40, backgroundColor: '#f1f5f9', borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
   deckTitleContainer: { flex: 1, justifyContent: 'center' },
-  deckTitle: { fontSize: 16, fontWeight: '700', color: '#0f172a', marginBottom: 4 },
+  deckTitle: { fontSize: 15, fontWeight: '700', color: '#0f172a', marginBottom: 2 },
+  deckWordCount: { fontSize: 11, color: '#64748b', fontWeight: '500' },
+  progressInfo: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+  progressText: { fontSize: 12, color: '#64748b', fontWeight: '600' },
+  progressPercentage: { fontSize: 12, color: '#3b82f6', fontWeight: '700' },
+  progressTrack: { height: 5, width: '100%', backgroundColor: '#e2e8f0', borderRadius: 3, overflow: 'hidden', marginBottom: 10 },
+  progressBar: { height: '100%', backgroundColor: '#3b82f6', borderRadius: 3 },
+
+  // Primary action row: Study | Quiz | AI Reading
+  deckPrimaryRow: { flexDirection: 'row', gap: 6, marginBottom: 8 },
+  deckStudyBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 10, borderRadius: 12, backgroundColor: '#4f46e5' },
+  deckStudyBtnText: { color: '#ffffff', fontSize: 12, fontWeight: '700' },
+  deckQuizBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 10, borderRadius: 12, backgroundColor: '#dcfce7', borderWidth: 1.5, borderColor: '#bbf7d0' },
+  deckQuizBtnText: { color: '#16a34a', fontSize: 12, fontWeight: '700' },
+  deckReadingBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 10, borderRadius: 12, backgroundColor: '#ede9fe', borderWidth: 1.5, borderColor: '#ddd6fe' },
+  deckReadingBtnText: { color: '#7c3aed', fontSize: 12, fontWeight: '700' },
+
+  // Secondary action row: Edit Deck | Delete
+  deckSecondaryRow: { flexDirection: 'row', gap: 6 },
+  deckEditBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, borderRadius: 12, backgroundColor: '#f8fafc', borderWidth: 1.5, borderColor: '#e2e8f0' },
+  deckEditBtnText: { color: '#4f46e5', fontSize: 12, fontWeight: '600' },
+  deckDeleteBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, borderRadius: 12, backgroundColor: '#fef2f2', borderWidth: 1.5, borderColor: '#fecaca' },
+  deckDeleteBtnText: { color: '#ef4444', fontSize: 12, fontWeight: '600' },
+
+  // Legacy refs kept to avoid crashes
+  startButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#4f46e5', paddingVertical: 12, borderRadius: 14, gap: 6, width: '100%' },
+  startButtonText: { color: '#ffffff', fontSize: 14, fontWeight: '700' },
   badgeContainer: { backgroundColor: '#dcfce7', alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
   badgeText: { color: '#16a34a', fontSize: 10, fontWeight: '700' },
   deleteButton: { width: 28, height: 28, borderRadius: 8, backgroundColor: '#fef2f2', justifyContent: 'center', alignItems: 'center', marginLeft: 8 },
-  progressInfo: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-  progressText: { fontSize: 12, color: '#64748b', fontWeight: '600' },
-  progressPercentage: { fontSize: 12, color: '#3b82f6', fontWeight: '700' },
-  progressTrack: { height: 6, width: '100%', backgroundColor: '#e2e8f0', borderRadius: 3, overflow: 'hidden', marginBottom: 14 },
-  progressBar: { height: '100%', backgroundColor: '#3b82f6', borderRadius: 3 },
-  startButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#4f46e5', paddingVertical: 12, borderRadius: 14, gap: 6, width: '100%' },
-  startButtonText: { color: '#ffffff', fontSize: 14, fontWeight: '700' },
 
   // Flashcard
   flashcard: { backgroundColor: '#ffffff', borderRadius: 24, padding: 22, marginBottom: 16 },
@@ -1257,4 +1680,47 @@ const s = StyleSheet.create({
   // Focused practice button
   focusBtn: { flexDirection: 'row', backgroundColor: '#ef4444', paddingVertical: 14, borderRadius: 16, alignItems: 'center', justifyContent: 'center', width: '100%', marginBottom: 10 },
   focusBtnText: { color: '#ffffff', fontSize: 14, fontWeight: '700' },
+
+  // ── Topic Preview screen ───────────────────────────────────────────────────
+  previewStatsRow: { flexDirection: 'row', gap: 8, marginBottom: 14, flexWrap: 'wrap' },
+  previewStatPill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20 },
+  previewStatText: { fontSize: 12, fontWeight: '700' },
+
+  previewWordRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 8,
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+  },
+  previewWordText: { fontSize: 16, fontWeight: '700', color: '#0f172a' },
+  previewPhonetic: { fontSize: 12, color: '#64748b', marginTop: 2 },
+  previewMeaning: { fontSize: 13, color: '#475569', marginTop: 2 },
+  previewTagReview: { backgroundColor: '#dbeafe', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8 },
+  previewTagReviewText: { fontSize: 10, fontWeight: '700', color: '#1d4ed8' },
+  previewTagNew: { backgroundColor: '#dcfce7', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8 },
+  previewTagNewText: { fontSize: 10, fontWeight: '700', color: '#15803d' },
+
+  starBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 10 },
+
+  startStudyBtn: {
+    flexDirection: 'row',
+    backgroundColor: '#5b65d6',
+    paddingVertical: 15,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  startStudyBtnText: { color: '#ffffff', fontSize: 15, fontWeight: '700' },
+
+  // Inline error in add-deck form
+  inlineErrorBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', borderRadius: 10, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: '#fecaca' },
+  inlineErrorText: { color: '#b91c1c', fontSize: 13, fontWeight: '500', flex: 1 },
 });

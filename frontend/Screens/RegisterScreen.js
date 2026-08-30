@@ -37,6 +37,8 @@ const GOALS = [
 const DAILY_GOALS = [5, 10, 15, 20];
 
 export default function RegisterScreen({ navigation }) {
+    const { setToken, setCurrentUser, setUserId } = useData();
+
     // 1. Quản lý Step hiện tại
     const [step, setStep] = useState(1); // 1 | 2 | 3 | 4 (email verification)
     const [loading, setLoading] = useState(false);
@@ -109,15 +111,16 @@ export default function RegisterScreen({ navigation }) {
             setLoading(true);
 
             const payload = {
-                username: formData.username,
+                full_name: formData.username,
                 email: formData.email,
                 password: formData.password,
-                englishLevel: formData.level,
-                learningGoals: formData.goals,
-                dailyGoalMinutes: formData.dailyGoal,
+                english_level: formData.level,
+                daily_goal: formData.dailyGoal,
+                role: 'student',
             };
 
             await registerUser(payload);
+
             setStep(4);
             Alert.alert('Check your email', `We sent a 6-digit code to ${formData.email}.`);
         } catch (err) {

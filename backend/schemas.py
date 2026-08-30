@@ -51,6 +51,8 @@ class WordRead(BaseModel):
     meaning_vi: str
     example_en: str
     example_vi: str
+    # Computed per requesting user by GET /words; it is not persisted on Word.
+    is_studied: bool = False
     created_at: datetime | None = None
 
 
@@ -240,6 +242,7 @@ class FlashcardSessionRead(BaseModel):
     is_completed: bool
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    progresses: list["FlashcardProgressRead"] = []
 
 
 class FlashcardProgressCreate(BaseModel):
@@ -261,6 +264,10 @@ class FlashcardProgressRead(BaseModel):
     is_flipped: bool
     difficulty_rating: str | None = None
     reviewed_at: datetime | None = None
+
+
+# Resolve the forward reference in FlashcardSessionRead.progresses
+FlashcardSessionRead.model_rebuild()
 
 
 class StarredWordCreate(BaseModel):
@@ -305,9 +312,10 @@ class SessionQueueResponse(BaseModel):
     """Returned by GET /flashcards/queue – ordered list ready for the UI."""
     review_cards: list[WordRead]   # due review/learning cards, shown first
     new_cards: list[WordRead]      # new cards introduced today
-    daily_learned: int             # how many new words already introduced today
+    daily_learned: int             # how many new words already rated today
     daily_limit: int               # cap (default 15)
     daily_remaining: int           # slots left for new words today
+    due_review_count: int = 0      # total cards currently due for review (for display)
 
 
 class DailyStatusResponse(BaseModel):

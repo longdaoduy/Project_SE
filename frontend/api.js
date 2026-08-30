@@ -24,12 +24,13 @@ export const API_BASE = getApiBase();
 
 // ─── Generic helpers ──────────────────────────────────────────────────────────
 
-async function request(method, path, body = null) {
-  const opts = {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-  };
+async function request(method, path, body = null, token = null) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const opts = { method, headers };
   if (body !== null) opts.body = JSON.stringify(body);
+
   const res = await fetch(`${API_BASE}${path}`, opts);
   if (!res.ok) {
     const text = await res.text();
@@ -38,23 +39,32 @@ async function request(method, path, body = null) {
   return res.json();
 }
 
-const get   = (path, params = {}) => {
+const get = (path, params = {}, token = null) => {
   const qs = Object.entries(params)
     .filter(([, v]) => v !== null && v !== undefined)
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
     .join('&');
-  return request('GET', qs ? `${path}?${qs}` : path);
+  return request('GET', qs ? `${path}?${qs}` : path, null, token);
 };
-const post  = (path, body)  => request('POST',  path, body);
-const patch = (path, body)  => request('PATCH', path, body);
+const post = (path, body, token = null) => request('POST', path, body, token);
+const patch = (path, body, token = null) => request('PATCH', path, body, token);
+const del = (path, body = null, token = null) => request('DELETE', path, body, token);
 
 // ─── Vocabulary / Topics ──────────────────────────────────────────────────────
 
 export const getTopics = (limit = 100) =>
   get('/topics', { limit });
 
-export const getWords = (topicId, limit = 50) =>
-  get('/words', { topic_id: topicId, limit });
+export const getTopic = (topicId) =>
+  get(`/topics/${topicId}`);
+
+// userId is optional because most callers only need the vocabulary itself.
+// Keep `limit` second to preserve the existing call sites.
+export const getWords = (topicId, limit = 50, userId = null) =>
+  get('/words', { topic_id: topicId, user_id: userId, limit });
+
+export const getWord = (wordId) =>
+  get(`/words/${wordId}`);
 
 export const getRandomWords = (topicId = null, limit = 10) =>
   get('/flashcards/random', { topic_id: topicId, limit });
@@ -64,14 +74,39 @@ export const getRandomWords = (topicId = null, limit = 10) =>
 export const createFlashcardSession = (userId, topicId, totalCards) =>
   post('/flashcard-sessions', { user_id: userId, topic_id: topicId ?? null, total_cards: totalCards });
 
+export const getFlashcardSession = (sessionId) =>
+  get(`/flashcard-sessions/${sessionId}`);
+
+export const getUserFlashcardSessions = (userId, limit = 20, offset = 0) =>
+  get(`/users/${userId}/flashcard-sessions`, { limit, offset });
+
 export const completeFlashcardSession = (sessionId) =>
   post(`/flashcard-sessions/${sessionId}/complete`, {});
+
+/**
+ * Get the most recent unfinished session for a (user, topic) pair.
+ * Returns the session object, or null if none exists.
+ * Used to resume an in-progress session instead of creating a duplicate.
+ */
+export const getActiveFlashcardSession = (userId, topicId) =>
+  get(`/users/${userId}/flashcard-sessions/active`, { topic_id: topicId });
 
 export const createFlashcardProgress = (sessionId, wordId) =>
   post('/flashcard-progress', { session_id: sessionId, word_id: wordId });
 
 export const updateFlashcardProgress = (progressId, payload) =>
   patch(`/flashcard-progress/${progressId}`, payload);
+
+// ─── Starred Words (Favorites) ────────────────────────────────────────────────
+
+export const starWord = (userId, wordId) =>
+  post('/starred-words', { user_id: userId, word_id: wordId });
+
+export const unstarWord = (userId, wordId) =>
+  del(`/starred-words?user_id=${encodeURIComponent(userId)}&word_id=${encodeURIComponent(wordId)}`);
+
+export const getStarredWords = (userId, limit = 100, offset = 0) =>
+  get(`/users/${userId}/starred-words`, { limit, offset });
 
 // ─── SRS (Spaced Repetition System) ──────────────────────────────────────────
 
@@ -98,10 +133,25 @@ export const submitSRSRating = (userId, wordId, topicId, rating) =>
 export const getDailyStatus = (userId, topicId) =>
   get('/flashcards/daily-status', { user_id: userId, topic_id: topicId });
 
-// ─── Users / Stats ────────────────────────────────────────────────────────────
+// ─── Users / Stats / History ──────────────────────────────────────────────────
 
 export const getUserStats = (userId) =>
   get(`/users/${userId}/statistics`);
+
+export const getUserHistory = (userId, params = {}) =>
+  get(`/users/${userId}/history`, params);
+
+export const getUserHistoryPage = (userId, params = {}) =>
+  get(`/users/${userId}/history/page`, params);
+
+export const getUserWeeklyActivity = (userId) =>
+  get(`/users/${userId}/weekly-activity`);
+
+export const getUserSessions = (userId) =>
+  get(`/users/${userId}/sessions`);
+
+export const getUserLoginLogs = (userId, limit = 20) =>
+  get(`/users/${userId}/login-logs`, { limit });
 
 // ─── Quiz ─────────────────────────────────────────────────────────────────────
 
@@ -133,6 +183,12 @@ export async function createQuizWithQuestions(userId, topicId, quizType, questio
   }
   return { quiz, questions };
 }
+
+export const getQuiz = (quizId) =>
+  get(`/quizzes/${quizId}`);
+
+export const getUserQuizzes = (userId, limit = 20, offset = 0) =>
+  get(`/users/${userId}/quizzes`, { limit, offset });
 
 /**
  * Submit a single answer for a question.
@@ -172,26 +228,26 @@ export function buildMCQuestions(words, count) {
   if (unique.length < 4) return [];
 
   const shuffled = [...unique].sort(() => Math.random() - 0.5);
-  const chosen   = shuffled.slice(0, Math.min(count, shuffled.length));
+  const chosen = shuffled.slice(0, Math.min(count, shuffled.length));
 
   return chosen.map((w) => {
     const correct = w.meaning_vi.trim();
-    const pool    = unique
+    const pool = unique
       .filter((x) => x.word_id !== w.word_id)
       .map((x) => x.meaning_vi.trim());
     const distractors = pool.sort(() => Math.random() - 0.5).slice(0, 3);
     const options = [...distractors, correct].sort(() => Math.random() - 0.5);
-    const letter  = ['A', 'B', 'C', 'D'][options.indexOf(correct)];
+    const letter = ['A', 'B', 'C', 'D'][options.indexOf(correct)];
     return {
-      word_id:        w.word_id,
-      question_text:  `Which definition best matches "${w.word}"?`,
-      option_a:       options[0],
-      option_b:       options[1],
-      option_c:       options[2],
-      option_d:       options[3],
+      word_id: w.word_id,
+      question_text: `Which definition best matches "${w.word}"?`,
+      option_a: options[0],
+      option_b: options[1],
+      option_c: options[2],
+      option_d: options[3],
       correct_option: letter,
       // local helpers used by screen UI (not sent to backend)
-      _word:          w,
+      _word: w,
     };
   });
 }
@@ -203,8 +259,8 @@ export function buildMCQuestions(words, count) {
 export function buildMatchingPairs(words, count = 6) {
   const shuffled = [...words].sort(() => Math.random() - 0.5);
   return shuffled.slice(0, Math.min(count, shuffled.length)).map((w) => ({
-    word_id:    w.word_id,
-    word:       w.word,
+    word_id: w.word_id,
+    word: w.word,
     definition: w.meaning_vi,
   }));
 }
@@ -214,14 +270,28 @@ export function buildMatchingPairs(words, count = 6) {
  * Returns array of {word_id, sentence, answer} objects.
  */
 export function buildFillQuestions(words, count) {
-  const shuffled = [...words].sort(() => Math.random() - 0.5);
-  return shuffled.slice(0, Math.min(count, shuffled.length)).map((w) => ({
-    word_id:  w.word_id,
-    sentence: w.example_en.replace(new RegExp(`\\b${w.word}\\b`, 'i'), '______'),
-    answer:   w.word,
-    hint:     w.phonetic || '',
-    _word:    w,
-  }));
+  const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const candidates = (words || []).filter((word) =>
+    typeof word?.word === 'string' && word.word.trim().length > 0
+  );
+  const shuffled = [...candidates].sort(() => Math.random() - 0.5);
+
+  return shuffled.slice(0, Math.min(count, shuffled.length)).map((w) => {
+    const answer = w.word.trim();
+    const example = typeof w.example_en === 'string' ? w.example_en.trim() : '';
+    const wordPattern = new RegExp(`\\b${escapeRegExp(answer)}\\b`, 'i');
+    const sentence = example && wordPattern.test(example)
+      ? example.replace(wordPattern, '______')
+      : `${w.meaning_vi || 'This vocabulary word'}: ______`;
+
+    return {
+      word_id: w.word_id,
+      sentence,
+      answer,
+      hint: w.phonetic || '',
+      _word: w,
+    };
+  });
 }
 
 // ─── AI Reading ───────────────────────────────────────────────────────────────
@@ -233,9 +303,9 @@ export function buildFillQuestions(words, count) {
  */
 export const generateAIReading = (userId, vocabulary, topicParam = null, difficultyParam = null) =>
   post('/ai-readings', {
-    user_id:          userId,
+    user_id: userId,
     input_vocabulary: vocabulary,
-    topic_param:      topicParam  || null,
+    topic_param: topicParam || null,
     difficulty_param: difficultyParam || null,
   });
 
@@ -273,6 +343,7 @@ export const submitAIAnswer = (questionId, userAnswer) =>
 export const addWord = (payload) =>
   post('/words', payload);
 // payload: { topic_id, word, part_of_speech, phonetic, meaning_vi, example_en, example_vi }
+
 /**
  * For fill/match/speed we build a dummy "correct_option=A" question per word
  * and mark it correct/incorrect based on local scoring.
@@ -286,12 +357,12 @@ export async function saveLocalQuizResult(userId, topicId, quizType, results) {
   if (!results.length) return null;
   try {
     const questionsPayload = results.map((r) => ({
-      word_id:        r.word_id,
-      question_text:  `${quizType} question`,
-      option_a:       'Correct',
-      option_b:       'Wrong',
-      option_c:       'Wrong2',
-      option_d:       'Wrong3',
+      word_id: r.word_id,
+      question_text: `${quizType} question`,
+      option_a: 'Correct',
+      option_b: 'Wrong',
+      option_c: 'Wrong2',
+      option_d: 'Wrong3',
       correct_option: 'A',
     }));
 

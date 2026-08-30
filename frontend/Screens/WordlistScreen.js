@@ -1,1489 +1,590 @@
-import React, { useEffect, useState } from 'react';
-import {Ionicons} from '@expo/vector-icons';
-import { 
-    StyleSheet, 
-    Text, 
-    TextInput,
-    View, 
-    ScrollView, 
-    StatusBar, 
-    Platform, 
-    Dimensions,
-    Image ,
-    TouchableOpacity,
-    FlatList,
+import React, { useEffect, useState, useCallback } from 'react';
+import {
+  StyleSheet, Text, TextInput, View, ScrollView,
+  StatusBar, Platform, Dimensions, Image,
+  TouchableOpacity, FlatList, ActivityIndicator, Alert, Modal,
 } from 'react-native';
-
-import { AntDesign } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Speech from 'expo-speech';
+import { getWords, addWord } from '../api';
+import { useData } from '../context/DataContext';
 
-const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+const { width: screenWidth } = Dimensions.get('window');
 
-export default function WordlistScreen({navigation}) {
-    
-    const [vocabularies, setVocabularies] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
-    const [error, setError] = useState(null);
+const WORD_TYPES = [
+  { id: 'noun', label: 'Noun' },
+  { id: 'verb', label: 'Verb' },
+  { id: 'adjective', label: 'Adj' },
+  { id: 'adverb', label: 'Adv' },
+  { id: 'phrase', label: 'Phrase' },
+];
 
-    const [searchQuery, setSearchQuery] = useState('');
+export default function WordlistScreen({ navigation }) {
+  const { userId, topics, loadTopics, starredWordIds, starredWords, toggleStar } = useData();
 
-    const [selectedFilter, setSelectedFilter] = useState('all'); // 'all', 'studied', 'unstudied'
+  // ── Data state ──────────────────────────────────────────────────────────────
+  const [vocabularies, setVocabularies] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(null);
 
-    const [viewState, setViewState] = useState('list'); // 'list' hoặc 'grid'
+  // ── UI / filter state ────────────────────────────────────────────────────────
+  const [selectedTopicId, setSelectedTopicId] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedFilter, setSelectedFilter] = useState('all');
+  const [viewState, setViewState] = useState('list');
+  const [isTopicModalVisible, setIsTopicModalVisible] = useState(false);
 
-    const [selectedWordType, setSelectedWordType] = useState(null); // 'noun', 'verb', 'adjective', 'adverb', 'phrase'
+  // ── Add-word form state ──────────────────────────────────────────────────────
+  const [newWord, setNewWord] = useState('');
+  const [newPhonetic, setNewPhonetic] = useState('');
+  const [newMeaningVi, setNewMeaningVi] = useState('');
+  const [newExampleEn, setNewExampleEn] = useState('');
+  const [newExampleVi, setNewExampleVi] = useState('');
+  const [newTopicId, setNewTopicId] = useState(null);
+  const [selectedType, setSelectedType] = useState('noun');
+  const [submitting, setSubmitting] = useState(false);
 
-    const handleFilterChange = (filter) => {
-        setSelectedFilter(filter);
-    };
+  const selectedTopic = topics?.find((t) => t.topic_id === selectedTopicId) || null;
 
-    const fetchVocabularies = async () => {
-        try {
-            // Sử dụng dữ liệu mẫu cho đến khi có backend
-            setVocabularies(wordlist);
-            setLoading(false);
-            setRefreshing(false);
+  // ── Fetch vocabularies ───────────────────────────────────────────────────────
+  const fetchVocabularies = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await getWords(selectedTopicId, 200, userId);
+      const normalized = (data || []).map((w) => ({
+        id: w.word_id,
+        word: w.word,
+        type: w.part_of_speech || 'word',
+        phonetic: w.phonetic || '',
+        definition: w.meaning_vi || '',
+        example: w.example_en || w.example_vi || '',
+        exampleVi: w.example_vi || '',
+        topicId: w.topic_id,
+        wordStatus: w.is_studied ? 'studied' : 'unstudied',
+      }));
+      setVocabularies(normalized);
+    } catch (err) {
+      console.error('WordlistScreen fetch error:', err);
+      setError('Could not load vocabulary. Please try again.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [selectedTopicId, userId]);
 
-        } catch (error) {
-        
-            console.error("API Error:", error);
-            setError('Không thể tải từ vựng. Vui lòng thử lại!');
-            setLoading(false);
-            setRefreshing(false);
-        }
-    };
+  useEffect(() => { if (topics.length === 0) loadTopics(); }, []);
+  useEffect(() => { fetchVocabularies(); }, [fetchVocabularies]);
 
-    // Gọi API lần đầu khi component mount
-    useEffect(() => {
-        fetchVocabularies();
-    }, []);
+  const handleRefresh = () => { setRefreshing(true); fetchVocabularies(); };
 
-    // Xử lý kéo xuống để làm mới (Pull to refresh)
-    const handleRefresh = () => {
-        setRefreshing(true);
-        fetchVocabularies();
-    };
+  // ── Text-to-Speech ───────────────────────────────────────────────────────────
+  const handleSpeak = (word) => {
+    if (!word) return;
+    try { Speech.stop(); Speech.speak(word, { language: 'en-US', rate: 0.85 }); }
+    catch (e) { console.warn('Speech:', e.message); }
+  };
 
-    // Xử lý phát âm thanh
-    const handlePlayAudio = (audioUrl, word) => {
-        // Tích hợp expo-av: Audio.Sound.createAsync({ uri: audioUrl })
-        console.log('Playing audio for:', word, audioUrl);
-    };
+  // ── Add word submit ──────────────────────────────────────────────────────────
+  const handleAddWordSubmit = async () => {
+    const w = newWord.trim();
+    const m = newMeaningVi.trim();
+    const en = newExampleEn.trim();
+    const vi = newExampleVi.trim();
+    if (!w) { Alert.alert('Validation', 'Please enter the word or phrase.'); return; }
+    if (!m) { Alert.alert('Validation', 'Please enter the Vietnamese meaning.'); return; }
+    if (!en) { Alert.alert('Validation', 'Please enter an English example sentence.'); return; }
+    if (!vi) { Alert.alert('Validation', 'Please enter the Vietnamese translation of the example.'); return; }
+    const topicToUse = newTopicId || selectedTopicId || topics?.[0]?.topic_id;
+    if (!topicToUse) { Alert.alert('Validation', 'Please select a topic.'); return; }
+    try {
+      setSubmitting(true);
+      await addWord({
+        topic_id: topicToUse,
+        word: w,
+        part_of_speech: selectedType,
+        phonetic: newPhonetic.trim() || null,
+        meaning_vi: m,
+        example_en: en,
+        example_vi: vi,
+      });
+      Alert.alert('Success', `"${w}" added to your vocabulary!`);
+      setNewWord(''); setNewPhonetic(''); setNewMeaningVi('');
+      setNewExampleEn(''); setNewExampleVi(''); setNewTopicId(null);
+      setViewState('list');
+      fetchVocabularies();
+    } catch (e) {
+      Alert.alert('Error', e.message || 'Could not add word. Try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
-    //Loc từ vựng dựa trên searchQuery và selectedFilter
-    const filteredVocabularies = vocabularies.filter((item) => {
-        const matchesSearch = item.word.toLowerCase().includes(searchQuery.toLowerCase());
-        const matchesFilter = selectedFilter === 'all' || item.wordStatus === selectedFilter;
-        return matchesSearch && matchesFilter;
-    });
+  // ── Filtered list ────────────────────────────────────────────────────────────
+  const displayList = vocabularies.filter((item) => {
+    const q = searchQuery.toLowerCase().trim();
+    const matchSearch = !q ||
+      item.word.toLowerCase().includes(q) ||
+      item.definition.toLowerCase().includes(q);
+    const matchFilter =
+      selectedFilter === 'all' ? true :
+        selectedFilter === 'starred' ? starredWordIds.has(item.id) :
+          selectedFilter === 'studied' ? item.wordStatus === 'studied' :
+            selectedFilter === 'unstudied' ? item.wordStatus === 'unstudied' : true;
+    return matchSearch && matchFilter;
+  });
 
-    //Render card từ vựng
-    const renderVocabularyCard = ({item}) => 
-    (
-        <View style={styles.card}>
-            <View style={styles.cardHeader}>
-                <View style={styles.wordGroup}>
-                    <Text style={styles.wordText}>{item.word}</Text>
-                    <View style={styles.badge}>
-                        <Text style={styles.badgeText}>{item.type}</Text>
-                    </View>
-                </View>
-
-                <TouchableOpacity 
-                style={styles.audioButton}
-                onPress={() => handlePlayAudio(item.audioUrl, item.word)}
-                >
-                    <Ionicons name="volume-medium" size={18} color="#ffffff" />
-                </TouchableOpacity>
-            </View>
-
-            <Text style={styles.phoneticText}>{item.phonetic}</Text>
-            <Text style={styles.definitionText}>{item.definition}</Text>
-            <Text style={styles.exampleText}>"{item.example}"</Text>
-            {/* Hiển thị trạng thái từ vựng: studied hoặc unstudied */}
-            <View style={[styles.statusBadge, item.wordStatus === 'studied' ? styles.studied : styles.unstudied]}>
-                <Text style={styles.statusText}>{item.wordStatus === 'studied' ? 'Studied' : 'Unstudied'}</Text>
-            </View>
-        </View>
-    );
-
-    const wordlist = [
-        {
-            id: 1,
-            word: 'Ubiquitous',
-            type: 'adj',
-            phonetic: 'juːˈbɪkwɪtəs',
-            definition: 'Present, appearing, or found everywhere.',
-            example: 'Smartphones have become ubiquitous in modern society.',
-            audioUrl: 'https://www.oxfordlearnersdictionaries.com/media/english/us_pron/u/ubi/ubiquitous/ubiquitous__us_1.mp3',
-            wordStatus: 'studied', // 'studied' hoặc 'unstudied'
-        },
-
-        {
-            id: 2,
-            word: 'Accurate',
-            type: 'adj',
-            phonetic: 'ˈækjʊrət',
-            definition: 'Exact or correct.',
-            example: 'The survey results were accurate.',
-            audioUrl: 'https://www.oxfordlearnersdictionaries.com/media/english/us_pron/a/acc/accurate/accurate__us_1.mp3',
-            wordStatus: 'unstudied', // 'studied' hoặc 'unstudied'
-        },
-
-        {
-            id: 3,
-            word: 'Postpone',
-            type: 'verb',
-            phonetic: 'pəˈspəʊn',
-            definition: 'To delay or defer an event or action to a later time.',
-            example: 'The meeting was postponed due to unforeseen circumstances.',
-            audioUrl: 'https://www.oxfordlearnersdictionaries.com/media/english/us_pron/p/pos/postpone/postpone__us_1.mp3',
-            wordStatus: 'studied', // 'studied' hoặc 'unstudied'
-        }
-    ]
-
+  // ── Render word card ─────────────────────────────────────────────────────────
+  const renderVocabularyCard = ({ item }) => {
+    const isStarred = starredWordIds.has(item.id);
     return (
-        // Khung bọc ngoài cùng (Nếu là Web thì căn giữa để tạo hiệu ứng giả lập)
-        <View style={styles.webWrapper}>
-            <LinearGradient
-                colors={['#654190', '#667eea']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 0, y: 1 }}
-                style={styles.phoneContainer}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={styles.wordGroup}>
+            <Text style={styles.wordText}>{item.word}</Text>
+            {item.type ? (
+              <View style={styles.badge}><Text style={styles.badgeText}>{item.type}</Text></View>
+            ) : null}
+          </View>
+          <View style={styles.cardActionGroup}>
+            <TouchableOpacity
+              style={[styles.actionIconButton, isStarred && styles.starredIconButton]}
+              onPress={() => toggleStar(item.id)}
+              activeOpacity={0.7}
             >
-                {/* Thanh trạng thái màu sáng */}
-                <StatusBar barStyle="light-content" />
-                {viewState === 'list' && (
-                    <>
-                        <View style={styles.headerSection}>
-                            {/*Nút back*/}
-                            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                                <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, marginBottom: 0, resizeMode: 'contain' }} />
-                            </TouchableOpacity>
-                            <View style={styles.headerTextContainer}>
-                                <Text style={styles.appName}>My Vocabulary</Text>
-                                <Text style={styles.appSubtitle}>Manage and practice your words</Text>
-                            </View>
-
-                            <TouchableOpacity style={styles.addButton} onPress={() => setViewState('add')}>
-                                <Ionicons name="add" size={20} color="#ffffff" />
-                            </TouchableOpacity>
-                        </View>
-
-                        {/*Ô tìm kiếm từ vựng*/}
-                        <View style={{ width: '100%', paddingHorizontal: 20 , flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: 15 }}>
-                            <View style={styles.searchContainer}>
-                                <Ionicons name="search" size={20} color="#e4e7ec" style={{marginLeft: 3 }} />
-                                <TextInput
-                                    placeholder="Search vocabulary..."
-                                    style={styles.searchInput}
-                                    value={searchQuery}
-                                    onChangeText={(text) => setSearchQuery(text)}
-                                    clearButtonMode="while-editing" //Nút xóa nhanh trên iOS
-                                />
-                            </View>
-                        </View>
-
-                        <ScrollView contentContainerStyle={styles.scrollContainer} 
-                        showsVerticalScrollIndicator={false}>
-                            
-                            <View style={styles.whiteCardContainer}>
-                                {/*Lọc theo All, Studied, Unstudied*/}
-                                <View style={styles.filterRow}>
-                                    
-                                    <View style={styles.filterContainer}>
-                                        <TouchableOpacity 
-                                            style={[styles.filterButton, selectedFilter === 'all' && styles.selectedFilter]}
-                                            onPress={() => handleFilterChange('all')}
-                                        >
-                                            <Text style={[styles.filterText, selectedFilter === 'all' && styles.selectedFilterText]}>
-                                            All
-                                            </Text>
-                                        </TouchableOpacity>
-
-                                        <TouchableOpacity 
-                                            style={[styles.filterButton, selectedFilter === 'studied' && styles.selectedFilter]}
-                                            onPress={() => handleFilterChange('studied')}
-                                        >
-                                            <Text style={[styles.filterText, selectedFilter === 'studied' && styles.selectedFilterText]}>
-                                            Studied
-                                            </Text>
-                                        </TouchableOpacity>
-
-                                        <TouchableOpacity 
-                                            style={[styles.filterButton, selectedFilter === 'unstudied' && styles.selectedFilter]}
-                                            onPress={() => handleFilterChange('unstudied')}
-                                        >
-                                            <Text style={[styles.filterText, selectedFilter === 'unstudied' && styles.selectedFilterText]}>
-                                            Unstudied
-                                            </Text>
-                                        </TouchableOpacity>
-                                    </View>
-                                    
-                                </View>
-
-                                <FlatList
-                                    style={{ width: '100%', marginTop: 10 }}
-                                    data={filteredVocabularies}
-                                    renderItem={renderVocabularyCard}
-                                    keyExtractor={(item) => item.id.toString()}
-                                />
-                            </View>
-                        </ScrollView>
-                    </>
-                )}
-
-                {viewState === 'add' && (
-                    <>
-                        <View style={styles.headerSection}>
-                            <TouchableOpacity onPress={() => setViewState('list')} style={styles.backButton}>
-                                <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, marginBottom: 0, resizeMode: 'contain' }} />
-                            </TouchableOpacity>
-                            <View style={styles.headerTextContainer}>
-                                <Text style={styles.appName}>Add Vocabulary</Text>
-                                <Text style={styles.appSubtitle}>Add new words to your list</Text>
-                            </View>
-                        </View>
-
-                        <ScrollView contentContainerStyle={styles.scrollContainer} 
-                        showsVerticalScrollIndicator={false}>
-                            <View style={styles.whiteCardContainer}>
-
-                                <View style={styles.addWordContainer}>
-                                    <Text style={styles.addWordContainerTitle}>WORD / PHRASE</Text>
-                                    <View style={styles.addWordInputContainer}>
-                                        <TextInput
-                                            placeholder="Enter word or phrase"
-                                            style={styles.addWordInput}
-                                        />
-                                    </View>
-
-                                    <Text style={styles.addWordContainerTitle}>PHONETIC</Text>
-                                    <View style={styles.addWordInputContainer}>
-                                        <TextInput
-                                            placeholder="eg: /ˈwɜːd/"
-                                            style={styles.addWordInput}
-                                        />
-                                    </View>
-
-                                    <Text style={styles.addWordContainerTitle}>VIETNAMESE MEANING</Text>
-                                    <View style={styles.addWordInputContainer}>
-                                        <TextInput 
-                                            placeholder="Enter Vietnamese meaning"
-                                            style={styles.addWordInput} 
-                                        />
-                                    </View>
-
-                                    <Text style={styles.addWordContainerTitle}>ENGLISH DEFINITION</Text>
-                                    <View style={styles.addWordInputContainer}>
-                                        <TextInput
-                                            placeholder="Enter English definition"
-                                            style={styles.addWordInput}
-                                        />
-                                    </View>
-
-                                    <Text style={styles.addWordContainerTitle}>EXAMPLE SENTENCE</Text>
-                                    <View style={styles.addWordInputContainer}>
-                                        <TextInput
-                                            placeholder="Enter example sentence"
-                                            style={styles.addWordInput}
-                                        />
-                                    </View>
-
-                                    <Text style={styles.addWordContainerTitle}>TYPE</Text>
-                                    <View style={styles.wordTypeButtonContainer}>
-                                        <TouchableOpacity style={[styles.wordTypeButton, selectedWordType === 'noun' && styles.wordTypeButtonSelected]} 
-                                            onPress={() => setSelectedWordType('noun')}
-                                            >
-                                            <Text style={[styles.wordTypeButtonText, selectedWordType === 'noun' && 
-                                                styles.wordTypeButtonTextSelected]}>
-                                                    Noun
-                                            </Text>
-                                        </TouchableOpacity>
-                                        <TouchableOpacity style={[styles.wordTypeButton, selectedWordType === 'verb' && styles.wordTypeButtonSelected]} 
-                                            onPress={() => setSelectedWordType('verb')}
-                                            >
-                                            <Text style={[styles.wordTypeButtonText, selectedWordType === 'verb' && 
-                                                styles.wordTypeButtonTextSelected]}>
-                                                    Verb
-                                            </Text>
-                                        </TouchableOpacity>
-                                        <TouchableOpacity style={[styles.wordTypeButton, selectedWordType === 'adjective' && styles.wordTypeButtonSelected]} 
-                                            onPress={() => setSelectedWordType('adjective')}
-                                            >
-                                            <Text style={[styles.wordTypeButtonText, selectedWordType === 'adjective' && 
-                                                styles.wordTypeButtonTextSelected]}>
-                                                    Adj
-                                            </Text>
-                                        </TouchableOpacity>
-                                        <TouchableOpacity style={[styles.wordTypeButton, selectedWordType === 'adverb' && styles.wordTypeButtonSelected]} 
-                                            onPress={() => setSelectedWordType('adverb')}
-                                            >
-                                            <Text style={[styles.wordTypeButtonText, selectedWordType === 'adverb' && 
-                                                styles.wordTypeButtonTextSelected]}>
-                                                    Adv
-                                            </Text>
-                                        </TouchableOpacity>
-                                        <TouchableOpacity style={[styles.wordTypeButton, selectedWordType === 'phrase' && styles.wordTypeButtonSelected]} 
-                                            onPress={() => setSelectedWordType('phrase')}
-                                            >
-                                            <Text style={[styles.wordTypeButtonText, selectedWordType === 'phrase' && 
-                                                styles.wordTypeButtonTextSelected]}>
-                                                    Phrase
-                                            </Text>
-                                        </TouchableOpacity>
-                                    </View>
-
-                                    {/*Nút thêm từ vựng*/}
-                                    <TouchableOpacity style={styles.addWordButton}>
-                                        <Text style={styles.addWordButtonText}>Add Word</Text>
-                                    </TouchableOpacity>
-                                </View>
-                            </View>
-                        </ScrollView>
-                    </>
-                )}
-
-                {/*Thanh điều hướng nhanh đến các màn hình khác*/}
-                <View style={styles.quickNavContainer}>
-                    {/*Nút home */}
-                    <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('Home')}>
-                        <Ionicons name="home" size={20} color="#919191" opacity={1} />
-                        <Text style={{ fontSize: 12, color: '#919191', marginTop: 4 }}>Home</Text>
-                    </TouchableOpacity>
-
-                    {/*Nút card */}
-                    <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('FlashcardScreen')}>
-                        <Ionicons name="albums" size={20} color="#919191" opacity={0.6} />
-                        <Text style={{ fontSize: 12, color: '#919191', marginTop: 4 }}>Cards</Text>
-                    </TouchableOpacity>
-
-                    {/*Nút Wordlist */}
-                    <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('WordlistScreen')}>
-                        <Ionicons name="book" size={20} color="#667eea" opacity={0.6} />
-                        <Text style={{ fontSize: 12, color: '#667eea', marginTop: 4 }}>Words</Text>
-                    </TouchableOpacity>
-
-                    {/*Nút Reading */}
-                    <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('AIReadingScreen')}>
-                        <Ionicons name="sparkles" size={20} color="#919191" opacity={0.3} />
-                        <Text style={{ fontSize: 12, color: '#919191', marginTop: 4 }}>Reading</Text>
-                    </TouchableOpacity>
-
-                    {/*Nút Quiz */}
-                    <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 15 }} onPress={() => navigation.navigate('VocabQuizScreen')}>
-                        <Ionicons name="checkmark-circle" size={20} color="#919191" opacity={0.6} />
-                        <Text style={{ fontSize: 12, color: '#919191', marginTop: 4 }}>Quiz</Text>
-                    </TouchableOpacity>
-
-                </View>
-            </LinearGradient>
+              <Ionicons
+                name={isStarred ? 'star' : 'star-outline'}
+                size={18}
+                color={isStarred ? '#f59e0b' : '#94a3b8'}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.audioButton}
+              onPress={() => handleSpeak(item.word)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="volume-medium" size={18} color="#ffffff" />
+            </TouchableOpacity>
+          </View>
         </View>
-    )
+
+        {item.phonetic ? <Text style={styles.phoneticText}>{item.phonetic}</Text> : null}
+        <Text style={styles.definitionText}>{item.definition}</Text>
+        {item.example ? <Text style={styles.exampleText}>"{item.example}"</Text> : null}
+
+        <View style={styles.cardFooterRow}>
+          <View style={[styles.statusBadge, item.wordStatus === 'studied' ? styles.studied : styles.unstudied]}>
+            <Text style={styles.statusText}>{item.wordStatus === 'studied' ? 'Studied' : 'Unstudied'}</Text>
+          </View>
+          {isStarred && (
+            <View style={styles.starredPill}>
+              <Ionicons name="star" size={10} color="#d97706" style={{ marginRight: 2 }} />
+              <Text style={styles.starredPillText}>Starred</Text>
+            </View>
+          )}
+        </View>
+      </View>
+    );
+  };
+
+  return (
+    <View style={styles.webWrapper}>
+      <LinearGradient colors={['#654190', '#667eea']} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={styles.phoneContainer}>
+        <StatusBar barStyle="light-content" />
+
+        {/* ═══════════════════ LIST VIEW ═══════════════════ */}
+        {viewState === 'list' && (
+          <>
+            {/* Header */}
+            <View style={styles.headerSection}>
+              <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, resizeMode: 'contain' }} />
+              </TouchableOpacity>
+              <View style={styles.headerTextContainer}>
+                <Text style={styles.appName}>My Vocabulary</Text>
+                <Text style={styles.appSubtitle}>
+                  {selectedTopic ? `${selectedTopic.topic_name} · ` : ''}{vocabularies.length} words
+                </Text>
+              </View>
+              <TouchableOpacity style={styles.addButton} onPress={() => setViewState('add')}>
+                <Ionicons name="add" size={20} color="#ffffff" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Search bar */}
+            <View style={styles.searchSection}>
+              <View style={styles.searchContainer}>
+                <Ionicons name="search" size={18} color="rgba(255,255,255,0.7)" style={{ marginLeft: 4 }} />
+                <TextInput
+                  placeholder="Search word or meaning..."
+                  placeholderTextColor="rgba(255,255,255,0.55)"
+                  style={styles.searchInput}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  clearButtonMode="while-editing"
+                />
+                {searchQuery ? (
+                  <TouchableOpacity onPress={() => setSearchQuery('')}>
+                    <Ionicons name="close-circle" size={16} color="rgba(255,255,255,0.7)" style={{ marginRight: 4 }} />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            </View>
+
+            {/* White card with filter + list */}
+            <View style={styles.whiteCardContainer}>
+              {/* Filter row */}
+              <View style={styles.filterRow}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterTabsScroll}>
+                  {[
+                    { key: 'all', label: 'All' },
+                    { key: 'starred', label: `⭐ Starred (${starredWordIds.size})` },
+                    { key: 'studied', label: 'Studied' },
+                    { key: 'unstudied', label: 'Unstudied' },
+                  ].map((f) => (
+                    <TouchableOpacity
+                      key={f.key}
+                      style={[styles.filterButton, selectedFilter === f.key && styles.selectedFilter]}
+                      onPress={() => setSelectedFilter(f.key)}
+                    >
+                      <Text style={[styles.filterText, selectedFilter === f.key && styles.selectedFilterText]}>{f.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                {/* Topic funnel icon */}
+                <TouchableOpacity onPress={() => setIsTopicModalVisible(true)} activeOpacity={0.7} style={{ paddingLeft: 8 }}>
+                  <Ionicons
+                    name={selectedTopicId !== null ? 'funnel' : 'funnel-outline'}
+                    size={18}
+                    color={selectedTopicId !== null ? '#6366f1' : '#94a3b8'}
+                  />
+                  {selectedTopicId !== null && <View style={styles.topicFilterActiveDot} />}
+                </TouchableOpacity>
+              </View>
+
+              {/* Active topic banner */}
+              {selectedTopic && (
+                <View style={styles.activeTopicBanner}>
+                  <View style={styles.activeTopicInfo}>
+                    <Ionicons name="pricetag" size={13} color="#6366f1" style={{ marginRight: 6 }} />
+                    <Text style={styles.activeTopicLabel}>Topic: </Text>
+                    <Text style={styles.activeTopicName} numberOfLines={1}>{selectedTopic.topic_name}</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setSelectedTopicId(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Text style={styles.clearTopicText}>Clear</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Count label */}
+              <Text style={styles.countLabel}>{displayList.length} word{displayList.length !== 1 ? 's' : ''}</Text>
+
+              {/* Word FlatList */}
+              <FlatList
+                style={{ width: '100%', flex: 1 }}
+                contentContainerStyle={styles.listContent}
+                data={displayList}
+                renderItem={renderVocabularyCard}
+                keyExtractor={(item) => String(item.id)}
+                showsVerticalScrollIndicator={false}
+                refreshing={refreshing}
+                onRefresh={handleRefresh}
+                ListEmptyComponent={
+                  loading ? (
+                    <View style={styles.centerState}>
+                      <ActivityIndicator size="large" color="#667eea" />
+                      <Text style={styles.stateText}>Loading words...</Text>
+                    </View>
+                  ) : error ? (
+                    <View style={styles.centerState}>
+                      <Ionicons name="alert-circle-outline" size={40} color="#ef4444" />
+                      <Text style={styles.errorText}>{error}</Text>
+                      <TouchableOpacity style={styles.retryBtn} onPress={fetchVocabularies}>
+                        <Text style={styles.retryText}>Retry</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : selectedFilter === 'starred' ? (
+                    <View style={styles.centerState}>
+                      <Ionicons name="star-outline" size={44} color="#94a3b8" />
+                      <Text style={styles.stateText}>No starred words yet.</Text>
+                      <Text style={styles.stateSubText}>Tap ⭐ on any word to save it here.</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.centerState}>
+                      <Ionicons name="book-outline" size={44} color="#94a3b8" />
+                      <Text style={styles.stateText}>No words found.</Text>
+                    </View>
+                  )
+                }
+              />
+            </View>
+          </>
+        )}
+
+        {/* ═══════════════════ ADD WORD VIEW ═══════════════════ */}
+        {viewState === 'add' && (
+          <>
+            <View style={styles.headerSection}>
+              <TouchableOpacity onPress={() => setViewState('list')} style={styles.backButton}>
+                <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, resizeMode: 'contain' }} />
+              </TouchableOpacity>
+              <View style={styles.headerTextContainer}>
+                <Text style={styles.appName}>Add Vocabulary</Text>
+                <Text style={styles.appSubtitle}>Add new words to your deck</Text>
+              </View>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+              <View style={[styles.whiteCardContainer, { paddingBottom: 32 }]}>
+                <View style={styles.addWordContainer}>
+
+                  {/* Topic selector */}
+                  <Text style={styles.addWordContainerTitle}>TARGET TOPIC</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                    {topics.map((t) => {
+                      const sel = (newTopicId || selectedTopicId) === t.topic_id;
+                      return (
+                        <TouchableOpacity
+                          key={t.topic_id}
+                          style={[styles.formTopicChip, sel && styles.formTopicChipSel]}
+                          onPress={() => setNewTopicId(t.topic_id)}
+                        >
+                          <Text style={[styles.formTopicChipText, sel && styles.formTopicChipTextSel]}>
+                            {t.topic_name}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+
+                  <Text style={styles.addWordContainerTitle}>WORD / PHRASE *</Text>
+                  <View style={styles.addWordInputContainer}>
+                    <TextInput placeholder="e.g. Resilience" style={styles.addWordInput} value={newWord} onChangeText={setNewWord} />
+                  </View>
+
+                  <Text style={styles.addWordContainerTitle}>PHONETIC</Text>
+                  <View style={styles.addWordInputContainer}>
+                    <TextInput placeholder="e.g. /rɪˈzɪl.jəns/" style={styles.addWordInput} value={newPhonetic} onChangeText={setNewPhonetic} />
+                  </View>
+
+                  <Text style={styles.addWordContainerTitle}>VIETNAMESE MEANING *</Text>
+                  <View style={styles.addWordInputContainer}>
+                    <TextInput placeholder="e.g. Khả năng phục hồi" style={styles.addWordInput} value={newMeaningVi} onChangeText={setNewMeaningVi} />
+                  </View>
+
+                  <Text style={styles.addWordContainerTitle}>EXAMPLE SENTENCE (ENGLISH) *</Text>
+                  <View style={styles.addWordInputContainer}>
+                    <TextInput placeholder="e.g. She showed great resilience." style={styles.addWordInput} value={newExampleEn} onChangeText={setNewExampleEn} multiline />
+                  </View>
+
+                  <Text style={styles.addWordContainerTitle}>EXAMPLE TRANSLATION (VIETNAMESE) *</Text>
+                  <View style={styles.addWordInputContainer}>
+                    <TextInput placeholder="e.g. Cô ấy thể hiện sự kiên cường tuyệt vời." style={styles.addWordInput} value={newExampleVi} onChangeText={setNewExampleVi} multiline />
+                  </View>
+
+                  <Text style={styles.addWordContainerTitle}>PART OF SPEECH</Text>
+                  <View style={styles.wordTypeButtonContainer}>
+                    {WORD_TYPES.map((t) => {
+                      const sel = selectedType === t.id;
+                      return (
+                        <TouchableOpacity
+                          key={t.id}
+                          style={[styles.wordTypeButton, sel && styles.wordTypeButtonSelected]}
+                          onPress={() => setSelectedType(t.id)}
+                        >
+                          <Text style={[styles.wordTypeButtonText, sel && styles.wordTypeButtonTextSelected]}>{t.label}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.addWordButton, submitting && { opacity: 0.6 }]}
+                    onPress={handleAddWordSubmit}
+                    disabled={submitting}
+                  >
+                    {submitting
+                      ? <ActivityIndicator size="small" color="#ffffff" />
+                      : <Text style={styles.addWordButtonText}>Save Word to Database</Text>}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </ScrollView>
+          </>
+        )}
+
+        {/* ═══════════════════ TOPIC FILTER MODAL ═══════════════════ */}
+        <Modal visible={isTopicModalVisible} transparent animationType="fade" onRequestClose={() => setIsTopicModalVisible(false)}>
+          <View style={styles.modalOverlay}>
+            <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setIsTopicModalVisible(false)} />
+            <View style={styles.modalContainer}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Filter by Topic</Text>
+                <TouchableOpacity onPress={() => setIsTopicModalVisible(false)}>
+                  <Ionicons name="close" size={20} color="#64748b" />
+                </TouchableOpacity>
+              </View>
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 8 }}>
+                <TouchableOpacity
+                  style={[styles.topicOptionItem, selectedTopicId === null && styles.topicOptionItemActive]}
+                  onPress={() => { setSelectedTopicId(null); setIsTopicModalVisible(false); }}
+                >
+                  <Ionicons name="grid-outline" size={16} color={selectedTopicId === null ? '#6366f1' : '#64748b'} style={{ marginRight: 10 }} />
+                  <Text style={[styles.topicOptionText, selectedTopicId === null && styles.topicOptionTextActive]}>All Topics</Text>
+                  {selectedTopicId === null && <Ionicons name="checkmark" size={16} color="#6366f1" style={{ marginLeft: 'auto' }} />}
+                </TouchableOpacity>
+                {topics.map((t) => {
+                  const active = selectedTopicId === t.topic_id;
+                  return (
+                    <TouchableOpacity
+                      key={t.topic_id}
+                      style={[styles.topicOptionItem, active && styles.topicOptionItemActive]}
+                      onPress={() => { setSelectedTopicId(t.topic_id); setIsTopicModalVisible(false); }}
+                    >
+                      <Ionicons name="pricetag-outline" size={16} color={active ? '#6366f1' : '#64748b'} style={{ marginRight: 10 }} />
+                      <Text style={[styles.topicOptionText, active && styles.topicOptionTextActive]} numberOfLines={1}>{t.topic_name}</Text>
+                      {active && <Ionicons name="checkmark" size={16} color="#6366f1" style={{ marginLeft: 'auto' }} />}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ═══════════════════ BOTTOM NAV ═══════════════════ */}
+        <View style={styles.quickNavContainer}>
+          <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Home')}>
+            <Ionicons name="home" size={20} color="#919191" />
+            <Text style={styles.navLabel}>Home</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('FlashcardScreen')}>
+            <Ionicons name="albums" size={20} color="#919191" />
+            <Text style={styles.navLabel}>Cards</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('WordlistScreen')}>
+            <Ionicons name="book" size={20} color="#667eea" />
+            <Text style={[styles.navLabel, { color: '#667eea' }]}>Words</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('AIReadingScreen')}>
+            <Ionicons name="sparkles" size={20} color="#919191" />
+            <Text style={styles.navLabel}>Reading</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('VocabQuizScreen')}>
+            <Ionicons name="checkmark-circle" size={20} color="#919191" />
+            <Text style={styles.navLabel}>Quiz</Text>
+          </TouchableOpacity>
+        </View>
+
+      </LinearGradient>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
-    // Khung bọc ngoài cùng trên Web để căn giữa mô phỏng điện thoại
-    webWrapper: {
-        flex: 1,
-        backgroundColor: Platform.OS === 'web' ? '#f0f2f5' : 'transparent',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-
-    
-    phoneContainer: {
-        
-        width: Platform.OS === 'web' ? 400 : '100%',
-        height: Platform.OS === 'web' ? 800 : '100%',
-        
-        // Tạo hiệu ứng giống chiếc điện thoại khi xem trên máy tính
-        borderRadius: Platform.OS === 'web' ? 35 : 0,
-        overflow: 'hidden',
-        
-        // Đổ bóng cho khung trên Web
-        ...Platform.select({
-            web: {
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 12 },
-                shadowOpacity: 0.15,
-                shadowRadius: 20,
-            }
-        })
-    },
-
-    // Cấu hình chuẩn cho ScrollView con bên trong
-    scrollContainer: {
-        flexGrow: 1, 
-        justifyContent: 'space-between', // Đẩy Header lên đỉnh, Card trắng xuống đáy
-    },
-
-    headerSection: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        width: '100%',
-        paddingTop: Platform.OS === 'ios' ? 60 : 40, // Chừa khoảng trống an toàn cho tai thỏ điện thoại
-        paddingHorizontal: 20,
-        paddingBottom: 20,
-    },
-    appName: {
-        fontSize: 26,
-        fontWeight: '700',
-        color: '#ffffff',
-        letterSpacing: -0.5,
-    },
-    appSubtitle: {
-        fontSize: 16,
-        color: '#e2e8f0',
-        textAlign: 'center',
-        opacity: 0.9,
-    },
-
-    
-    whiteCardContainer: {
-        flex: 1, // Tự động chiếm trọn phần không gian trống bên dưới
-        backgroundColor: '#F0F2FF',
-        width: '100%',
-        minHeight: 450, // Đảm bảo card luôn có độ cao tối thiểu kể cả khi chưa có dữ liệu inside
-        alignItems: 'center',
-        paddingHorizontal: 24,
-
-        paddingTop: 10, // Tạo khoảng cách giữa phần trên của card và nội dung bên trong
-    },
-
-    appWelcome: {
-        alignSelf: 'flex-start',
-        marginLeft: 10,
-        marginTop: 10,
-        fontSize: 24,
-        fontWeight: '700',
-        color: '#FFF3F3',
-
-    },
-
-    welcomeSubtitle: {
-        marginTop: 10,
-        fontSize: 24,
-        color: '#919191',
-        textAlign: 'center',
-        opacity: 0.9,
-    },
-
-
-    googleButton: {
-        fontSize: 18,
-        color: '#000000',
-        fontWeight: '600',
-    },
-
-    googleButtonContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#ffffff',
-
-        borderRadius: 50,
-        margin: 10,
-
-        paddingVertical: 10,
-        paddingHorizontal: 20,
-    },
-
-    facebookButton: {
-        fontSize: 18,
-        color: '#ffffff',
-        fontWeight: '600',
-        
-    },
-
-    facebookButtonContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#1877F2',
-        borderRadius: 50,
-
-        margin: 10,
-
-        paddingVertical: 10,
-        paddingHorizontal: 20,
-    },
-
-    //Email Section styles
-    emailSection: {
-        marginTop: 10,
-        width: '100%',
-    },
-    emailSectionTitle: {
-        fontSize: 20,
-        fontWeight: '600',
-        marginBottom: 8,
-    },
-    emailInput: {
-        
-        backgroundColor: '#FFFBFB',
-        borderRadius: 20,
-        padding: 10,
-        fontSize: 16,
-
-        paddingHorizontal: 30,
-        paddingVertical: 20,
-    },
-
-    //Password Section styles
-    passwordSection: {
-        marginTop: 20,
-        width: '100%',  
-    },
-
-    passwordSectionTitle: {
-        fontSize: 20,
-        fontWeight: '600',
-        marginBottom: 8,
-    },
-
-    passwordInput: {
-        
-        backgroundColor: '#FFFBFB',    
-        borderRadius: 20,
-        padding: 10,
-        fontSize: 16,
-
-        paddingHorizontal: 30,
-        paddingVertical: 20,
-    },
-
-    loginButton: {
-        paddingVertical: 15,
-        paddingHorizontal: 30,
-        backgroundColor: '#1877F2',
-        borderRadius: 20,
-        marginTop: 30,
-        width: '100%',
-        alignItems: 'center',
-    },
-
-    loginButtonText: {
-
-        color: '#ffffff',
-        fontSize: 18,
-        fontWeight: '600',
-        textAlign: 'center',
-    },
-
-    forgotPassword: {
-        color: '#667eea',
-        fontWeight: '600',
-        marginTop: 10,
-        textAlign: 'right',
-    },
-
-
-    
-    statsRow: {
-        flexDirection: 'row',
-        marginTop: 20,
-        width: '100%',
-    },
-
-    statsCard: {
-        flex: 1,                  
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: 10,      
-        borderRadius: 18,         
-
-        //Độ opacity và màu sắc của tấm kính mờ
-        backgroundColor: 'rgba(255, 255, 255, 0.12)', 
-        borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.25)',  
-
-        // Đổ bóng dịu nhẹ phía dưới tấm kính 
-        shadowColor: 'rgba(31, 38, 135, 0.15)',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.2,
-        shadowRadius: 10,
-
-        
-        elevation: 3,
-
-        marginHorizontal: 5,    
-    },
-    
-    statsValue: {
-        fontSize: 16,
-        fontWeight: '700',
-        color: '#ffffff',
-
-    },
-
-    statsLabel: {
-        fontSize: 14,
-        color: '#ffffff',
-        fontWeight: '500',
-    },
-
-    wordRemainingContainer: {
-        justifyContent: 'space-between',
-        backgroundColor: '#ffffff',
-        borderRadius: 20,
-        paddingVertical: 15,
-        paddingHorizontal: 20,
-        marginTop: -30,
-        width: '100%',
-        alignItems: 'stretch',
-    },
-
-    wordCountTitle: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 10,
-        width: '100%',
-    },
-
-    wordCountLabelGroup: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-
-    wordCountValue: {
-        fontSize: 12,
-        fontWeight: '700',
-        color: '#5500FF',
-    },
-
-    wordCountHeader: {
-        fontSize: 20,
-        fontWeight: '700',
-        color: '#000000',
-        marginLeft: 8,
-    },
-
-    progressContainer: {
-        height: 10,
-        width: '100%',
-        backgroundColor: '#e0e0e0',
-        borderRadius: 5,
-        overflow: 'hidden',
-        marginTop: 10,
-    },
-
-    progressBar: {
-        height: '100%',
-        backgroundColor: '#667eea',
-        borderRadius: 5,
-    },
-
-    practiceButtonsContainer: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        marginTop: 16,
-        gap: 10,
-        justifyContent: 'space-between',
-        width: '100%',
-    },
-
-    practiceButton: {
-        width: '47.8%', // Chiếm gần nửa màn hình, chừa khoảng trống cho gap tự căn giữa
-        backgroundColor: '#ffffff',
-        borderRadius: 24,
-        padding: 16,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.03,
-        shadowRadius: 10,
-        elevation: 3,
-
-
-
-    }, 
-
-    buttonIcon: {
-        width: 26,
-        height: 26,
-        resizeMode: 'contain',
-    },
-    buttonMainText: {
-        fontSize: 18,
-        fontWeight: '700',
-        color: '#0f172a',
-        marginBottom: 4,
-    },
-    buttonSubText: {
-        fontSize: 14,
-        color: '#64748b',
-        fontWeight: '500',
-    },
-
-    iconCircle: {
-        width: 48,
-        height: 48,
-        borderRadius: 18,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 10,
-    },
-
-    quickNavContainer: {
-        backgroundColor: '#ffffff',
-        flexDirection: 'row',
-
-        width: '100%', 
-        alignSelf: 'stretch',
-    
-    },
-
-    notificationButton: {
-        position: 'absolute',
-        top: 50,
-        right: 60,
-        width: 32,
-        height: 32,
-        alignItems: 'center',
-        justifyContent: 'center',     
-        borderRadius: 22,         
-
-        //Độ opacity và màu sắc của tấm kính mờ
-        backgroundColor: 'rgba(255, 255, 255, 0.12)', 
-        borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.25)',  
-
-        // Đổ bóng dịu nhẹ phía dưới tấm kính 
-        shadowColor: 'rgba(31, 38, 135, 0.15)',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.2,
-        shadowRadius: 10,
-
-        
-        elevation: 3,
-    },
-
-    profileButton: {
-        position: 'absolute',
-        top: 50,
-        right: 20,
-        width: 32,
-        height: 32,
-        alignItems: 'center',
-        justifyContent: 'center',     
-        borderRadius: 22,
-
-        //Độ opacity và màu sắc của tấm kính mờ
-        backgroundColor: 'rgba(255, 255, 255, 0.12)', 
-        borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.25)',  
-
-        // Đổ bóng dịu nhẹ phía dưới tấm kính 
-        shadowColor: 'rgba(31, 38, 135, 0.15)',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.2,
-        shadowRadius: 10,
-
-        
-        elevation: 3,
-    },
-
-    backButton: {
-        width: 32,
-        height: 32,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: 12,
-        backgroundColor: 'rgba(255, 255, 255, 0.15)',
-        borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.25)',
-    },
-
-    addButton: {
-        width: 32,
-        height: 32,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: 12,
-        backgroundColor: 'rgba(255, 255, 255, 0.15)',
-        borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.25)',
-        marginLeft: 'auto',
-    },
-
-    avatarSection: {
-        marginTop: 20,
-        alignItems: 'center',
-        
-    },
-
-    avatarWrapper: {
-        position: 'relative',
-        width: 128,
-        height: 128,
-        borderRadius: 60,
-        padding: 4,
-        backgroundColor: 'rgba(255, 255, 255, 0.16)',
-        borderColor: 'rgba(255, 255, 255, 0.28)',
-
-        borderWidth: 2,         
-        shadowColor: '#1f2937',
-        shadowOffset: { width: 0, height: 12 },
-        shadowOpacity: 0.18,
-        shadowRadius: 16,
-        elevation: 5,
-
-    },
-
-    avatarImage: {
-        width: '100%',
-        height: '100%',
-        borderRadius: 60,
-        backgroundColor: '#ffffff',
-    },
-
-    avatarPlaceholder: {
-        width: '100%',
-        height: '100%',
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: 60,
-    },
-
-    editAvatarButton: {
-        position: 'absolute',
-        right: 2,
-        bottom: 2,
-        width: 34,
-        height: 34,
-        borderRadius: 17,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#667eea',
-        borderWidth: 2,
-        borderColor: '#ffffff',
-        shadowColor: '#1f2937',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.18,
-        shadowRadius: 8,
-        elevation: 4,
-        zIndex: 2,
-    },
-
-    userNameText: {
-        fontSize: 26,
-        fontWeight: '700',
-        color: '#ffffff',
-        marginTop: 10,
-        justifyContent: 'center',
-        alignItems: 'center',
-        textAlign: 'center',
-    },
-
-    userNameEmail: {
-
-        fontSize: 18,
-        color: '#FFF3F3',
-        marginTop: 4,
-        justifyContent: 'center',
-        alignItems: 'center',
-        textAlign: 'center',
-    },
-
-    englishLevelContainer: {
-        marginTop: 6,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(255, 255, 255, 0.14)',
-        borderColor: 'rgba(255, 255, 255, 0.18)',
-        borderWidth: 1,
-        borderRadius: 999,
-        paddingVertical: 7,
-        paddingHorizontal: 16,
-        alignSelf: 'center',
-    },
-
-    englishLevelText: {
-        marginLeft: 8,
-        fontSize: 14,
-        color: '#ffffff',
-        fontWeight: '600',
-    },
-
-    levelContainer: {
-        flexDirection: 'row',
-        marginTop: 8,
-        borderRadius: 999,
-        paddingVertical: 7,
-        paddingHorizontal: 16,
-        alignSelf: 'center',
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'rgba(209, 182, 15, 0.4)',
-        borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.18)',
-    },
-
-    levelText: {
-        marginLeft: 8,
-        fontSize: 14,
-        color: '#FFEC1A',
-        fontWeight: '600',
-    },
-
-    levelIcon: {
-        width: 16,
-        height: 16,
-        resizeMode: 'contain',
-    },
-
-    levelWrapper: {
-        flexDirection: 'row',
-        paddingHorizontal: 16,  
-        justifyContent: 'center',
-        alignItems: 'center',
-
-        gap: 12, // Khoảng cách giữa English Level và Level
-        
-    },
-    
-
-    statsGridCard: { 
-        marginTop: -30,
-        backgroundColor: '#ffffff', 
-        borderRadius: 24, 
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-        shadowColor: '#000', 
-        shadowOpacity: 0.04, 
-        shadowRadius: 14, 
-        shadowOffset: { width: 0, height: 8 },
-        elevation: 3,
-
-        gap: 8, // Khoảng cách giữa các hàng trong lưới
-        width: '100%',
-    },
-
-    gridRow: { 
-        flexDirection: 'row', 
-        justifyContent: 'space-between',
-        alignItems: 'stretch',
-        gap: 10,
-    },
-    gridItem: { 
-        flex: 1, 
-        alignItems: 'center', 
-        justifyContent: 'center',
-        minHeight: 76,
-        paddingVertical: 6,
-        paddingHorizontal: 10,
-        marginHorizontal: 0,
-       
-    },
-    gridLabel: {
-        fontSize: 11, 
-        color: '#64748b', 
-        marginTop: 4, 
-        fontWeight: '600',
-        letterSpacing: 0.8,
-        textTransform: 'uppercase',
-        textAlign: 'center',
-    },
-
-    chartCard: { 
-        backgroundColor: '#fff', 
-        borderRadius: 24,
-        paddingVertical: 16, 
-        paddingHorizontal: 16, 
-        marginTop: 16, 
-        marginBottom: 10,
-        shadowColor: '#000', 
-        shadowOpacity: 0.03, 
-        shadowRadius: 10, 
-        elevation: 2, 
-        borderWidth: 1, 
-        borderColor: '#eef2ff',
-        width: '100%' 
-    },
-
-    chartHeader: { 
-        flexDirection: 'row', 
-        justifyContent: 'space-between', 
-        alignItems: 'center', 
-        marginBottom: 10 
-    },
-    chartTitle: { 
-        fontSize: 18, 
-        fontWeight: '700', 
-        color: '#1e293b' 
-    
-    },
-    fullHistoryText: { 
-        fontSize: 14, 
-        color: '#6366f1', 
-        fontWeight: '600' 
-    },
-    chartBarWrapper: { 
-        flexDirection: 'row', 
-        justifyContent: 'space-between', 
-        alignItems: 'flex-end', 
-        height: 110, 
-         
-    },
-    chartColumn: {
-        alignItems: 'center', 
-        flex: 1, 
-        justifyContent: 'flex-end', 
-    },
-    barBackground: { 
-        height: 82, 
-        width: '72%',
-        maxWidth: 30, 
-        backgroundColor: '#eef2ff', 
-        borderRadius: 10, 
-        justifyContent: 'flex-end', 
-        overflow: 'hidden' 
-    },
-    barFill: { 
-        width: '100%', 
-        borderTopLeftRadius: 10, 
-        borderTopRightRadius: 10, 
-        borderBottomLeftRadius: 10, 
-        borderBottomRightRadius: 10 
-    },
-    chartDayText: { 
-        fontSize: 12, 
-        color: '#94a3b8', 
-        marginTop: 6, 
-        fontWeight: '600' 
-    },
-    chartSubText: { 
-        fontSize: 13, 
-        color: '#64748b', 
-        textAlign: 'center', 
-        marginTop: 14, 
-        fontWeight: '500' 
-    },
-
-    
-    achievementsSection: {
-        width: '100%',
-        marginBottom: 20,
-    },
-    
-    // Cấu hình khoảng đệm (padding) cho vùng nội dung bên trong thanh cuộn ngang
-    horizontalScrollContent: {
-        paddingHorizontal: 4, // Tránh việc card đầu và cuối bị dính sát viền
-        paddingVertical: 10,  // Chừa khoảng trống để đổ bóng đổ xuống không bị cắt
-        gap: 12,              // Tạo khoảng cách giữa các card thành tựu
-    },
-
-    achievementCard: {
-        width: 140,           // BẮT BUỘC: Đặt chiều rộng cố định cho mỗi ô khi cuộn ngang
-        backgroundColor: '#ffffff',
-        borderRadius: 20,
-        padding: 10,
-        alignItems: 'center', // Căn giữa tất cả icon và chữ theo chiều dọc
-        
-        // Đổ bóng nhẹ cho từng ô thành tựu nổi lên
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.03,
-        shadowRadius: 8,
-        elevation: 2,
-    },
-
-    achievementInfo: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginTop: 8,
-        width: '100%',
-    },
-
-    gridIcon: {
-        width: 25,
-        height: 25,
-        resizeMode: 'contain',
-    },
-
-    gridValue: {
-        fontSize: 12,
-        fontWeight: '700',
-        color: '#1e293b',
-        numberOfLines: 1,      // Giới hạn 1 dòng nếu tên quá dài
-        ellipsizeMode: 'tail', // Hiện dấu ... nếu bị tràn chữ
-    },
-
-    achievementSub: {
-        fontSize: 11,
-        color: '#64748b',
-        marginTop: 2,
-        fontWeight: '500',
-    },
-
-    checkIcon: {
-        position: 'absolute',
-        top: 10,    // Cách mép trên cùng của card 10px
-        right: 10,  // Cách mép bên phải của card 10px
-        zIndex: 1,  // Đảm bảo icon luôn nổi lên trên cùng không bị ảnh hay chữ đè mất,
-    },
-
-    accountSettingTitle: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#000000',
-        opacity: 0.6,
-       
-        borderBottomWidth: 1,
-        borderBottomColor: '#e5e7eb',
-        paddingBottom: 8,
-    },
-
-    accountSetting: {
-        width: '100%',
-        marginTop: 20,
-        marginBottom: 20,
-        backgroundColor: '#ffffff',
-        borderRadius: 20,
-        padding: 16,
-    
-    },
-    accountSettingItem: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingVertical: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: '#e5e7eb',
-    },
-
-    accountSettingLabel: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#1e293b',
-    },
-
-    accountDeleteLabel: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#ef4444', // Màu đỏ để nhấn mạnh tính nguy hiểm
-    },
-
-    accountSettingSubLabel: {
-        fontSize: 12,
-        color: '#64748b',
-        marginTop: 2,
-    },
-
-    appearenceSetting: {
-        width: '100%',
-        marginBottom: 20,
-        backgroundColor: '#ffffff',
-        borderRadius: 20,
-        padding: 16,
-    },
-
-    customToggle: {
-        width: 54,
-        height: 28,
-        borderRadius: 16,
-        backgroundColor: '#e2e8f0',
-        justifyContent: 'flex-start',
-        alignItems: 'center',
-        paddingHorizontal: 2,
-        flexDirection: 'row',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 3,
-        elevation: 2,
-    },
-
-    customToggleActive: {
-        backgroundColor: '#667eea',
-        justifyContent: 'flex-end',
-    },
-
-    customToggleThumb: {
-        width: 25,
-        height: 25,
-        borderRadius: 14,
-        backgroundColor: '#ffffff',
-        justifyContent: 'center',
-        alignItems: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.15,
-        shadowRadius: 3,
-        elevation: 3,
-    },
-
-    customToggleThumbActive: {
-        backgroundColor: '#ffffff',
-    },
-
-    learningSetting: {
-        width: '100%',
-        marginBottom: 20,
-        backgroundColor: '#ffffff',
-        borderRadius: 20,
-        padding: 16,
-    },
-
-    learningGoal: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#4160ed',
-        backgroundColor: '#e0e7ff',
-        paddingVertical: 3,
-        paddingHorizontal: 8,
-        borderRadius: 12,
-        borderColor: '#c7d2fe',
-        borderWidth: 1,
-    },
-
-    card: {
-        backgroundColor: '#ffffff',
-        borderRadius: 20,
-        padding: 18,
-        marginBottom: 16,
-        // Effect đổ bóng
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.05,
-        shadowRadius: 10,
-        elevation: 3,
-    },
-    cardHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-    },
-    wordGroup: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    wordText: {
-        fontSize: 20,
-        fontWeight: '800',
-        color: '#1e293b',
-    },
-    badge: {
-        backgroundColor: '#e0e7ff',
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        borderRadius: 8,
-
-        alignContent: 'center',
-        justifyContent: 'center',
-    },
-    badgeText: {
-        fontSize: 12,
-        fontWeight: '600',
-        color: '#4f46e5',
-    },
-    audioButton: {
-        width: 30,
-        height: 30,
-        borderRadius: 12,
-        backgroundColor: '#a855f7',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    phoneticText: {
-        fontSize: 13,
-        color: '#64748b',
-        marginBottom: 4,
-        fontStyle: 'italic',
-    },
-    definitionText: {
-        fontSize: 14,
-        color: '#334155',
-        lineHeight: 20,
-        fontWeight: '500',
-    },
-
-    exampleText: {
-        fontSize: 13,
-        fontWeight: '500',
-        color: '#7d7f81',
-        marginTop: 4,
-        fontStyle: 'italic',
-    },
-
-    centerState: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    errorText: {
-        color: '#ef4444',
-        fontSize: 14,
-        marginBottom: 10,
-    },
-    retryBtn: {
-        backgroundColor: '#667eea',
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 8,
-    },
-    retryText: {
-        color: '#ffffff',
-        fontWeight: '600',
-    },
-
-    searchInput: {
-        flex: 1,
-        height: '100%',
-        paddingHorizontal: 10,
-        fontSize: 16,
-        fontWeight: '500',
-        color: '#e8eaed',
-    },
-
-    searchContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'flex-start',
-        
-        backgroundColor: 'rgba(255, 255, 255, 0.20)', 
-        borderRadius: 15,
-        paddingHorizontal: 10,
-        marginTop: -5,
-        width: '90%',
-        opacity: 0.6,
-
-        height: 42,
-        verticalAlign: 'center',
-    },
-
-    filterContainer: {
-        flexDirection: 'row',
-        justifyContent: 'flex-start',
-        gap: 8,
-        width: '100%',
-        marginBottom: 10,
-    },
-
-    filterButton: {
-
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 12,
-        backgroundColor: '#e0e7ff',
-        alignItems: 'center',
-    },
-
-    selectedFilter: {
-        backgroundColor: '#4f46e5',
-    },
-
-    filterText: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#4f46e5',
-    },
-
-    selectedFilterText: {
-        color: '#ffffff',
-    },
-
-    filterIcon: {
-        height: 24,
-        width: 24,
-        paddingHorizontal: 4,
-        paddingVertical: 4,
-        backgroundColor: '#e0e7ff',
-        borderRadius: 12,
-    },
-
-    filterRow: {
-        marginTop: 10,
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        width: '100%',
-    },
-
-    headerTextContainer: {
-        marginLeft: 16,
-    },
-    
-    addWordContainer: {
-        backgroundColor: '#ffffff',
-        borderRadius: 20,
-        padding: 16,
-        width: '100%',
-        marginTop: 20,
-        paddingHorizontal: 30,
-        paddingVertical: 20,
-    },
-
-    addWordContainerTitle: {
-        fontSize: 20,
-        fontWeight: '600',
-        color: '#919191',
-        marginBottom: 8,
-    },
-
-    addWordInput: {
-        fontSize: 16,
-        color: '#919191',
-        fontWeight: '500',
-    },
-
-    addWordInputContainer: {
-        backgroundColor: '#f0f2ff',
-        borderRadius: 12,
-        paddingHorizontal: 12,
-        paddingVertical: 12,
-        marginBottom: 12,
-    },
-
-    wordTypeButton: {
-        backgroundColor: '#f0f2ff',
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#e0e7ff',
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: 8,
-        paddingHorizontal: 10,
-    },
-
-    wordTypeButtonText: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#4f46e5',
-    },
-
-    wordTypeButtonSelected: {
-        backgroundColor: '#4f46e5',
-    },
-
-    wordTypeButtonTextSelected: {
-        color: '#ffffff',
-    },
-
-    wordTypeButtonContainer: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        width: '100%',
-        marginBottom: 12,
-        paddingHorizontal: 4,
-        gap: 8, // Khoảng cách giữa các nút loại từ
-    },
-
-    addWordButton: {
-        backgroundColor: '#4f46e5',
-        borderRadius: 12,
-        paddingVertical: 12,
-        alignItems: 'center',
-        marginTop: 10,
-    },
-    addWordButtonText: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#ffffff',
-    },
+  // ── Layout ──────────────────────────────────────────────────────────────────
+  webWrapper: { flex: 1, backgroundColor: Platform.OS === 'web' ? '#f0f2f5' : 'transparent', justifyContent: 'center', alignItems: 'center' },
+  phoneContainer: { width: Platform.OS === 'web' ? 400 : '100%', height: Platform.OS === 'web' ? 800 : '100%', borderRadius: Platform.OS === 'web' ? 35 : 0, overflow: 'hidden', ...Platform.select({ web: { shadowColor: '#000', shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.15, shadowRadius: 20 } }) },
+  scrollContainer: { flexGrow: 1 },
+
+  // ── Header ───────────────────────────────────────────────────────────────────
+  headerSection: { flexDirection: 'row', alignItems: 'center', width: '100%', paddingTop: Platform.OS === 'ios' ? 60 : 40, paddingHorizontal: 20, paddingBottom: 12 },
+  headerTextContainer: { marginLeft: 14, flex: 1 },
+  appName: { fontSize: 24, fontWeight: '700', color: '#ffffff', letterSpacing: -0.3 },
+  appSubtitle: { fontSize: 12, color: 'rgba(255,255,255,0.8)', marginTop: 1 },
+  backButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.15)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' },
+  addButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.15)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', marginLeft: 'auto' },
+
+  // ── Search ───────────────────────────────────────────────────────────────────
+  searchSection: { width: '100%', paddingHorizontal: 20, marginBottom: 12 },
+  searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 14, paddingHorizontal: 10, height: 40, borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)' },
+  searchInput: { flex: 1, fontSize: 14, color: '#ffffff', paddingHorizontal: 8 },
+
+  // ── White card body ──────────────────────────────────────────────────────────
+  whiteCardContainer: { flex: 1, backgroundColor: '#F0F2FF', width: '100%', paddingHorizontal: 14, paddingTop: 12 },
+
+  // ── Filters ──────────────────────────────────────────────────────────────────
+  filterRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  filterTabsScroll: { flexDirection: 'row', gap: 8, paddingVertical: 4 },
+  filterButton: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, backgroundColor: '#e0e7ff' },
+  selectedFilter: { backgroundColor: '#4f46e5' },
+  filterText: { fontSize: 13, fontWeight: '600', color: '#4f46e5' },
+  selectedFilterText: { color: '#ffffff' },
+  topicFilterActiveDot: { position: 'absolute', top: -2, right: -2, width: 7, height: 7, borderRadius: 4, backgroundColor: '#6366f1', borderWidth: 1, borderColor: '#ffffff' },
+
+  // ── Active topic banner ───────────────────────────────────────────────────────
+  activeTopicBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#ede9fe', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 7, marginBottom: 8 },
+  activeTopicInfo: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  activeTopicLabel: { fontSize: 12, color: '#6366f1', fontWeight: '600' },
+  activeTopicName: { fontSize: 12, color: '#4f46e5', fontWeight: '700', flex: 1 },
+  clearTopicText: { fontSize: 12, color: '#6366f1', fontWeight: '600' },
+
+  // ── Count label ──────────────────────────────────────────────────────────────
+  countLabel: { fontSize: 12, color: '#64748b', fontWeight: '600', marginBottom: 6, paddingHorizontal: 2 },
+  listContent: { paddingBottom: 12 },
+
+  // ── Word card ────────────────────────────────────────────────────────────────
+  card: { backgroundColor: '#ffffff', borderRadius: 18, padding: 16, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 2 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  wordGroup: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  wordText: { fontSize: 18, fontWeight: '800', color: '#1e293b' },
+  badge: { backgroundColor: '#e0e7ff', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
+  badgeText: { fontSize: 11, fontWeight: '600', color: '#4f46e5' },
+  cardActionGroup: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  actionIconButton: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f1f5f9' },
+  starredIconButton: { backgroundColor: '#fef9c3' },
+  audioButton: { width: 30, height: 30, borderRadius: 10, backgroundColor: '#a855f7', justifyContent: 'center', alignItems: 'center' },
+  phoneticText: { fontSize: 12, color: '#64748b', marginBottom: 3, fontStyle: 'italic' },
+  definitionText: { fontSize: 14, color: '#334155', lineHeight: 20, fontWeight: '500' },
+  exampleText: { fontSize: 12, color: '#7d7f81', marginTop: 4, fontStyle: 'italic' },
+  cardFooterRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
+  statusBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 10 },
+  studied: { backgroundColor: '#dcfce7' },
+  unstudied: { backgroundColor: '#f1f5f9' },
+  statusText: { fontSize: 11, fontWeight: '600', color: '#475569' },
+  starredPill: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef9c3', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
+  starredPillText: { fontSize: 11, fontWeight: '700', color: '#a16207' },
+
+  // ── Empty / error states ──────────────────────────────────────────────────────
+  centerState: { alignItems: 'center', paddingVertical: 48, gap: 8 },
+  stateText: { fontSize: 14, color: '#64748b', textAlign: 'center', paddingHorizontal: 24 },
+  stateSubText: { fontSize: 12, color: '#94a3b8', textAlign: 'center' },
+  errorText: { color: '#ef4444', fontSize: 14, textAlign: 'center' },
+  retryBtn: { backgroundColor: '#667eea', paddingHorizontal: 20, paddingVertical: 8, borderRadius: 10, marginTop: 4 },
+  retryText: { color: '#ffffff', fontWeight: '600', fontSize: 14 },
+
+  // ── Add-word form ────────────────────────────────────────────────────────────
+  addWordContainer: { backgroundColor: '#ffffff', borderRadius: 20, padding: 20, marginTop: 16 },
+  addWordContainerTitle: { fontSize: 11, fontWeight: '700', color: '#94a3b8', letterSpacing: 1, marginBottom: 6, marginTop: 14 },
+  addWordInputContainer: { backgroundColor: '#f0f2ff', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, borderWidth: 1, borderColor: '#e0e7ff' },
+  addWordInput: { fontSize: 14, color: '#1e293b', fontWeight: '500' },
+  wordTypeButtonContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 4 },
+  wordTypeButton: { backgroundColor: '#f0f2ff', borderRadius: 12, borderWidth: 1, borderColor: '#e0e7ff', paddingVertical: 8, paddingHorizontal: 14 },
+  wordTypeButtonText: { fontSize: 13, fontWeight: '600', color: '#4f46e5' },
+  wordTypeButtonSelected: { backgroundColor: '#4f46e5', borderColor: '#4f46e5' },
+  wordTypeButtonTextSelected: { color: '#ffffff' },
+  addWordButton: { backgroundColor: '#4f46e5', borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 20 },
+  addWordButtonText: { fontSize: 15, fontWeight: '700', color: '#ffffff' },
+  formTopicChip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, backgroundColor: '#e0e7ff', marginRight: 8 },
+  formTopicChipSel: { backgroundColor: '#4f46e5' },
+  formTopicChipText: { fontSize: 13, fontWeight: '600', color: '#4f46e5' },
+  formTopicChipTextSel: { color: '#ffffff' },
+
+  // ── Topic filter modal ────────────────────────────────────────────────────────
+  modalOverlay: { flex: 1, justifyContent: 'flex-end' },
+  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
+  modalContainer: { backgroundColor: '#ffffff', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 20, paddingBottom: 32, maxHeight: '75%' },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  modalTitle: { fontSize: 17, fontWeight: '700', color: '#1e293b' },
+  topicOptionItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 13, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  topicOptionItemActive: { backgroundColor: '#ede9fe', borderRadius: 12, paddingHorizontal: 12, marginHorizontal: -12 },
+  topicOptionText: { fontSize: 14, color: '#475569', fontWeight: '500', flex: 1 },
+  topicOptionTextActive: { color: '#6366f1', fontWeight: '700' },
+
+  // ── Bottom nav ───────────────────────────────────────────────────────────────
+  quickNavContainer: { backgroundColor: '#ffffff', flexDirection: 'row', width: '100%' },
+  navItem: { flex: 1, alignItems: 'center', paddingVertical: 12 },
+  navLabel: { fontSize: 11, color: '#919191', marginTop: 3 },
 });

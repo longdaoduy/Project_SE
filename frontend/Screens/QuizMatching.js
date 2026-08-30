@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   StyleSheet, Text, View, StatusBar, Platform,
-  TouchableOpacity, Image, ActivityIndicator,
+  TouchableOpacity, Image, ActivityIndicator, ScrollView
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -10,23 +10,23 @@ import { getWords, buildMatchingPairs, saveLocalQuizResult } from '../api';
 const PAIR_COUNT = 6;
 
 export default function QuizMatching({ navigation, route }) {
-  const { topicId, topicTitle, userId = 1 } = route.params || {};
+  const { topicId, topicTitle, userId = 1, deckWords = null, limit = 6 } = route.params || {};
 
-  const [phase,        setPhase]        = useState('loading');
-  const [pairs,        setPairs]        = useState([]);
-  const [leftItems,    setLeftItems]    = useState([]);
-  const [rightItems,   setRightItems]   = useState([]);
+  const [phase, setPhase] = useState('loading');
+  const [pairs, setPairs] = useState([]);
+  const [leftItems, setLeftItems] = useState([]);
+  const [rightItems, setRightItems] = useState([]);
   const [selectedLeft, setSelectedLeft] = useState(null);
-  const [matched,      setMatched]      = useState([]); // array of word_ids correctly matched
-  const [wrong,        setWrong]        = useState(0);  // wrong attempts count
-  const [error,        setError]        = useState('');
+  const [matched, setMatched] = useState([]);
+  const [wrong, setWrong] = useState(0);
+  const [error, setError] = useState('');
 
   const loadQuiz = useCallback(async () => {
     try {
       setPhase('loading');
-      const words = await getWords(topicId, 40);
-      if (words.length < 4) throw new Error('Not enough words in this topic (need at least 4).');
-      const built = buildMatchingPairs(words, PAIR_COUNT);
+      const words = deckWords ? deckWords : await getWords(topicId, Math.max(limit * 2, 40));
+      if (words.length < 4) throw new Error('Not enough words to start a quiz (need at least 4).');
+      const built = buildMatchingPairs(words, limit);
       setPairs(built);
       setLeftItems([...built].sort(() => Math.random() - 0.5));
       setRightItems([...built].sort(() => Math.random() - 0.5));
@@ -38,7 +38,7 @@ export default function QuizMatching({ navigation, route }) {
       setError(e.message);
       setPhase('error');
     }
-  }, [topicId]);
+  }, [topicId, deckWords, limit]);
 
   useEffect(() => { loadQuiz(); }, [loadQuiz]);
 
@@ -56,9 +56,10 @@ export default function QuizMatching({ navigation, route }) {
       setMatched(newMatched);
       setSelectedLeft(null);
       if (newMatched.length === pairs.length) {
-        // Build results for backend
-        const results = pairs.map((p) => ({ word_id: p.word_id, is_correct: true }));
-        saveLocalQuizResult(userId, topicId, 'word_matching', results);
+        if (!deckWords) {
+          const results = pairs.map((p) => ({ word_id: p.word_id, is_correct: true }));
+          saveLocalQuizResult(userId, topicId, 'word_matching', results);
+        }
         setPhase('result');
       }
     } else {
@@ -172,46 +173,48 @@ export default function QuizMatching({ navigation, route }) {
             </Text>
           </View>
 
-          <View style={st.columns}>
-            <View style={st.column}>
-              <Text style={st.columnLabel}>Words</Text>
-              {leftItems.map((item) => (
-                <TouchableOpacity
-                  key={item.word_id}
-                  style={[
-                    st.matchCard,
-                    isMatched(item.word_id) && st.matchCardMatched,
-                    selectedLeft?.word_id === item.word_id && st.matchCardSelected,
-                  ]}
-                  onPress={() => handleSelectLeft(item)}
-                  disabled={isMatched(item.word_id)}
-                >
-                  <Text style={[st.matchCardText, isMatched(item.word_id) && st.matchCardTextMatched]} numberOfLines={2}>
-                    {isMatched(item.word_id) ? '✓' : item.word}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+          <ScrollView style={{ flex: 1, width: '100%' }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+            <View style={[st.columns, { flex: 0 }]}>
+              <View style={st.column}>
+                <Text style={st.columnLabel}>Words</Text>
+                {leftItems.map((item) => (
+                  <TouchableOpacity
+                    key={item.word_id}
+                    style={[
+                      st.matchCard,
+                      isMatched(item.word_id) && st.matchCardMatched,
+                      selectedLeft?.word_id === item.word_id && st.matchCardSelected,
+                    ]}
+                    onPress={() => handleSelectLeft(item)}
+                    disabled={isMatched(item.word_id)}
+                  >
+                    <Text style={[st.matchCardText, isMatched(item.word_id) && st.matchCardTextMatched]} numberOfLines={2}>
+                      {isMatched(item.word_id) ? '✓' : item.word}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
 
-            <View style={st.column}>
-              <Text style={st.columnLabel}>Definitions</Text>
-              {rightItems.map((item) => (
-                <TouchableOpacity
-                  key={item.word_id}
-                  style={[
-                    st.matchCard,
-                    isMatched(item.word_id) && st.matchCardMatched,
-                  ]}
-                  onPress={() => handleSelectRight(item)}
-                  disabled={isMatched(item.word_id)}
-                >
-                  <Text style={[st.matchCardText, isMatched(item.word_id) && st.matchCardTextMatched]} numberOfLines={3}>
-                    {isMatched(item.word_id) ? '✓' : item.definition}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+              <View style={st.column}>
+                <Text style={st.columnLabel}>Definitions</Text>
+                {rightItems.map((item) => (
+                  <TouchableOpacity
+                    key={item.word_id}
+                    style={[
+                      st.matchCard,
+                      isMatched(item.word_id) && st.matchCardMatched,
+                    ]}
+                    onPress={() => handleSelectRight(item)}
+                    disabled={isMatched(item.word_id)}
+                  >
+                    <Text style={[st.matchCardText, isMatched(item.word_id) && st.matchCardTextMatched]} numberOfLines={3}>
+                      {isMatched(item.word_id) ? '✓' : item.definition}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
-          </View>
+          </ScrollView>
         </View>
       </LinearGradient>
     </View>

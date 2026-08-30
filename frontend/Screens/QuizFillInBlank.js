@@ -8,25 +8,25 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { getWords, buildFillQuestions, saveLocalQuizResult } from '../api';
 
 export default function QuizFillInBlank({ navigation, route }) {
-  const { topicId, topicTitle, userId = 1 } = route.params || {};
+  const { topicId, topicTitle, userId = 1, deckWords = null, limit = 8 } = route.params || {};
 
-  const [phase,         setPhase]         = useState('loading'); // loading|quiz|result|error
-  const [questions,     setQuestions]     = useState([]);
-  const [currentIndex,  setCurrentIndex]  = useState(0);
-  const [userAnswer,    setUserAnswer]    = useState('');
-  const [showResult,    setShowResult]    = useState(false);
-  const [isCorrect,     setIsCorrect]     = useState(false);
-  const [score,         setScore]         = useState(0);
-  const [results,       setResults]       = useState([]); // [{word_id, is_correct}]
-  const [error,         setError]         = useState('');
+  const [phase, setPhase] = useState('loading');
+  const [questions, setQuestions] = useState([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [userAnswer, setUserAnswer] = useState('');
+  const [showResult, setShowResult] = useState(false);
+  const [isCorrect, setIsCorrect] = useState(false);
+  const [score, setScore] = useState(0);
+  const [results, setResults] = useState([]);
+  const [error, setError] = useState('');
 
   const loadQuiz = useCallback(async () => {
     try {
       setPhase('loading');
-      const words = await getWords(topicId, 60);
-      if (words.length < 3) throw new Error('Not enough words in this topic (need at least 3).');
-      const built = buildFillQuestions(words, 8);
-      if (!built.length) throw new Error('Could not build questions from this topic.');
+      const words = deckWords ? deckWords : await getWords(topicId, Math.max(limit * 2, 60));
+      if (!words?.length) throw new Error('This deck has no words to create a quiz.');
+      const built = buildFillQuestions(words, limit);
+      if (!built.length) throw new Error('Could not build questions. Add a word to each flashcard first.');
       setQuestions(built);
       setCurrentIndex(0);
       setUserAnswer('');
@@ -39,7 +39,7 @@ export default function QuizFillInBlank({ navigation, route }) {
       setError(e.message);
       setPhase('error');
     }
-  }, [topicId]);
+  }, [topicId, deckWords, limit]);
 
   useEffect(() => { loadQuiz(); }, [loadQuiz]);
 
@@ -63,8 +63,7 @@ export default function QuizFillInBlank({ navigation, route }) {
       setShowResult(false);
       setIsCorrect(false);
     } else {
-      // save to backend (fire-and-forget)
-      saveLocalQuizResult(userId, topicId, 'fill_blank', newResults);
+      if (!deckWords) saveLocalQuizResult(userId, topicId, 'fill_blank', newResults);
       setPhase('result');
     }
   };
@@ -108,7 +107,7 @@ export default function QuizFillInBlank({ navigation, route }) {
 
   // ── RESULT ────────────────────────────────────────────────────────────────
   if (phase === 'result') {
-    const total    = questions.length;
+    const total = questions.length;
     const accuracy = total > 0 ? Math.round((score / total) * 100) : 0;
     return (
       <View style={styles.webWrapper}>
@@ -182,8 +181,7 @@ export default function QuizFillInBlank({ navigation, route }) {
 
             <View style={styles.inputSection}>
               <TextInput
-                style={[styles.answerInput,
-                  showResult && (isCorrect ? styles.inputCorrect : styles.inputWrong)]}
+                style={[styles.answerInput, showResult && (isCorrect ? styles.inputCorrect : styles.inputWrong)]}
                 placeholder="Type the missing word…"
                 placeholderTextColor="#94a3b8"
                 value={userAnswer}

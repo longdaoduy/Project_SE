@@ -7,42 +7,44 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { getWords, buildMCQuestions, saveLocalQuizResult } from '../api';
 
-const TIMER_SECONDS  = 30;
-const QUESTION_TIME  = 10;
-const QUESTION_COUNT = 10;
+const SECONDS_PER_QUESTION = 10;
+
+const getTotalTime = (questionCount) =>
+  Math.max(SECONDS_PER_QUESTION, questionCount * SECONDS_PER_QUESTION);
 
 export default function QuizSpeedRound({ navigation, route }) {
-  const { topicId, topicTitle, userId = 1 } = route.params || {};
+  const { topicId, topicTitle, userId = 1, deckWords = null, limit = 10 } = route.params || {};
 
-  const [phase,             setPhase]            = useState('loading');
-  const [questions,         setQuestions]        = useState([]);
-  const [currentIndex,      setCurrentIndex]     = useState(0);
-  const [selectedOption,    setSelectedOption]   = useState(null); // letter A-D
-  const [score,             setScore]            = useState(0);
-  const [results,           setResults]          = useState([]);
-  const [timeLeft,          setTimeLeft]         = useState(TIMER_SECONDS);
-  const [questionTimeLeft,  setQTimeLeft]        = useState(QUESTION_TIME);
-  const [isGameActive,      setIsGameActive]     = useState(false);
-  const [error,             setError]            = useState('');
+  const [phase, setPhase] = useState('loading');
+  const [questions, setQuestions] = useState([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [selectedOption, setSelectedOption] = useState(null);
+  const [score, setScore] = useState(0);
+  const [results, setResults] = useState([]);
+  const [timeLeft, setTimeLeft] = useState(() => getTotalTime(limit));
+  const [questionTimeLeft, setQTimeLeft] = useState(SECONDS_PER_QUESTION);
+  const [isGameActive, setIsGameActive] = useState(false);
+  const [error, setError] = useState('');
 
-  const globalTimer  = useRef(null);
+  const globalTimer = useRef(null);
   const questionTimer = useRef(null);
+  const totalTime = getTotalTime(questions.length || limit);
 
-  // ── Load words from backend ───────────────────────────────────────────────
+  // ── Load words ────────────────────────────────────────────────────────────
   const loadQuiz = useCallback(async () => {
     try {
       setPhase('loading');
-      const words = await getWords(topicId, 60);
-      if (words.length < 4) throw new Error('Not enough words in this topic (need at least 4).');
-      const built = buildMCQuestions(words, QUESTION_COUNT);
-      if (!built.length) throw new Error('Could not build questions from this topic.');
+      const words = deckWords ? deckWords : await getWords(topicId, Math.max(limit * 2, 60));
+      if (words.length < 4) throw new Error('Not enough words to start a quiz (need at least 4).');
+      const built = buildMCQuestions(words, limit);
+      if (!built.length) throw new Error('Could not build questions from this deck.');
       setQuestions(built);
       setPhase('ready');
     } catch (e) {
       setError(e.message);
       setPhase('error');
     }
-  }, [topicId]);
+  }, [topicId, deckWords, limit]);
 
   useEffect(() => { loadQuiz(); }, [loadQuiz]);
 
@@ -50,22 +52,22 @@ export default function QuizSpeedRound({ navigation, route }) {
   const startGame = useCallback(() => {
     setPhase('playing');
     setIsGameActive(true);
-    setTimeLeft(TIMER_SECONDS);
-    setQTimeLeft(QUESTION_TIME);
+    setTimeLeft(totalTime);
+    setQTimeLeft(SECONDS_PER_QUESTION);
     setCurrentIndex(0);
     setSelectedOption(null);
     setScore(0);
     setResults([]);
-  }, []);
+  }, [totalTime]);
 
   // ── End game ──────────────────────────────────────────────────────────────
   const endGame = useCallback((finalResults) => {
     clearInterval(globalTimer.current);
     clearInterval(questionTimer.current);
     setIsGameActive(false);
-    saveLocalQuizResult(userId, topicId, 'speed_round', finalResults);
+    if (!deckWords) saveLocalQuizResult(userId, topicId, 'speed_round', finalResults);
     setPhase('result');
-  }, [userId, topicId]);
+  }, [userId, topicId, deckWords]);
 
   // ── Global countdown ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -85,7 +87,6 @@ export default function QuizSpeedRound({ navigation, route }) {
     questionTimer.current = setInterval(() => {
       setQTimeLeft(prev => {
         if (prev <= 1) {
-          // auto-advance, no answer = wrong
           setResults(r => {
             const q = questions[currentIndex];
             const newR = q ? [...r, { word_id: q.word_id, is_correct: false }] : r;
@@ -94,7 +95,7 @@ export default function QuizSpeedRound({ navigation, route }) {
             setSelectedOption(null);
             return newR;
           });
-          return QUESTION_TIME;
+          return SECONDS_PER_QUESTION;
         }
         return prev - 1;
       });
@@ -105,9 +106,9 @@ export default function QuizSpeedRound({ navigation, route }) {
   const handleSelect = (letter) => {
     if (!isGameActive || selectedOption) return;
     setSelectedOption(letter);
-    const q          = questions[currentIndex];
-    const isCorrect  = letter === q.correct_option;
-    const newScore   = isCorrect ? score + 1 : score;
+    const q = questions[currentIndex];
+    const isCorrect = letter === q.correct_option;
+    const newScore = isCorrect ? score + 1 : score;
     const newResults = [...results, { word_id: q.word_id, is_correct: isCorrect }];
     setScore(newScore);
     setResults(newResults);
@@ -118,7 +119,7 @@ export default function QuizSpeedRound({ navigation, route }) {
       } else {
         setCurrentIndex(prev => prev + 1);
         setSelectedOption(null);
-        setQTimeLeft(QUESTION_TIME);
+        setQTimeLeft(SECONDS_PER_QUESTION);
       }
     }, 500);
   };
@@ -182,9 +183,9 @@ export default function QuizSpeedRound({ navigation, route }) {
               <Text style={st.readyDesc}>Answer as many questions as you can before time runs out!</Text>
               <View style={{ gap: 8, width: '100%', marginBottom: 24 }}>
                 {[
-                  ['time-outline', `${TIMER_SECONDS} seconds total`],
-                  ['timer-outline', `${QUESTION_TIME}s per question`],
-                  ['albums-outline', `${questions.length} questions from backend`],
+                  ['time-outline', `${totalTime} seconds total`],
+                  ['timer-outline', `${SECONDS_PER_QUESTION}s per question`],
+                  ['albums-outline', `${questions.length} questions`],
                 ].map(([icon, text]) => (
                   <View key={text} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <Ionicons name={icon} size={16} color="#64748b" />
@@ -205,7 +206,7 @@ export default function QuizSpeedRound({ navigation, route }) {
 
   // ── RESULT ────────────────────────────────────────────────────────────────
   if (phase === 'result') {
-    const total    = results.length;
+    const total = results.length;
     const accuracy = total > 0 ? Math.round((score / total) * 100) : 0;
     return (
       <View style={st.webWrapper}>
@@ -231,7 +232,7 @@ export default function QuizSpeedRound({ navigation, route }) {
               <View style={st.metricCard}><Text style={[st.metricValue, { color: '#ef4444' }]}>{total - score}</Text><Text style={st.metricLabel}>Wrong</Text></View>
               <View style={st.metricCard}><Text style={[st.metricValue, { color: '#6366f1' }]}>{accuracy}%</Text><Text style={st.metricLabel}>Accuracy</Text></View>
             </View>
-            <TouchableOpacity style={st.restartButton} onPress={() => { loadQuiz(); }}>
+            <TouchableOpacity style={st.restartButton} onPress={loadQuiz}>
               <Ionicons name="reload" size={20} color="#ffffff" style={{ marginRight: 8 }} />
               <Text style={st.restartButtonText}>Play Again</Text>
             </TouchableOpacity>
@@ -245,10 +246,10 @@ export default function QuizSpeedRound({ navigation, route }) {
   }
 
   // ── PLAYING ───────────────────────────────────────────────────────────────
-  const q               = questions[currentIndex];
-  const opts            = { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d };
-  const timerPct        = (timeLeft / TIMER_SECONDS) * 100;
-  const questionTimerPct = (questionTimeLeft / QUESTION_TIME) * 100;
+  const q = questions[currentIndex];
+  const opts = { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d };
+  const timerPct = (timeLeft / totalTime) * 100;
+  const questionTimerPct = (questionTimeLeft / SECONDS_PER_QUESTION) * 100;
 
   return (
     <View style={st.webWrapper}>
@@ -290,17 +291,16 @@ export default function QuizSpeedRound({ navigation, route }) {
           <View style={{ gap: 10, width: '100%' }}>
             {['A', 'B', 'C', 'D'].map((letter) => {
               const isSelected = selectedOption === letter;
-              const correct    = selectedOption && letter === q.correct_option;
-              const wrong      = isSelected && !correct;
+              const correct = selectedOption && letter === q.correct_option;
+              const wrong = isSelected && !correct;
               return (
                 <TouchableOpacity
                   key={letter}
                   style={[
                     st.optionBtn,
-                    isSelected && !selectedOption && st.optionSelected,
                     correct && st.optionCorrect,
-                    wrong   && st.optionWrong,
-                    isSelected && st.optionSelected,
+                    wrong && st.optionWrong,
+                    isSelected && !wrong && !correct && st.optionSelected,
                   ]}
                   onPress={() => handleSelect(letter)}
                   disabled={!!selectedOption}

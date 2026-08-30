@@ -180,9 +180,12 @@ def get_words(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     topic_id: int | None = Query(default=None, ge=1),
+    user_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
 ):
-    return crud.list_words(db, limit=limit, offset=offset, topic_id=topic_id)
+    return crud.list_words(
+        db, limit=limit, offset=offset, topic_id=topic_id, user_id=user_id
+    )
 
 
 @app.get("/words/{word_id}", response_model=schemas.WordRead, tags=["vocabulary"])
@@ -377,7 +380,7 @@ def delete_user(
         raise HTTPException(404, "User not found")
     if not verify_password(payload.password, user.password_hash):
         raise HTTPException(400, "Incorrect password")
-    if payload.confirmation.strip().upper() != "DELETE":
+    if payload.confirmation != "DELETE":
         raise HTTPException(400, 'Confirmation must be "DELETE"')
     crud.delete_user_account(db, user)
     return {"detail": "Account deleted successfully"}
@@ -560,6 +563,28 @@ def get_my_weekly_activity(current_user=Depends(get_current_user), db: Session =
 # ============================================================
 # FR2 – Flashcard Learning
 # ============================================================
+
+@app.get(
+    "/users/{user_id}/flashcard-sessions/active",
+    response_model=schemas.FlashcardSessionRead | None,
+    tags=["flashcards"],
+)
+def get_active_session(
+    user_id: int,
+    topic_id: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    """
+    Return the most recent *unfinished* session for (user, topic), or null.
+    The frontend uses this to resume an in-progress session instead of
+    creating a duplicate on re-entry.
+    """
+    if not crud.get_user_by_id(db, user_id):
+        raise HTTPException(404, "User not found")
+    if not crud.get_topic_by_id(db, topic_id):
+        raise HTTPException(404, "Topic not found")
+    return crud.get_active_flashcard_session_for_topic(db, user_id, topic_id)
+
 
 @app.post("/flashcard-sessions", response_model=schemas.FlashcardSessionRead, tags=["flashcards"])
 def start_flashcard_session(payload: schemas.FlashcardSessionCreate, db: Session = Depends(get_db)):
@@ -796,6 +821,22 @@ def create_ai_reading(payload: schemas.AIReadingCreate, db: Session = Depends(ge
     """
     if not crud.get_user_by_id(db, payload.user_id):
         raise HTTPException(404, "User not found")
+
+    # ── Profanity / inappropriate-input guard ─────────────────────────────
+    # Validate ALL user-supplied text fields BEFORE calling the AI.
+    # This check runs server-side and cannot be bypassed by frontend clients.
+    from .profanity_filter import contains_profanity
+
+    fields_to_check = [
+        payload.input_vocabulary or "",
+        payload.topic_param or "",
+    ]
+    if any(contains_profanity(field) for field in fields_to_check):
+        raise HTTPException(
+            status_code=422,
+            detail="INAPPROPRIATE_INPUT",
+        )
+    # ─────────────────────────────────────────────────────────────────────
 
     from .seed_gemini import (
         generate_reading_passage,
