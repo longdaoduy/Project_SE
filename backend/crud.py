@@ -265,7 +265,20 @@ def change_user_password(db: Session, user: models.User, new_hashed_password: st
 
 
 def delete_user_account(db: Session, user: models.User) -> None:
-    """Permanently remove the user and all dependent records via ORM cascades."""
+    """Permanently remove the user and all dependent records.
+
+    UserCardSRS and DailyLearningLog have no ORM relationship defined on User,
+    so SQLAlchemy's cascade won't reach them automatically.  We delete those
+    rows explicitly first to avoid FK-constraint violations (or silent orphans
+    when FK enforcement is off).
+    """
+    uid = user.user_id
+    db.query(models.UserCardSRS).filter(models.UserCardSRS.user_id == uid).delete(
+        synchronize_session=False
+    )
+    db.query(models.DailyLearningLog).filter(models.DailyLearningLog.user_id == uid).delete(
+        synchronize_session=False
+    )
     db.delete(user)
     db.commit()
 

@@ -11,7 +11,7 @@ async function clearAuthStorage() {
 }
 
 const DataContext = createContext();
-const DECKS_STORAGE_KEY = 'user_decks_v2';
+const DECKS_KEY = 'user_decks_v2';
 
 /** Normalise for duplicate comparison: trim + lowercase. */
 const normalise = (s) => (s || '').trim().toLowerCase();
@@ -27,7 +27,7 @@ export function DataProvider({ children }) {
     const restoreAuth = async () => {
       try {
         const savedToken = await AsyncStorage.getItem('jwt_token');
-        const savedUser = await AsyncStorage.getItem('current_user');
+        const savedUser  = await AsyncStorage.getItem('current_user');
 
         if (savedUser) {
           const parsedUser = JSON.parse(savedUser);
@@ -81,20 +81,55 @@ export function DataProvider({ children }) {
   // ── User-created decks — persisted to AsyncStorage ───────────────────────────
   const [decks, setDecks] = useState([]);
 
+  // Load once on mount — also migrate from any per-user key that may exist
   useEffect(() => {
-    AsyncStorage.getItem(DECKS_STORAGE_KEY)
-      .then((raw) => { if (raw) setDecks(JSON.parse(raw)); })
-      .catch(() => {});
+    (async () => {
+      try {
+        // Check new-style per-user keys (from a previous migration attempt) and fold them in
+        const allKeys = await AsyncStorage.getAllKeys();
+        const perUserKeys = allKeys.filter(k => k.startsWith('user_decks_v2_'));
+        if (perUserKeys.length > 0) {
+          // Collect all decks from per-user keys, merge into the global key
+          let merged = [];
+          const globalRaw = await AsyncStorage.getItem(DECKS_KEY);
+          if (globalRaw) merged = JSON.parse(globalRaw);
+          for (const k of perUserKeys) {
+            const raw = await AsyncStorage.getItem(k);
+            if (raw) {
+              const items = JSON.parse(raw);
+              // Avoid duplicates by id
+              for (const d of items) {
+                if (!merged.find(m => m.id === d.id)) merged.push(d);
+              }
+            }
+            await AsyncStorage.removeItem(k);
+          }
+          await AsyncStorage.setItem(DECKS_KEY, JSON.stringify(merged));
+          setDecks(merged);
+        } else {
+          const raw = await AsyncStorage.getItem(DECKS_KEY);
+          setDecks(raw ? JSON.parse(raw) : []);
+        }
+      } catch (e) {
+        console.warn('loadDecks error:', e);
+        setDecks([]);
+      }
+    })();
   }, []);
 
-  const _persist = (updated) => {
-    AsyncStorage.setItem(DECKS_STORAGE_KEY, JSON.stringify(updated)).catch(() => {});
-  };
+  const _persist = useCallback((updated) => {
+    AsyncStorage.setItem(DECKS_KEY, JSON.stringify(updated)).catch(() => {});
+  }, []);
+
+  /** Remove all local deck data (call on account deletion). */
+  const clearUserDecks = useCallback(async () => {
+    await AsyncStorage.removeItem(DECKS_KEY).catch(() => {});
+    setDecks([]);
+  }, []);
 
   /**
    * Create a new deck.
    * Returns Promise<{ success, deck? }> or { success: false, error }.
-   * Rejects duplicate names (case-insensitive, trimmed).
    */
   const addDeck = useCallback((deck) => {
     const trimTitle = (deck.title || '').trim();
@@ -126,12 +161,10 @@ export function DataProvider({ children }) {
         return updated;
       });
     });
-  }, []);
+  }, [_persist]);
 
   /**
    * Full deck edit — replaces title + entire terms list atomically.
-   * Duplicate title check skips the deck being edited.
-   * Returns Promise<{ success }> or { success: false, error }.
    */
   const saveDeckEdit = useCallback((deckId, newTitle, newTerms) => {
     const trimTitle = (newTitle || '').trim();
@@ -143,7 +176,6 @@ export function DataProvider({ children }) {
           resolve({ success: false, error: `A deck named "${trimTitle}" already exists.` });
           return prev;
         }
-        // In-list duplicate term check
         const termSet = new Set();
         for (const t of newTerms) {
           const key = normalise(t.term);
@@ -169,7 +201,7 @@ export function DataProvider({ children }) {
         return updated;
       });
     });
-  }, []);
+  }, [_persist]);
 
   const updateDeckProgress = useCallback((deckId, currentWords, totalWords) => {
     setDecks((prev) => {
@@ -182,19 +214,17 @@ export function DataProvider({ children }) {
       _persist(updated);
       return updated;
     });
-  }, []);
+  }, [_persist]);
 
   const deleteDeck = useCallback((deckId) => {
     setDecks((prev) => {
-      const updated = prev.filter((d) => d.id !== deckId);
+      const updated = prev.filter((d) => String(d.id) !== String(deckId));
       _persist(updated);
       return updated;
     });
-  }, []);
+  }, [_persist]);
 
   // ── Starred Words ───────────────────────────────────────────────────────────
-  // starredWordIds: Set<number> — quick O(1) lookup for any screen
-  // starredWords: array of full word objects (for WordlistScreen)
   const [starredWordIds, setStarredWordIds] = useState(new Set());
   const [starredWords,   setStarredWords]   = useState([]);
   const [starredLoading, setStarredLoading] = useState(false);
@@ -213,7 +243,6 @@ export function DataProvider({ children }) {
     }
   }, []);
 
-  // Re-load whenever userId becomes available (after login / restore)
   useEffect(() => {
     if (userId) loadStarredWords(userId);
   }, [userId, loadStarredWords]);
@@ -221,7 +250,6 @@ export function DataProvider({ children }) {
   const toggleStar = useCallback(async (wordId) => {
     if (!userId) return;
     const isStarred = starredWordIds.has(wordId);
-    // Optimistic update
     setStarredWordIds(prev => {
       const next = new Set(prev);
       isStarred ? next.delete(wordId) : next.add(wordId);
@@ -236,7 +264,6 @@ export function DataProvider({ children }) {
         setStarredWords(prev => [record, ...prev]);
       }
     } catch (e) {
-      // Revert optimistic update on failure
       setStarredWordIds(prev => {
         const next = new Set(prev);
         isStarred ? next.add(wordId) : next.delete(wordId);
@@ -253,7 +280,7 @@ export function DataProvider({ children }) {
       userId, setUserId,
       authReady,
       topics, topicsLoading, topicsError, loadTopics,
-      decks, addDeck, saveDeckEdit, updateDeckProgress, deleteDeck,
+      decks, addDeck, saveDeckEdit, updateDeckProgress, deleteDeck, clearUserDecks,
       starredWordIds, starredWords, starredLoading, loadStarredWords, toggleStar,
     }}>
       {children}

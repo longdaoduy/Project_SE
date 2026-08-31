@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, TextInput, View, StatusBar, Platform,
-  TouchableOpacity, ScrollView, Image, ActivityIndicator, Alert, Animated
+  TouchableOpacity, ScrollView, Image, ActivityIndicator, Alert, Animated, Modal
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -45,6 +45,8 @@ export default function FlashcardScreen({ navigation }) {
   // ── Deck search / filter ─────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
 
+  // ── Delete-confirm modal ──────────────────────────────────────────────────────
+  const [deletingDeck, setDeletingDeck] = useState(null); // deck object | null
   // ── Add/Edit-deck form state ─────────────────────────────────────────────────
   // editingDeck: null → CREATE mode | non-null → EDIT mode
   const [editingDeck, setEditingDeck] = useState(null);
@@ -221,10 +223,7 @@ export default function FlashcardScreen({ navigation }) {
   };
 
   const confirmDeleteDeck = (deck) => {
-    Alert.alert('Delete Deck', `Delete "${deck.title}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteDeck(deck.id) },
-    ]);
+    setDeletingDeck(deck);
   };
 
   // ── Navigate to Quiz using deck vocabulary ───────────────────────────────
@@ -967,6 +966,48 @@ export default function FlashcardScreen({ navigation }) {
 
           <BottomNav navigation={navigation} active="FlashcardScreen" />
         </LinearGradient>
+
+        {/* ── Delete-confirm modal ───────────────────────────────────────── */}
+        <Modal
+          visible={!!deletingDeck}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setDeletingDeck(null)}
+        >
+          <View style={s.modalOverlay}>
+            <View style={s.modalBox}>
+              <View style={s.modalIconWrap}>
+                <Ionicons name="trash-outline" size={28} color="#ef4444" />
+              </View>
+              <Text style={s.modalTitle}>Delete Deck</Text>
+              <Text style={s.modalBody}>
+                Are you sure you want to delete{'\n'}
+                <Text style={s.modalDeckName}>"{deletingDeck?.title}"</Text>?{'\n'}
+                This action cannot be undone.
+              </Text>
+              <View style={s.modalActions}>
+                <TouchableOpacity
+                  style={s.modalCancelBtn}
+                  activeOpacity={0.8}
+                  onPress={() => setDeletingDeck(null)}
+                >
+                  <Text style={s.modalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={s.modalDeleteBtn}
+                  activeOpacity={0.8}
+                  onPress={() => {
+                    deleteDeck(deletingDeck.id);
+                    setDeletingDeck(null);
+                  }}
+                >
+                  <Ionicons name="trash-outline" size={15} color="#ffffff" />
+                  <Text style={s.modalDeleteText}>Delete</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </View>
     );
   }
@@ -1723,4 +1764,17 @@ const s = StyleSheet.create({
   // Inline error in add-deck form
   inlineErrorBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', borderRadius: 10, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: '#fecaca' },
   inlineErrorText: { color: '#b91c1c', fontSize: 13, fontWeight: '500', flex: 1 },
+
+  // Delete-confirm modal
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32 },
+  modalBox: { backgroundColor: '#ffffff', borderRadius: 24, padding: 28, width: '100%', maxWidth: 360, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.18, shadowRadius: 24, elevation: 10 },
+  modalIconWrap: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#fef2f2', alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
+  modalTitle: { fontSize: 18, fontWeight: '800', color: '#0f172a', marginBottom: 10 },
+  modalBody: { fontSize: 14, color: '#475569', textAlign: 'center', lineHeight: 22, marginBottom: 24 },
+  modalDeckName: { fontWeight: '700', color: '#0f172a' },
+  modalActions: { flexDirection: 'row', gap: 10, width: '100%' },
+  modalCancelBtn: { flex: 1, paddingVertical: 13, borderRadius: 14, backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' },
+  modalCancelText: { fontSize: 14, fontWeight: '700', color: '#475569' },
+  modalDeleteBtn: { flex: 1, flexDirection: 'row', paddingVertical: 13, borderRadius: 14, backgroundColor: '#ef4444', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  modalDeleteText: { fontSize: 14, fontWeight: '700', color: '#ffffff' },
 });

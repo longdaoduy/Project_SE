@@ -31,7 +31,7 @@ async function clearAuthStorage() {
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 export default function SettingScreen({ navigation }) {
-    const { token, currentUser, userId, setToken, setCurrentUser, setUserId } = useData();
+    const { token, currentUser, userId, setToken, setCurrentUser, setUserId, clearUserDecks } = useData();
 
 
     const [isDarkMode, setIsDarkMode] = useState(false);
@@ -96,6 +96,7 @@ export default function SettingScreen({ navigation }) {
         } catch (e) {
             console.warn('logout error:', e.message);
         }
+        await clearUserDecks();
         await clearAuthStorage();
         setToken(null);
         setCurrentUser(null);
@@ -121,6 +122,7 @@ export default function SettingScreen({ navigation }) {
             setDeleteAccountLoading(false);
         }
         closeConfirmAction();
+        await clearUserDecks();
         await clearAuthStorage();
         setToken(null);
         setCurrentUser(null);
