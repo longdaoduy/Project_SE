@@ -133,6 +133,16 @@ export const submitSRSRating = (userId, wordId, topicId, rating) =>
 export const getDailyStatus = (userId, topicId) =>
   get('/flashcards/daily-status', { user_id: userId, topic_id: topicId });
 
+/**
+ * Fetch daily status for ALL topics in one request.
+ * Returns an object keyed by topic_id string: { daily_learned, daily_limit, daily_remaining, due_review_count }
+ */
+export const getDailyStatusBulk = (userId, topicIds) =>
+  get('/flashcards/daily-status/bulk', {
+    user_id: userId,
+    topic_ids: topicIds.join(','),
+  });
+
 // ─── Users / Stats / History ──────────────────────────────────────────────────
 
 export const getUserStats = (userId) =>

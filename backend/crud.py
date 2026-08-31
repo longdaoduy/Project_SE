@@ -864,57 +864,99 @@ def apply_srs_rating(
 def get_daily_status(
     db: Session, user_id: int, topic_id: int
 ) -> dict:
-    """
-    Return daily learning stats for a (user, topic) pair.
+    """Return daily learning stats for a single (user, topic) pair.
 
-    'daily_learned' counts words the user has already rated today (DailyLearningLog).
-    Words that have a 'new' SRS record but haven't been rated yet are also counted
-    against the daily limit to avoid over-queuing.
+    Delegates to get_daily_status_bulk so the logic lives in one place.
     """
+    result = get_daily_status_bulk(db, user_id=user_id, topic_ids=[topic_id])
+    return result.get(topic_id, {
+        "topic_id": topic_id,
+        "daily_learned": 0,
+        "daily_limit": DAILY_NEW_LIMIT,
+        "daily_remaining": DAILY_NEW_LIMIT,
+        "due_review_count": 0,
+    })
+
+
+def get_daily_status_bulk(
+    db: Session, user_id: int, topic_ids: list[int]
+) -> dict[int, dict]:
+    """
+    Return daily learning stats for multiple (user, topic) pairs in **3 queries**
+    instead of 3×N queries, using GROUP BY on topic_id.
+
+    Returns a dict keyed by topic_id (int).
+    """
+    if not topic_ids:
+        return {}
+
     today = date.today()
+    now   = datetime.now(timezone.utc)
+    ids_set = set(topic_ids)
 
-    # Words actually rated today
-    learned_today = (
-        db.query(func.count(models.DailyLearningLog.log_id))
+    # ── Query 1: DailyLearningLog counts per topic ────────────────────────
+    learned_rows = (
+        db.query(
+            models.DailyLearningLog.topic_id,
+            func.count(models.DailyLearningLog.log_id).label("cnt"),
+        )
         .filter(
             models.DailyLearningLog.user_id == user_id,
-            models.DailyLearningLog.topic_id == topic_id,
+            models.DailyLearningLog.topic_id.in_(ids_set),
             models.DailyLearningLog.learned_at == today,
         )
-        .scalar() or 0
+        .group_by(models.DailyLearningLog.topic_id)
+        .all()
     )
+    learned_map: dict[int, int] = {row.topic_id: row.cnt for row in learned_rows}
 
-    # Words introduced but not yet rated (card_status='new' in SRS)
-    unrated_new_count = (
-        db.query(func.count(models.UserCardSRS.srs_id))
+    # ── Query 2: unrated 'new' SRS cards per topic ────────────────────────
+    unrated_rows = (
+        db.query(
+            models.UserCardSRS.topic_id,
+            func.count(models.UserCardSRS.srs_id).label("cnt"),
+        )
         .filter(
             models.UserCardSRS.user_id == user_id,
-            models.UserCardSRS.topic_id == topic_id,
+            models.UserCardSRS.topic_id.in_(ids_set),
             models.UserCardSRS.card_status == "new",
         )
-        .scalar() or 0
+        .group_by(models.UserCardSRS.topic_id)
+        .all()
     )
+    unrated_map: dict[int, int] = {row.topic_id: row.cnt for row in unrated_rows}
 
-    total_accounted = learned_today + unrated_new_count
-
-    now = datetime.now(timezone.utc)
-    due_review_count = (
-        db.query(func.count(models.UserCardSRS.srs_id))
+    # ── Query 3: due review/learning cards per topic ──────────────────────
+    due_rows = (
+        db.query(
+            models.UserCardSRS.topic_id,
+            func.count(models.UserCardSRS.srs_id).label("cnt"),
+        )
         .filter(
             models.UserCardSRS.user_id == user_id,
-            models.UserCardSRS.topic_id == topic_id,
+            models.UserCardSRS.topic_id.in_(ids_set),
             models.UserCardSRS.card_status.in_(["review", "learning"]),
             models.UserCardSRS.due_date <= now,
         )
-        .scalar() or 0
+        .group_by(models.UserCardSRS.topic_id)
+        .all()
     )
-    return {
-        "topic_id": topic_id,
-        "daily_learned": learned_today,
-        "daily_limit": DAILY_NEW_LIMIT,
-        "daily_remaining": max(0, DAILY_NEW_LIMIT - total_accounted),
-        "due_review_count": due_review_count,
-    }
+    due_map: dict[int, int] = {row.topic_id: row.cnt for row in due_rows}
+
+    # ── Assemble result for every requested topic ─────────────────────────
+    result: dict[int, dict] = {}
+    for tid in topic_ids:
+        learned   = learned_map.get(tid, 0)
+        unrated   = unrated_map.get(tid, 0)
+        due       = due_map.get(tid, 0)
+        result[tid] = {
+            "topic_id":         tid,
+            "daily_learned":    learned,
+            "daily_limit":      DAILY_NEW_LIMIT,
+            "daily_remaining":  max(0, DAILY_NEW_LIMIT - learned - unrated),
+            "due_review_count": due,
+        }
+    return result
 
 
 def build_session_queue(

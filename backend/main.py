@@ -14,6 +14,7 @@ Endpoint groups:
 
 from typing import List
 import logging
+import concurrent.futures
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -177,7 +178,7 @@ def create_word(payload: schemas.WordCreate, db: Session = Depends(get_db)):
 
 @app.get("/words", response_model=List[schemas.WordRead], tags=["vocabulary"])
 def get_words(
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(100, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     topic_id: int | None = Query(default=None, ge=1),
     user_id: int | None = Query(default=None, ge=1),
@@ -732,6 +733,34 @@ def get_daily_status(
     return crud.get_daily_status(db, user_id=user_id, topic_id=topic_id)
 
 
+@app.get("/flashcards/daily-status/bulk", tags=["flashcards"])
+def get_daily_status_bulk(
+    user_id: int = Query(..., ge=1),
+    topic_ids: str = Query(..., description="Comma-separated list of topic IDs, e.g. '1,2,3'"),
+    db: Session = Depends(get_db),
+):
+    """
+    Return today's learning progress for multiple (user, topic) pairs in one
+    request. Replaces N sequential calls with a single round-trip.
+
+    Returns a dict keyed by topic_id (as string).
+    """
+    if not crud.get_user_by_id(db, user_id):
+        raise HTTPException(404, "User not found")
+
+    try:
+        ids = [int(x.strip()) for x in topic_ids.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(400, "topic_ids must be comma-separated integers")
+
+    if not ids:
+        return {}
+
+    result = crud.get_daily_status_bulk(db, user_id=user_id, topic_ids=ids)
+    # JSON keys must be strings
+    return {str(k): v for k, v in result.items()}
+
+
 # ============================================================
 # FR3 – Quiz / Test
 # ============================================================
@@ -818,24 +847,22 @@ def create_ai_reading(payload: schemas.AIReadingCreate, db: Session = Depends(ge
     """
     Generate a reading passage + exactly 5 comprehension questions + a descriptive title.
     Topic is optional; difficulty drives time_limit_seconds automatically.
+
+    Performance: passage is generated first (questions need it), then title and
+    questions are generated in parallel via a thread pool — cutting total latency
+    roughly in half compared to three sequential AI calls.
     """
     if not crud.get_user_by_id(db, payload.user_id):
         raise HTTPException(404, "User not found")
 
     # ── Profanity / inappropriate-input guard ─────────────────────────────
-    # Validate ALL user-supplied text fields BEFORE calling the AI.
-    # This check runs server-side and cannot be bypassed by frontend clients.
     from .profanity_filter import contains_profanity
-
     fields_to_check = [
         payload.input_vocabulary or "",
         payload.topic_param or "",
     ]
     if any(contains_profanity(field) for field in fields_to_check):
-        raise HTTPException(
-            status_code=422,
-            detail="INAPPROPRIATE_INPUT",
-        )
+        raise HTTPException(status_code=422, detail="INAPPROPRIATE_INPUT")
     # ─────────────────────────────────────────────────────────────────────
 
     from .seed_gemini import (
@@ -844,6 +871,7 @@ def create_ai_reading(payload: schemas.AIReadingCreate, db: Session = Depends(ge
         generate_test_title,
     )
 
+    # ── Step 1: generate passage (questions and title both depend on it) ──
     try:
         generated_passage = generate_reading_passage(
             vocabulary=payload.input_vocabulary,
@@ -855,27 +883,41 @@ def create_ai_reading(payload: schemas.AIReadingCreate, db: Session = Depends(ge
             f"[Passage generation failed: {exc}] Vocabulary: {payload.input_vocabulary}"
         )
 
-    # Generate a descriptive title (non-blocking; falls back to vocab-based label)
+    # ── Step 2: generate title AND questions in parallel ──────────────────
     title = None
-    try:
-        title = generate_test_title(
+    questions_data: list[dict] = []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        future_title = pool.submit(
+            generate_test_title,
             passage=generated_passage,
             vocabulary=payload.input_vocabulary,
             difficulty=payload.difficulty_param,
         )
-    except Exception:
-        pass
+        future_questions = pool.submit(
+            generate_comprehension_questions,
+            passage=generated_passage,
+            vocabulary=payload.input_vocabulary,
+            count=5,
+        )
 
+        try:
+            title = future_title.result()
+        except Exception:
+            title = None  # falls back to vocab-based label in crud
+
+        try:
+            questions_data = future_questions.result()
+        except Exception:
+            questions_data = []
+
+    # ── Step 3: persist to DB ─────────────────────────────────────────────
     reading = crud.create_ai_reading(
         db, payload, generated_passage=generated_passage, title=title
     )
 
-    try:
-        for q in generate_comprehension_questions(
-            passage=generated_passage,
-            vocabulary=payload.input_vocabulary,
-            count=5,           # always exactly 5 questions
-        ):
+    for q in questions_data:
+        try:
             crud.add_ai_reading_question(
                 db,
                 schemas.AIReadingQuestionCreate(
@@ -888,8 +930,8 @@ def create_ai_reading(payload: schemas.AIReadingCreate, db: Session = Depends(ge
                     correct_option=q["correct_option"],
                 ),
             )
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     db.refresh(reading)
     _ = reading.comprehension_questions

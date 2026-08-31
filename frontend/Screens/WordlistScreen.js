@@ -53,7 +53,7 @@ export default function WordlistScreen({ navigation }) {
     try {
       setLoading(true);
       setError(null);
-      const data = await getWords(selectedTopicId, 200, userId);
+      const data = await getWords(selectedTopicId, selectedTopicId ? 50 : 2000, userId);
       const normalized = (data || []).map((w) => ({
         id: w.word_id,
         word: w.word,
@@ -419,7 +419,8 @@ export default function WordlistScreen({ navigation }) {
         <Modal visible={isTopicModalVisible} transparent animationType="fade" onRequestClose={() => setIsTopicModalVisible(false)}>
           <View style={styles.modalOverlay}>
             <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setIsTopicModalVisible(false)} />
-            <View style={styles.modalContainer}>
+            <View style={Platform.OS === 'web' ? styles.modalWebWrapper : null}>
+              <View style={styles.modalContainer}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>Filter by Topic</Text>
                 <TouchableOpacity onPress={() => setIsTopicModalVisible(false)}>
@@ -450,6 +451,7 @@ export default function WordlistScreen({ navigation }) {
                   );
                 })}
               </ScrollView>
+            </View>
             </View>
           </View>
         </Modal>
@@ -573,9 +575,10 @@ const styles = StyleSheet.create({
   formTopicChipTextSel: { color: '#ffffff' },
 
   // ── Topic filter modal ────────────────────────────────────────────────────────
-  modalOverlay: { flex: 1, justifyContent: 'flex-end' },
+  modalOverlay: { flex: 1, justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end', alignItems: Platform.OS === 'web' ? 'center' : 'stretch' },
   modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
-  modalContainer: { backgroundColor: '#ffffff', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 20, paddingBottom: 32, maxHeight: '75%' },
+  modalWebWrapper: { width: 400, maxHeight: 600, borderRadius: 24, overflow: 'hidden' },
+  modalContainer: { backgroundColor: '#ffffff', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 20, paddingBottom: 32, maxHeight: Platform.OS === 'web' ? 600 : '75%' },
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
   modalTitle: { fontSize: 17, fontWeight: '700', color: '#1e293b' },
   topicOptionItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 13, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },

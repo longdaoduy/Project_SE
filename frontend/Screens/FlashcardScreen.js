@@ -11,6 +11,7 @@ import {
   getFlashcardQueue,
   submitSRSRating,
   getDailyStatus,
+  getDailyStatusBulk,
   createFlashcardSession, completeFlashcardSession,
   createFlashcardProgress, updateFlashcardProgress,
   getActiveFlashcardSession,
@@ -51,7 +52,8 @@ export default function FlashcardScreen({ navigation }) {
   // editingDeck: null → CREATE mode | non-null → EDIT mode
   const [editingDeck, setEditingDeck] = useState(null);
   const [deckFormError, setDeckFormError] = useState('');
-  const [visibleTopicsCount, setVisibleTopicsCount] = useState(TOPICS_PER_PAGE);
+  const [topicPage, setTopicPage]   = useState(0); // 0-indexed page for backend topics
+  const [deckPage,  setDeckPage]    = useState(0); // 0-indexed page for user decks
   const [topicsExpanded, setTopicsExpanded] = useState(true);
 
   // ── Add-deck form state ─────────────────────────────────────────────────────
@@ -95,19 +97,29 @@ export default function FlashcardScreen({ navigation }) {
     if (topics.length === 0) loadTopics();
   }, []);
 
-  // Load daily status for all visible topics so we can show badges
-  // Re-runs whenever userId/topics change, OR when returning to the select screen
+  // Reset pagination when search query changes
+  useEffect(() => {
+    setTopicPage(0);
+    setDeckPage(0);
+  }, [searchQuery]);
+
+  // Load daily status for all topics in ONE bulk request instead of N sequential calls.
+  // Re-runs whenever userId/topics change, OR when returning to the select screen.
   useEffect(() => {
     if (!userId || topics.length === 0 || phase !== 'select') return;
     const loadStatuses = async () => {
-      const results = {};
-      for (const topic of topics) {
-        try {
-          const status = await getDailyStatus(userId, topic.topic_id);
-          results[topic.topic_id] = status;
-        } catch (_) { /* ignore per-topic errors */ }
+      try {
+        const topicIds = topics.map((t) => t.topic_id);
+        const bulk = await getDailyStatusBulk(userId, topicIds);
+        // bulk is keyed by string topic_id — normalise to number keys
+        const results = {};
+        for (const [k, v] of Object.entries(bulk)) {
+          results[Number(k)] = v;
+        }
+        setTopicDailyStatus(results);
+      } catch (_) {
+        // Silently ignore — badges are non-critical UI
       }
-      setTopicDailyStatus(results);
     };
     loadStatuses();
   }, [userId, topics, phase]);
@@ -121,7 +133,21 @@ export default function FlashcardScreen({ navigation }) {
   const filteredTopics = topics.filter((t) =>
     t.topic_name.toLowerCase().includes(searchQuery.toLowerCase())
   );
-  const visibleTopics = filteredTopics.slice(0, visibleTopicsCount);
+  // Pagination for backend topics — reset page when search changes
+  const topicTotalPages = Math.max(1, Math.ceil(filteredTopics.length / TOPICS_PER_PAGE));
+  const clampedTopicPage = Math.min(topicPage, topicTotalPages - 1);
+  const visibleTopics = filteredTopics.slice(
+    clampedTopicPage * TOPICS_PER_PAGE,
+    clampedTopicPage * TOPICS_PER_PAGE + TOPICS_PER_PAGE
+  );
+
+  // Pagination for user decks
+  const deckTotalPages = Math.max(1, Math.ceil(filteredDecks.length / TOPICS_PER_PAGE));
+  const clampedDeckPage = Math.min(deckPage, deckTotalPages - 1);
+  const visibleDecks = filteredDecks.slice(
+    clampedDeckPage * TOPICS_PER_PAGE,
+    clampedDeckPage * TOPICS_PER_PAGE + TOPICS_PER_PAGE
+  );
 
   // ── Add/Edit-deck handlers ────────────────────────────────────────────────────
   const handleAddTermRow = () => {
@@ -789,7 +815,7 @@ export default function FlashcardScreen({ navigation }) {
                         <Text style={s.emptySubText}>Try a different search keyword</Text>
                       </View>
                     ) : (
-                      filteredDecks.map((deck) => (
+                      visibleDecks.map((deck) => (
                         <View key={deck.id} style={s.deckCard}>
                           <View style={s.deckHeader}>
                             <View style={s.deckIconContainer}>
@@ -864,6 +890,28 @@ export default function FlashcardScreen({ navigation }) {
                           </View>
                         </View>
                       ))
+                    )}
+                    {/* ── Deck pagination ── */}
+                    {deckTotalPages > 1 && (
+                      <View style={s.paginationRow}>
+                        <TouchableOpacity
+                          style={[s.pageBtn, clampedDeckPage === 0 && s.pageBtnDisabled]}
+                          activeOpacity={0.7}
+                          disabled={clampedDeckPage === 0}
+                          onPress={() => setDeckPage((p) => Math.max(0, p - 1))}
+                        >
+                          <Ionicons name="chevron-back" size={18} color={clampedDeckPage === 0 ? '#cbd5e1' : '#4f46e5'} />
+                        </TouchableOpacity>
+                        <Text style={s.pageLabel}>{clampedDeckPage + 1} / {deckTotalPages}</Text>
+                        <TouchableOpacity
+                          style={[s.pageBtn, clampedDeckPage === deckTotalPages - 1 && s.pageBtnDisabled]}
+                          activeOpacity={0.7}
+                          disabled={clampedDeckPage === deckTotalPages - 1}
+                          onPress={() => setDeckPage((p) => Math.min(deckTotalPages - 1, p + 1))}
+                        >
+                          <Ionicons name="chevron-forward" size={18} color={clampedDeckPage === deckTotalPages - 1 ? '#cbd5e1' : '#4f46e5'} />
+                        </TouchableOpacity>
+                      </View>
                     )}
                   </>
                 )}
@@ -946,17 +994,27 @@ export default function FlashcardScreen({ navigation }) {
                       </TouchableOpacity>
                     ))}
 
-                    {filteredTopics.length > visibleTopics.length && (
-                      <TouchableOpacity
-                        style={s.showMoreBtn}
-                        activeOpacity={0.8}
-                        onPress={() => setVisibleTopicsCount((prev) => prev + TOPICS_PER_PAGE)}
-                      >
-                        <Ionicons name="chevron-down" size={16} color="#5b65d6" />
-                        <Text style={s.showMoreText}>
-                          Show more ({filteredTopics.length - visibleTopics.length} remaining)
-                        </Text>
-                      </TouchableOpacity>
+                    {/* ── Topic pagination ── */}
+                    {topicTotalPages > 1 && (
+                      <View style={s.paginationRow}>
+                        <TouchableOpacity
+                          style={[s.pageBtn, clampedTopicPage === 0 && s.pageBtnDisabled]}
+                          activeOpacity={0.7}
+                          disabled={clampedTopicPage === 0}
+                          onPress={() => setTopicPage((p) => Math.max(0, p - 1))}
+                        >
+                          <Ionicons name="chevron-back" size={18} color={clampedTopicPage === 0 ? '#cbd5e1' : '#4f46e5'} />
+                        </TouchableOpacity>
+                        <Text style={s.pageLabel}>{clampedTopicPage + 1} / {topicTotalPages}</Text>
+                        <TouchableOpacity
+                          style={[s.pageBtn, clampedTopicPage === topicTotalPages - 1 && s.pageBtnDisabled]}
+                          activeOpacity={0.7}
+                          disabled={clampedTopicPage === topicTotalPages - 1}
+                          onPress={() => setTopicPage((p) => Math.min(topicTotalPages - 1, p + 1))}
+                        >
+                          <Ionicons name="chevron-forward" size={18} color={clampedTopicPage === topicTotalPages - 1 ? '#cbd5e1' : '#4f46e5'} />
+                        </TouchableOpacity>
+                      </View>
                     )}
                   </>
                 )
@@ -1764,6 +1822,12 @@ const s = StyleSheet.create({
   // Inline error in add-deck form
   inlineErrorBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', borderRadius: 10, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: '#fecaca' },
   inlineErrorText: { color: '#b91c1c', fontSize: 13, fontWeight: '500', flex: 1 },
+
+  // Pagination controls
+  paginationRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16, marginTop: 4, marginBottom: 12 },
+  pageBtn: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#ffffff', borderWidth: 1.5, borderColor: '#c7d2fe', alignItems: 'center', justifyContent: 'center' },
+  pageBtnDisabled: { borderColor: '#e2e8f0', backgroundColor: '#f8fafc' },
+  pageLabel: { fontSize: 14, fontWeight: '700', color: '#475569', minWidth: 48, textAlign: 'center' },
 
   // Delete-confirm modal
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32 },
