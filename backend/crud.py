@@ -550,11 +550,11 @@ def refresh_user_statistics(db: Session, user_id: int) -> models.UserStatistics 
         sum(float(q.accuracy or 0) for q in quizzes) / len(quizzes), 2
     ) if quizzes else 0.0
     stats.total_words = int(
-        db.query(func.count(func.distinct(models.FlashcardProgress.word_id)))
-        .join(models.FlashcardSession,
-              models.FlashcardProgress.session_id == models.FlashcardSession.session_id)
-        .filter(models.FlashcardSession.user_id == user_id,
-                models.FlashcardProgress.reviewed_at.isnot(None))
+        db.query(func.count(func.distinct(models.UserCardSRS.word_id)))
+        .filter(
+            models.UserCardSRS.user_id == user_id,
+            models.UserCardSRS.card_status.in_(["review", "learning"]),
+        )
         .scalar() or 0
     )
 
@@ -914,6 +914,19 @@ def get_or_create_srs(
     db.add(srs)
     db.flush()
     return srs, True
+
+
+def get_words_learned_today(db: Session, user_id: int) -> int:
+    """Count distinct words the user has rated for the first time today,
+    across ALL topics. This is the correct source for 'Today's goal' progress."""
+    return int(
+        db.query(func.count(models.DailyLearningLog.log_id))
+        .filter(
+            models.DailyLearningLog.user_id == user_id,
+            models.DailyLearningLog.learned_at == date.today(),
+        )
+        .scalar() or 0
+    )
 
 
 def _ensure_daily_log(

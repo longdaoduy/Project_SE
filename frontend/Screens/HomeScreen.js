@@ -37,6 +37,7 @@ export default function HomeScreen({ navigation }) {
 
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState('');
+    const [refreshTick, setRefreshTick] = useState(0);
 
     useEffect(() => {
         const loadHomeData = async () => {
@@ -79,7 +80,19 @@ export default function HomeScreen({ navigation }) {
         };
 
         loadHomeData();
-    }, [authReady, currentUser, token]);
+    }, [authReady, currentUser, token, refreshTick]);
+
+    // Reload every time the screen comes back into focus
+    // (e.g. user finishes flashcards and navigates back to Home)
+    useEffect(() => {
+        const unsub = navigation.addListener('focus', () => {
+            if (authReady && (token || currentUser)) {
+                // Re-trigger the main load by bumping a refresh counter
+                setRefreshTick(t => t + 1);
+            }
+        });
+        return unsub;
+    }, [navigation, authReady, token, currentUser]);
 
     const wordRemaining = Math.max(userData.dailyGoal.target - userData.dailyGoal.current, 0);
     const goalProgress = userData.dailyGoal.target > 0

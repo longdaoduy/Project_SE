@@ -576,6 +576,23 @@ def get_my_weekly_activity(current_user=Depends(get_current_user), db: Session =
     return {"items": crud.get_weekly_activity(db, current_user.user_id)}
 
 
+@app.get("/me/daily-summary", tags=["history"])
+def get_my_daily_summary(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    """Return today's learning progress across ALL topics for the current user.
+    Used by HomeScreen to display the 'Today's goal' progress bar.
+
+    Returns:
+      words_learned_today – distinct words rated for the first time today
+                            (sum of DailyLearningLog rows for today)
+      daily_goal          – user's configured daily word target
+    """
+    words_today = crud.get_words_learned_today(db, current_user.user_id)
+    return {
+        "words_learned_today": words_today,
+        "daily_goal": current_user.daily_goal,
+    }
+
+
 # ============================================================
 # FR2 – Flashcard Learning
 # ============================================================

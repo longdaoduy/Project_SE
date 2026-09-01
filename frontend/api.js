@@ -445,6 +445,9 @@ export const logoutUserBySessionId = (sessionId) =>
 export const getMyStatistics = (token) =>
   get('/me/statistics', {}, token);
 
+export const getMyDailySummary = (token) =>
+  get('/me/daily-summary', {}, token);
+
 export const getMyWeeklyActivity = (token) =>
   get('/me/weekly-activity', {}, token);
 
