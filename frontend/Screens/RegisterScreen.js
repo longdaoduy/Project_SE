@@ -286,12 +286,12 @@ export default function RegisterScreen({ navigation }) {
                                 </View>
 
                                 {/* Input Fields */}
-                                <Text style={styles.inputLabel}>Username</Text>
+                                <Text style={styles.inputLabel}>Full Name</Text>
                                 <View style={styles.inputBox}>
                                     <Ionicons name="person-outline" size={18} color="#94a3b8" />
                                     <TextInput
                                         style={styles.input}
-                                        placeholder="Duy Long"
+                                        placeholder="Nguyen Van A"
                                         placeholderTextColor="#cbd5e1"
                                         value={formData.username}
                                         onChangeText={(val) => updateForm('username', val)}

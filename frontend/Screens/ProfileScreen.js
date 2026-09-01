@@ -106,7 +106,7 @@ export default function ProfileScreen({navigation}) {
                     : `${studyHours.toFixed(1)}h`;
 
                 setProfileData({
-                    name: me.full_name || me.username || '—',
+                    name: me.full_name || '—',
                     email: me.email || '—',
                     englishLevel: me.english_level || '—',
                     stats: {

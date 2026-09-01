@@ -87,7 +87,9 @@ import { useData } from '../context/DataContext';
 
 const { width: screenWidth } = Dimensions.get('window');
 
-// Difficulty → time limit in seconds (must match backend defaults)
+// Difficulty → time limit in seconds — used as preview BEFORE server responds.
+// The authoritative value always comes from reading.time_limit_seconds in the API
+// response; this map is only a fallback when that field is missing.
 const DIFFICULTY_TIME = { A1: 600, A2: 600, B1: 720, B2: 900, C1: 1080, C2: 1200 };
 const DEFAULT_TIME = 600;
 
@@ -333,7 +335,9 @@ export default function AIReadingScreen({ navigation, route }) {
       setGenerating(true);
       setScreenError('');
       const reading = await generateAIReading(userId, vocab, null, difficultyParam || null);
-      const limit = DIFFICULTY_TIME[difficultyParam] || reading.time_limit_seconds || DEFAULT_TIME;
+      // Prefer the authoritative time_limit_seconds from the server response.
+      // Fall back to the local map only if the server field is missing/zero.
+      const limit = reading.time_limit_seconds || DIFFICULTY_TIME[difficultyParam] || DEFAULT_TIME;
 
       setCurrentReading(reading);
       setSelectedAnswers({});

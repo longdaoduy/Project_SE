@@ -15,7 +15,7 @@ import {
 
 import { AntDesign } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { getMe, getMyStatistics } from '../api';
+import { getMe, getMyStatistics, getMyDailySummary } from '../api';
 import { useData } from '../context/DataContext';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -52,24 +52,30 @@ export default function HomeScreen({ navigation }) {
                 setIsLoading(true);
                 setError('');
 
-                const [me, stats] = await Promise.all([
+                const [me, stats, dailySummary] = await Promise.all([
                     token ? getMe(token) : Promise.resolve(currentUser),
                     token ? getMyStatistics(token) : Promise.resolve(null),
+                    token ? getMyDailySummary(token).catch(() => null) : Promise.resolve(null),
                 ]);
 
                 const totalXp = stats?.total_xp ?? 0;
                 const totalWords = stats?.total_words ?? 0;
                 const streak = stats?.current_streak ?? 0;
 
+                // Use today's actual count from /me/daily-summary (words learned TODAY),
+                // not total_words which is an all-time cumulative counter.
+                const wordsLearnedToday = dailySummary?.words_learned_today ?? 0;
+                const dailyGoalTarget = dailySummary?.daily_goal ?? me?.daily_goal ?? 0;
+
                 setUserData({
-                    name: me?.full_name || me?.username || '—',
+                    name: me?.full_name || '—',
                     streak,
                     level: me?.english_level || '—',
                     xp: totalXp,
                     wordlearned: totalWords,
                     dailyGoal: {
-                        current: Math.min(totalWords, me?.daily_goal ?? 0),
-                        target: me?.daily_goal ?? 0,
+                        current: wordsLearnedToday,
+                        target: dailyGoalTarget,
                     },
                 });
             } catch (e) {
