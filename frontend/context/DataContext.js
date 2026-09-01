@@ -11,10 +11,14 @@ async function clearAuthStorage() {
 }
 
 const DataContext = createContext();
-const DECKS_KEY = 'user_decks_v2';
+const DECKS_KEY_PREFIX = 'user_decks_v3_';
+const LEGACY_DECKS_KEY = 'user_decks_v2';
 
 /** Normalise for duplicate comparison: trim + lowercase. */
 const normalise = (s) => (s || '').trim().toLowerCase();
+
+/** Returns the per-user AsyncStorage key. Falls back to a guest key when userId is unknown. */
+const decksKey = (userId) => userId ? `${DECKS_KEY_PREFIX}${userId}` : `${DECKS_KEY_PREFIX}guest`;
 
 export function DataProvider({ children }) {
   // ── Auth ────────────────────────────────────────────────────────────────────
@@ -78,54 +82,56 @@ export function DataProvider({ children }) {
 
   useEffect(() => { loadTopics(); }, [loadTopics]);
 
-  // ── User-created decks — persisted to AsyncStorage ───────────────────────────
+  // ── User-created decks — persisted to AsyncStorage keyed by userId ──────────
   const [decks, setDecks] = useState([]);
 
-  // Load once on mount — also migrate from any per-user key that may exist
+  // Reload decks whenever userId changes (login / logout / switch account)
   useEffect(() => {
     (async () => {
       try {
-        // Check new-style per-user keys (from a previous migration attempt) and fold them in
-        const allKeys = await AsyncStorage.getAllKeys();
-        const perUserKeys = allKeys.filter(k => k.startsWith('user_decks_v2_'));
-        if (perUserKeys.length > 0) {
-          // Collect all decks from per-user keys, merge into the global key
-          let merged = [];
-          const globalRaw = await AsyncStorage.getItem(DECKS_KEY);
-          if (globalRaw) merged = JSON.parse(globalRaw);
-          for (const k of perUserKeys) {
-            const raw = await AsyncStorage.getItem(k);
-            if (raw) {
-              const items = JSON.parse(raw);
-              // Avoid duplicates by id
-              for (const d of items) {
-                if (!merged.find(m => m.id === d.id)) merged.push(d);
-              }
+        const key = decksKey(userId);
+
+        // One-time migration: fold the old global key into the current user's key
+        // so existing decks aren't lost after this upgrade.
+        const legacyRaw = await AsyncStorage.getItem(LEGACY_DECKS_KEY);
+        if (legacyRaw) {
+          let legacyDecks = [];
+          try { legacyDecks = JSON.parse(legacyRaw); } catch (_) {}
+          if (Array.isArray(legacyDecks) && legacyDecks.length > 0) {
+            // Merge legacy decks into current user's key (avoid duplicates by id)
+            const existingRaw = await AsyncStorage.getItem(key);
+            let existing = [];
+            try { existing = JSON.parse(existingRaw) || []; } catch (_) {}
+            for (const d of legacyDecks) {
+              if (!existing.find(e => e.id === d.id)) existing.push(d);
             }
-            await AsyncStorage.removeItem(k);
+            await AsyncStorage.setItem(key, JSON.stringify(existing));
+            await AsyncStorage.removeItem(LEGACY_DECKS_KEY);
+            setDecks(existing);
+            return;
           }
-          await AsyncStorage.setItem(DECKS_KEY, JSON.stringify(merged));
-          setDecks(merged);
-        } else {
-          const raw = await AsyncStorage.getItem(DECKS_KEY);
-          setDecks(raw ? JSON.parse(raw) : []);
+          // Legacy key was empty — just remove it
+          await AsyncStorage.removeItem(LEGACY_DECKS_KEY);
         }
+
+        const raw = await AsyncStorage.getItem(key);
+        setDecks(raw ? JSON.parse(raw) : []);
       } catch (e) {
         console.warn('loadDecks error:', e);
         setDecks([]);
       }
     })();
-  }, []);
+  }, [userId]); // re-run on every userId change
 
   const _persist = useCallback((updated) => {
-    AsyncStorage.setItem(DECKS_KEY, JSON.stringify(updated)).catch(() => {});
-  }, []);
+    AsyncStorage.setItem(decksKey(userId), JSON.stringify(updated)).catch(() => {});
+  }, [userId]);
 
-  /** Remove all local deck data (call on account deletion). */
+  /** Remove all local deck data for this user (call on account deletion / logout). */
   const clearUserDecks = useCallback(async () => {
-    await AsyncStorage.removeItem(DECKS_KEY).catch(() => {});
+    await AsyncStorage.removeItem(decksKey(userId)).catch(() => {});
     setDecks([]);
-  }, []);
+  }, [userId]);
 
   /**
    * Create a new deck.
