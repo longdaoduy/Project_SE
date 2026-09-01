@@ -27,7 +27,7 @@ from .security import (
     create_access_token, decode_access_token,
     hash_password, needs_rehash, verify_password,
 )
-from .email_service import send_verification_email
+from .email_service import send_verification_email, validate_email_domain
 
 app = FastAPI(title="SmartEng API", version="3.1.0")
 bearer = HTTPBearer(auto_error=False)
@@ -210,10 +210,23 @@ def get_random_flashcards(
 # FR1 – User Management
 # ============================================================
 
+@app.get("/users/check-email", tags=["users"])
+def check_email(email: str = Query(...), db: Session = Depends(get_db)):
+    """Check whether an email address is already registered. Used by the
+    registration form to give instant feedback before the user completes all steps."""
+    exists = crud.get_user_by_email(db, email) is not None
+    return {"exists": exists}
+
+
 @app.post("/users", response_model=schemas.UserRead, tags=["users"])
 def register_user(payload: schemas.UserCreate, db: Session = Depends(get_db)):
     if crud.get_user_by_email(db, payload.email):
         raise HTTPException(400, "Email already registered")
+    # Reject domains with no DNS MX/A record (e.g. completely made-up addresses)
+    try:
+        validate_email_domain(payload.email)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
     try:
         user = crud.create_user(db, payload, hashed_password=hash_password(payload.password))
         code = crud.create_email_verification_code(db, user)

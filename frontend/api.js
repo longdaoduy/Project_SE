@@ -34,7 +34,20 @@ async function request(method, path, body = null, token = null) {
   const res = await fetch(`${API_BASE}${path}`, opts);
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`${method} ${path} → ${res.status}: ${text}`);
+    // Try to extract the `detail` field from a FastAPI JSON error body.
+    // Falls back to the raw text if the body isn't JSON or has no `detail`.
+    let detail = text;
+    try {
+      const json = JSON.parse(text);
+      if (json && json.detail) {
+        detail = typeof json.detail === 'string'
+          ? json.detail
+          : JSON.stringify(json.detail);
+      }
+    } catch (_) { /* not JSON — keep raw text */ }
+    const err = new Error(detail);
+    err.statusCode = res.status;
+    throw err;
   }
   return res.json();
 }
@@ -398,6 +411,9 @@ export async function saveLocalQuizResult(userId, topicId, quizType, results) {
 
 export const registerUser = (payload) =>
   post('/users', payload);
+
+export const checkEmailExists = (email) =>
+  get('/users/check-email', { email });
 
 export const verifyEmail = (payload) =>
   post('/users/verify-email', payload);

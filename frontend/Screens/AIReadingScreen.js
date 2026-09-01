@@ -887,13 +887,33 @@ export default function AIReadingScreen({ navigation, route }) {
           {/* ── TEST VIEW ─────────────────────────────────────────────── */}
           {viewState === 'test' && currentReading && (
             <View style={{ flex: 1, width: '100%' }}>
+              {/* No questions fallback — let the user escape */}
+              {(currentReading.comprehension_questions || []).length === 0 && (
+                <View style={styles.noQuestionsBox}>
+                  <Ionicons name="warning-outline" size={36} color="#f97316" style={{ marginBottom: 10 }} />
+                  <Text style={styles.noQuestionsTitle}>Questions could not be generated</Text>
+                  <Text style={styles.noQuestionsText}>
+                    The AI failed to produce questions for this passage. Please go back and try generating a new test.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.noQuestionsBackBtn}
+                    onPress={() => { stopTimer(); setViewState('history'); setScreenError(''); }}
+                  >
+                    <Ionicons name="arrow-back" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                    <Text style={styles.noQuestionsBackBtnText}>Back to History</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
               {/* Timer bar */}
+              {(currentReading.comprehension_questions || []).length > 0 && (
               <View style={styles.timerBar}>
                 <View style={[styles.timerBarFill, {
                   width: `${(timeLeft / (currentReading.time_limit_seconds || DEFAULT_TIME)) * 100}%`,
                   backgroundColor: timerColor,
                 }]} />
               </View>
+              )}
 
               <ScrollView contentContainerStyle={styles.scrollContentResult} showsVerticalScrollIndicator={false}>
                 {/* Passage */}
@@ -1319,6 +1339,25 @@ Object.assign(styles, StyleSheet.create({
 
   // Retake button
   retakeBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#0f172a', borderRadius: 16, paddingVertical: 15, marginBottom: 10 },
+
+  // No-questions fallback box
+  noQuestionsBox: {
+    margin: 20,
+    padding: 24,
+    backgroundColor: '#fff7ed',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#fed7aa',
+    alignItems: 'center',
+  },
+  noQuestionsTitle: { fontSize: 16, fontWeight: '700', color: '#c2410c', marginBottom: 8, textAlign: 'center' },
+  noQuestionsText:  { fontSize: 13, color: '#78350f', textAlign: 'center', lineHeight: 20, marginBottom: 16 },
+  noQuestionsBackBtn: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#f97316', paddingVertical: 10, paddingHorizontal: 20,
+    borderRadius: 10,
+  },
+  noQuestionsBackBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 14 },
 
   // Timer progress bar (top of test view)
   timerBar: { height: 4, width: '100%', backgroundColor: '#e2e8f0' },
