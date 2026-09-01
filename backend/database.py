@@ -6,8 +6,12 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-# Load biến môi trường từ backend/.env (xem backend/.env.example)
-load_dotenv(Path(__file__).resolve().parent / ".env")
+# Load the primary backend configuration. Older checkouts kept the database
+# settings in app_beta/.env, so retain that as a local compatibility fallback.
+BACKEND_DIR = Path(__file__).resolve().parent
+load_dotenv(BACKEND_DIR / ".env")
+if not os.getenv("DATABASE_URL"):
+    load_dotenv(BACKEND_DIR.parent / "app_beta" / ".env")
 
 # 1. URL kết nối Aiven – bắt buộc khai báo trong .env
 DATABASE_URL = os.getenv("DATABASE_URL", "")

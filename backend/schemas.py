@@ -216,6 +216,7 @@ class WeeklyActivityItem(BaseModel):
     date: str          # ISO date string e.g. "2026-08-03"
     activities: int
     minutes: int
+    words: int = 0
 
 
 class WeeklyActivityResponse(BaseModel):

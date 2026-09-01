@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import os
 import secrets
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
@@ -450,25 +451,52 @@ def list_learning_history(
 
 
 def get_weekly_activity(db: Session, user_id: int) -> list[dict]:
-    """Return exactly 7 days of activity data for the Profile weekly chart."""
-    today = datetime.now(timezone.utc).date()
+    """Return seven local-calendar days with unique words reviewed and study time."""
+    today = datetime.now(_app_timezone()).date()
     start = today - timedelta(days=6)
-    rows = (
-        db.query(models.LearningHistory)
-        .filter(
-            models.LearningHistory.user_id == user_id,
-            models.LearningHistory.completed_at >= datetime(
-                start.year, start.month, start.day, tzinfo=timezone.utc
-            ),
-        )
+    buckets = {
+        start + timedelta(days=i): {"activities": 0, "minutes": 0, "words": 0}
+        for i in range(7)
+    }
+
+    flashcards = (db.query(models.FlashcardSession)
+                  .filter(models.FlashcardSession.user_id == user_id,
+                          models.FlashcardSession.is_completed.is_(True)).all())
+    quizzes = (db.query(models.Quiz)
+               .filter(models.Quiz.user_id == user_id,
+                       models.Quiz.is_completed.is_(True)).all())
+    readings = (db.query(models.AIReading)
+                .filter(models.AIReading.user_id == user_id,
+                        models.AIReading.is_completed.is_(True)).all())
+    for item in [*flashcards, *quizzes, *readings]:
+        day = _activity_date(item.completed_at)
+        if day not in buckets:
+            continue
+        buckets[day]["activities"] += 1
+        if isinstance(item, models.AIReading):
+            seconds = max(0, int(item.completion_seconds or 0))
+        else:
+            started = _as_utc(item.started_at)
+            completed = _as_utc(item.completed_at)
+            seconds = max(0, int((completed - started).total_seconds())) if started and completed else 0
+        buckets[day]["minutes"] += round(seconds / 60)
+
+    reviewed_words = (
+        db.query(models.FlashcardProgress.word_id, models.FlashcardProgress.reviewed_at)
+        .join(models.FlashcardSession,
+              models.FlashcardProgress.session_id == models.FlashcardSession.session_id)
+        .filter(models.FlashcardSession.user_id == user_id,
+                models.FlashcardProgress.reviewed_at.isnot(None))
         .all()
     )
-    buckets = {start + timedelta(days=i): {"activities": 0, "minutes": 0} for i in range(7)}
-    for row in rows:
-        d = row.completed_at.date() if hasattr(row.completed_at, "date") else row.completed_at
-        if d in buckets:
-            buckets[d]["activities"] += 1
-            buckets[d]["minutes"] += int(row.duration or 0)
+    words_by_day: dict[date, set[int]] = {}
+    for word_id, reviewed_at in reviewed_words:
+        reviewed_date = _activity_date(reviewed_at)
+        if reviewed_date is not None:
+            words_by_day.setdefault(reviewed_date, set()).add(word_id)
+    for day, word_ids in words_by_day.items():
+        if day in buckets:
+            buckets[day]["words"] = len(word_ids)
     return [{"date": d.isoformat(), **buckets[d]} for d in sorted(buckets)]
 
 
@@ -478,6 +506,83 @@ def get_user_statistics(db: Session, user_id: int) -> models.UserStatistics | No
         .filter(models.UserStatistics.user_id == user_id)
         .first()
     )
+
+
+def _app_timezone() -> ZoneInfo:
+    try:
+        return ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh"))
+    except Exception:
+        return ZoneInfo("UTC")
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def _activity_date(value: datetime | None) -> date | None:
+    utc_value = _as_utc(value)
+    return utc_value.astimezone(_app_timezone()).date() if utc_value else None
+
+
+def refresh_user_statistics(db: Session, user_id: int) -> models.UserStatistics | None:
+    """Repair and rebuild profile metrics from completed activity records."""
+    stats = get_user_statistics(db, user_id)
+    if stats is None:
+        stats = models.UserStatistics(user_id=user_id)
+        db.add(stats)
+        db.flush()
+
+    flashcards = (db.query(models.FlashcardSession)
+                  .filter(models.FlashcardSession.user_id == user_id,
+                          models.FlashcardSession.is_completed.is_(True)).all())
+    quizzes = (db.query(models.Quiz)
+               .filter(models.Quiz.user_id == user_id,
+                       models.Quiz.is_completed.is_(True)).all())
+    readings = (db.query(models.AIReading)
+                .filter(models.AIReading.user_id == user_id,
+                        models.AIReading.is_completed.is_(True)).all())
+
+    stats.total_flashcards = len(flashcards)
+    stats.total_quizzes = len(quizzes)
+    stats.average_score = round(
+        sum(float(q.accuracy or 0) for q in quizzes) / len(quizzes), 2
+    ) if quizzes else 0.0
+    stats.total_words = int(
+        db.query(func.count(func.distinct(models.FlashcardProgress.word_id)))
+        .join(models.FlashcardSession,
+              models.FlashcardProgress.session_id == models.FlashcardSession.session_id)
+        .filter(models.FlashcardSession.user_id == user_id,
+                models.FlashcardProgress.reviewed_at.isnot(None))
+        .scalar() or 0
+    )
+
+    total_seconds = 0
+    for item in [*flashcards, *quizzes]:
+        started = _as_utc(item.started_at)
+        completed = _as_utc(item.completed_at)
+        if started and completed:
+            total_seconds += max(0, int((completed - started).total_seconds()))
+    total_seconds += sum(max(0, int(r.completion_seconds or 0)) for r in readings)
+    stats.study_hours = round(total_seconds / 3600, 2)
+
+    activity_dates = {
+        day for day in (
+            _activity_date(item.completed_at) for item in [*flashcards, *quizzes, *readings]
+        ) if day is not None
+    }
+    today = datetime.now(_app_timezone()).date()
+    cursor = today if today in activity_dates else today - timedelta(days=1)
+    streak = 0
+    while cursor in activity_dates:
+        streak += 1
+        cursor -= timedelta(days=1)
+    stats.current_streak = streak
+
+    db.commit()
+    db.refresh(stats)
+    return stats
 
 
 def _refresh_streak(db: Session, user_id: int, stats: models.UserStatistics) -> None:

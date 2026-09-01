@@ -15,6 +15,7 @@ import {
 
 import { AntDesign } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useIsFocused } from '@react-navigation/native';
 import { useData } from '../context/DataContext';
 import { getMe, getMyHistory, getMyStatistics, getMyWeeklyActivity } from '../api';
 
@@ -22,6 +23,7 @@ const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 export default function ProfileScreen({navigation}) {
     const { token } = useData();
+    const isFocused = useIsFocused();
     const [profileData, setProfileData] = useState({
         name: '—',
         email: "—",
@@ -60,7 +62,7 @@ export default function ProfileScreen({navigation}) {
 
     useEffect(() => {
         const loadProfile = async () => {
-            if (!token) return;
+            if (!token || !isFocused) return;
             try {
                 setIsLoading(true);
                 setError('');
@@ -74,7 +76,7 @@ export default function ProfileScreen({navigation}) {
                 const currentStreak = stats?.current_streak || 0;
                 const totalXp = stats?.total_xp || 0;
                 const totalQuizzes = stats?.total_quizzes || 0;
-                const studyHours = stats?.study_hours || 0;
+                const studyHours = Number(stats?.study_hours || 0);
 
                 const dynamicAchievements = [
                     { id: 1, title: 'First 10 Words', unlocked: totalWords >= 10 },
@@ -95,9 +97,13 @@ export default function ProfileScreen({navigation}) {
                     } catch (_) {}
                     return {
                         day: dayLabel,
-                        words: item.activities,
+                        words: item.words || 0,
                     };
                 });
+
+                const studyTime = studyHours < 1
+                    ? `${Math.round(studyHours * 60)}m`
+                    : `${studyHours.toFixed(1)}h`;
 
                 setProfileData({
                     name: me.full_name || me.username || '—',
@@ -110,7 +116,7 @@ export default function ProfileScreen({navigation}) {
                         words: totalWords,
                         quizzes: totalQuizzes,
                         perfect: Math.round((stats.average_score || 0) / 10),
-                        hours: Math.round(studyHours),
+                        hours: studyTime,
                     },
                     weeklyHistory: formattedWeekly.length > 0 ? formattedWeekly : [
                         { day: 'M', words: 0 }, { day: 'T', words: 0 }, { day: 'W', words: 0 },
@@ -126,7 +132,7 @@ export default function ProfileScreen({navigation}) {
         };
 
         loadProfile();
-    }, [token]);
+    }, [token, isFocused]);
 
     const totalWordsThisWeek = profileData.weeklyHistory.reduce((sum, item) => sum + item.words, 0);
     {/*Lấy số từ học được nhiều nhất trong tuần để tính phần trăm chiều cao cột biểu đồ*/}
@@ -214,7 +220,7 @@ export default function ProfileScreen({navigation}) {
                                 <View style={styles.gridItem}>
                                     <Image source={require('../assets/books.png')} style={styles.gridIcon} />
                                     <Text style={styles.gridValue}>{profileData.stats.words}</Text>
-                                    <Text style={styles.gridLabel}>Words</Text>
+                                    <Text style={styles.gridLabel}>Words learned</Text>
                                 </View>
                             </View>
 
@@ -232,7 +238,7 @@ export default function ProfileScreen({navigation}) {
                                 <View style={styles.gridItem}>
                                     <Text style={{fontSize: 22, marginBottom: 4}}>🕒</Text>
                                     <Text style={styles.gridValue}>{profileData.stats.hours}</Text>
-                                    <Text style={styles.gridLabel}>Hours</Text>
+                                    <Text style={styles.gridLabel}>Study time</Text>
                                 </View>
                             </View>
                         </View>

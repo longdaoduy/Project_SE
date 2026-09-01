@@ -538,7 +538,9 @@ def get_weekly_activity(user_id: int, db: Session = Depends(get_db)):
 
 @app.get("/users/{user_id}/statistics", response_model=schemas.UserStatisticsRead, tags=["history"])
 def get_user_statistics(user_id: int, db: Session = Depends(get_db)):
-    stats = crud.get_user_statistics(db, user_id)
+    if not crud.get_user_by_id(db, user_id):
+        raise HTTPException(404, "User not found")
+    stats = crud.refresh_user_statistics(db, user_id)
     if not stats:
         raise HTTPException(404, "Statistics not found")
     return stats
@@ -563,7 +565,7 @@ def get_my_history(
 
 @app.get("/me/statistics", response_model=schemas.UserStatisticsRead, tags=["history"])
 def get_my_statistics(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    stats = crud.get_user_statistics(db, current_user.user_id)
+    stats = crud.refresh_user_statistics(db, current_user.user_id)
     if not stats:
         raise HTTPException(404, "Statistics not found")
     return stats
