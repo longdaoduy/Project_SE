@@ -71,9 +71,14 @@ export default function QuizMatching({ navigation, route }) {
   // ── LOADING ───────────────────────────────────────────────────────────────
   if (phase === 'loading') {
     return (
-      <View style={st.center}>
-        <ActivityIndicator size="large" color="#006FFF" />
-        <Text style={st.loadingText}>Building quiz…</Text>
+      <View style={st.webWrapper}>
+        <LinearGradient colors={['#006FFF', '#4F9FFF']} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={st.phoneContainer}>
+          <StatusBar barStyle="light-content" />
+          <View style={st.center}>
+            <ActivityIndicator size="large" color="#006FFF" />
+            <Text style={st.loadingText}>Building quiz…</Text>
+          </View>
+        </LinearGradient>
       </View>
     );
   }

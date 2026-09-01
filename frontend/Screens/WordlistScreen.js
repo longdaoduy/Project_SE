@@ -576,7 +576,7 @@ const styles = StyleSheet.create({
 
   // ── Topic filter modal ────────────────────────────────────────────────────────
   modalOverlay: { flex: 1, justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end', alignItems: Platform.OS === 'web' ? 'center' : 'stretch' },
-  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
+  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'transparent' },
   modalWebWrapper: { width: 400, maxHeight: 600, borderRadius: 24, overflow: 'hidden' },
   modalContainer: { backgroundColor: '#ffffff', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 20, paddingBottom: 32, maxHeight: Platform.OS === 'web' ? 600 : '75%' },
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },

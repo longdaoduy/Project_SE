@@ -1443,7 +1443,7 @@ Object.assign(styles, StyleSheet.create({
   // Picker modal
   pickerOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    backgroundColor: 'transparent',
     justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end',
     alignItems: Platform.OS === 'web' ? 'center' : 'stretch',
   },

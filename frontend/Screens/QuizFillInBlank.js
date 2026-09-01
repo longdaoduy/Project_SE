@@ -71,9 +71,14 @@ export default function QuizFillInBlank({ navigation, route }) {
   // ── LOADING ───────────────────────────────────────────────────────────────
   if (phase === 'loading') {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#16A487" />
-        <Text style={styles.loadingText}>Building quiz…</Text>
+      <View style={styles.webWrapper}>
+        <LinearGradient colors={['#16A487', '#3FC5B7']} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={styles.phoneContainer}>
+          <StatusBar barStyle="light-content" />
+          <View style={styles.center}>
+            <ActivityIndicator size="large" color="#16A487" />
+            <Text style={styles.loadingText}>Building quiz…</Text>
+          </View>
+        </LinearGradient>
       </View>
     );
   }

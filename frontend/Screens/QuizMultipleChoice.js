@@ -149,9 +149,14 @@ export default function QuizMultipleChoice({ navigation, route }) {
   // ── LOADING ───────────────────────────────────────────────────────────────
   if (phase === 'loading') {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#667eea" />
-        <Text style={styles.loadingText}>Building quiz…</Text>
+      <View style={styles.webWrapper}>
+        <LinearGradient colors={['#667eea', '#764ba2']} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={styles.phoneContainer}>
+          <StatusBar barStyle="light-content" />
+          <View style={styles.center}>
+            <ActivityIndicator size="large" color="#667eea" />
+            <Text style={styles.loadingText}>Building quiz…</Text>
+          </View>
+        </LinearGradient>
       </View>
     );
   }
