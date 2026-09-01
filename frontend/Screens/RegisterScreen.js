@@ -303,7 +303,7 @@ export default function RegisterScreen({ navigation }) {
                                     <Ionicons name="mail-outline" size={18} color="#94a3b8" />
                                     <TextInput
                                         style={styles.input}
-                                        placeholder="longdeptrai@gmail.com"
+                                        placeholder="nguyenvana@gmail.com"
                                         placeholderTextColor="#cbd5e1"
                                         keyboardType="email-address"
                                         autoCapitalize="none"
