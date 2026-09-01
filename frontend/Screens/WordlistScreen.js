@@ -208,8 +208,8 @@ export default function WordlistScreen({ navigation }) {
                   {selectedTopic ? `${selectedTopic.topic_name} · ` : ''}{vocabularies.length} words
                 </Text>
               </View>
-              <TouchableOpacity style={styles.addButton} onPress={() => setViewState('add')}>
-                <Ionicons name="add" size={20} color="#ffffff" />
+              <TouchableOpacity style={styles.addButton} onPress={() => navigation.navigate('FlashcardScreen')}>
+                <Ionicons name="albums-outline" size={18} color="#ffffff" />
               </TouchableOpacity>
             </View>
 
@@ -320,98 +320,6 @@ export default function WordlistScreen({ navigation }) {
                 }
               />
             </View>
-          </>
-        )}
-
-        {/* ═══════════════════ ADD WORD VIEW ═══════════════════ */}
-        {viewState === 'add' && (
-          <>
-            <View style={styles.headerSection}>
-              <TouchableOpacity onPress={() => setViewState('list')} style={styles.backButton}>
-                <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, resizeMode: 'contain' }} />
-              </TouchableOpacity>
-              <View style={styles.headerTextContainer}>
-                <Text style={styles.appName}>Add Vocabulary</Text>
-                <Text style={styles.appSubtitle}>Add new words to your deck</Text>
-              </View>
-            </View>
-
-            <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
-              <View style={[styles.whiteCardContainer, { paddingBottom: 32 }]}>
-                <View style={styles.addWordContainer}>
-
-                  {/* Topic selector */}
-                  <Text style={styles.addWordContainerTitle}>TARGET TOPIC</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-                    {topics.map((t) => {
-                      const sel = (newTopicId || selectedTopicId) === t.topic_id;
-                      return (
-                        <TouchableOpacity
-                          key={t.topic_id}
-                          style={[styles.formTopicChip, sel && styles.formTopicChipSel]}
-                          onPress={() => setNewTopicId(t.topic_id)}
-                        >
-                          <Text style={[styles.formTopicChipText, sel && styles.formTopicChipTextSel]}>
-                            {t.topic_name}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </ScrollView>
-
-                  <Text style={styles.addWordContainerTitle}>WORD / PHRASE *</Text>
-                  <View style={styles.addWordInputContainer}>
-                    <TextInput placeholder="e.g. Resilience" style={styles.addWordInput} value={newWord} onChangeText={setNewWord} />
-                  </View>
-
-                  <Text style={styles.addWordContainerTitle}>PHONETIC</Text>
-                  <View style={styles.addWordInputContainer}>
-                    <TextInput placeholder="e.g. /rɪˈzɪl.jəns/" style={styles.addWordInput} value={newPhonetic} onChangeText={setNewPhonetic} />
-                  </View>
-
-                  <Text style={styles.addWordContainerTitle}>VIETNAMESE MEANING *</Text>
-                  <View style={styles.addWordInputContainer}>
-                    <TextInput placeholder="e.g. Khả năng phục hồi" style={styles.addWordInput} value={newMeaningVi} onChangeText={setNewMeaningVi} />
-                  </View>
-
-                  <Text style={styles.addWordContainerTitle}>EXAMPLE SENTENCE (ENGLISH) *</Text>
-                  <View style={styles.addWordInputContainer}>
-                    <TextInput placeholder="e.g. She showed great resilience." style={styles.addWordInput} value={newExampleEn} onChangeText={setNewExampleEn} multiline />
-                  </View>
-
-                  <Text style={styles.addWordContainerTitle}>EXAMPLE TRANSLATION (VIETNAMESE) *</Text>
-                  <View style={styles.addWordInputContainer}>
-                    <TextInput placeholder="e.g. Cô ấy thể hiện sự kiên cường tuyệt vời." style={styles.addWordInput} value={newExampleVi} onChangeText={setNewExampleVi} multiline />
-                  </View>
-
-                  <Text style={styles.addWordContainerTitle}>PART OF SPEECH</Text>
-                  <View style={styles.wordTypeButtonContainer}>
-                    {WORD_TYPES.map((t) => {
-                      const sel = selectedType === t.id;
-                      return (
-                        <TouchableOpacity
-                          key={t.id}
-                          style={[styles.wordTypeButton, sel && styles.wordTypeButtonSelected]}
-                          onPress={() => setSelectedType(t.id)}
-                        >
-                          <Text style={[styles.wordTypeButtonText, sel && styles.wordTypeButtonTextSelected]}>{t.label}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-
-                  <TouchableOpacity
-                    style={[styles.addWordButton, submitting && { opacity: 0.6 }]}
-                    onPress={handleAddWordSubmit}
-                    disabled={submitting}
-                  >
-                    {submitting
-                      ? <ActivityIndicator size="small" color="#ffffff" />
-                      : <Text style={styles.addWordButtonText}>Save Word to Database</Text>}
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </ScrollView>
           </>
         )}
 
