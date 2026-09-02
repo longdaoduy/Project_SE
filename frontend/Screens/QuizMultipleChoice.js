@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   getWords, buildMCQuestions,
-  createQuizWithQuestions, submitAnswer, submitQuiz, getQuizQuestion,
+  createQuizWithQuestions, submitAllAnswers,
 } from '../api';
 
 export default function QuizMultipleChoice({ navigation, route }) {
@@ -15,7 +15,6 @@ export default function QuizMultipleChoice({ navigation, route }) {
 
   const [phase, setPhase] = useState('loading');
   const [questions, setQuestions] = useState([]);
-  const [backendQs, setBackendQs] = useState([]);
   const [quizId, setQuizId] = useState(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedOption, setSelectedOption] = useState(null);
@@ -39,7 +38,6 @@ export default function QuizMultipleChoice({ navigation, route }) {
       if (deckWords) {
         const localQs = built.map((q, i) => ({ ...q, question_id: `local_${i}` }));
         setQuestions(localQs);
-        setBackendQs([]);
         setQuizId(null);
         setCurrentIndex(0);
         setSelectedOption(null);
@@ -57,7 +55,6 @@ export default function QuizMultipleChoice({ navigation, route }) {
       const merged = built.map((q, i) => ({ ...q, question_id: bqs[i].question_id }));
 
       setQuestions(merged);
-      setBackendQs(bqs);
       setQuizId(quiz.quiz_id);
       setCurrentIndex(0);
       setSelectedOption(null);
@@ -78,14 +75,7 @@ export default function QuizMultipleChoice({ navigation, route }) {
     if (!selectedOption) return;
     const q = questions[currentIndex];
 
-    if (quizId && !deckWords) {
-      try {
-        await submitAnswer(q.question_id, selectedOption);
-      } catch (e) {
-        console.warn('submitAnswer error (non-critical):', e.message);
-      }
-    }
-
+    // Record answer locally — no network call per question
     const newMap = { ...answeredMap, [q.question_id]: selectedOption };
     setAnsweredMap(newMap);
 
@@ -97,7 +87,7 @@ export default function QuizMultipleChoice({ navigation, route }) {
       setCurrentIndex((prev) => prev + 1);
       setSelectedOption(null);
     } else {
-      await finaliseQuiz(newScore, { ...newMap, [q.question_id]: selectedOption });
+      await finaliseQuiz(newScore, newMap);
     }
   };
 
@@ -116,17 +106,13 @@ export default function QuizMultipleChoice({ navigation, route }) {
     }
 
     try {
-      await submitQuiz(quizId);
+      // 1 request: submit all answers + score in one shot
+      // Response already contains scored questions — no follow-up GETs needed
+      const result = await submitAllAnswers(quizId, finalMap);
+      setResultData(result.questions ?? []);
     } catch (e) {
-      console.warn('submitQuiz error (non-critical):', e.message);
-    }
-
-    try {
-      const detailed = await Promise.all(
-        questions.map((q) => getQuizQuestion(q.question_id))
-      );
-      setResultData(detailed);
-    } catch (e) {
+      console.warn('submitAllAnswers error (non-critical):', e.message);
+      // Fall back to local scoring so the result screen still shows
       setResultData(
         questions.map((q) => ({
           ...q,

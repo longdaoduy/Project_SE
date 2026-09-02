@@ -15,6 +15,8 @@ import {
   createFlashcardSession, completeFlashcardSession,
   createFlashcardProgress, updateFlashcardProgress,
   getActiveFlashcardSession,
+  bulkCreateFlashcardProgress,
+  rateCardInSession,
 } from '../api';
 import * as Speech from 'expo-speech';
 
@@ -397,25 +399,27 @@ export default function FlashcardScreen({ navigation }) {
 
       if (existingSession) {
         session = existingSession;
+        // Lấy progress_id đã có từ session
         if (session.progresses && session.progresses.length > 0) {
           session.progresses.forEach(p => { pIds[p.word_id] = p.progress_id; });
         }
-        for (const w of allCards) {
-          if (!pIds[w.word_id]) {
-            try {
-              const prog = await createFlashcardProgress(session.session_id, w.word_id);
-              pIds[w.word_id] = prog.progress_id;
-            } catch (_) { /* non-critical */ }
-          }
+        // Bulk create progress cho các card chưa có — 1 request thay vì N
+        const missingWordIds = allCards
+          .map(w => w.word_id)
+          .filter(wid => !pIds[wid]);
+        if (missingWordIds.length > 0) {
+          try {
+            const { progress_map } = await bulkCreateFlashcardProgress(session.session_id, missingWordIds);
+            Object.assign(pIds, progress_map);
+          } catch (_) { /* non-critical */ }
         }
       } else {
         session = await createFlashcardSession(userId, topic.topic_id, allCards.length);
-        for (const w of allCards) {
-          try {
-            const prog = await createFlashcardProgress(session.session_id, w.word_id);
-            pIds[w.word_id] = prog.progress_id;
-          } catch (_) { /* non-critical */ }
-        }
+        // Bulk create tất cả progress records trong 1 request
+        try {
+          const { progress_map } = await bulkCreateFlashcardProgress(session.session_id, allCards.map(w => w.word_id));
+          pIds = progress_map;
+        } catch (_) { /* non-critical */ }
       }
 
       const store = {};
@@ -474,7 +478,7 @@ export default function FlashcardScreen({ navigation }) {
 
   // ── Flip card ────────────────────────────────────────────────────────────────
   // ── Flip card (Có hiệu ứng) ──────────────────────────────────────────────────
-  const handleFlip = useCallback(async () => {
+  const handleFlip = useCallback(() => {
     if (showMeaning) return;
 
     // Bước 1: Xoay thẻ 90 độ (úp thẻ xuống)
@@ -494,22 +498,23 @@ export default function FlashcardScreen({ navigation }) {
       }).start();
     });
 
-    // Code gọi API lưu tiến độ (giữ nguyên của bạn)
+    // Fire-and-forget — không await, không block animation
     const card = cards[currentIndex];
     const pid = progressIds[card.word_id];
     if (pid) {
-      try { await updateFlashcardProgress(pid, { is_flipped: true }); }
-      catch (e) { console.warn('flip progress:', e.message); }
+      updateFlashcardProgress(pid, { is_flipped: true })
+        .catch(e => console.warn('flip progress:', e.message));
     }
   }, [showMeaning, cards, currentIndex, progressIds, flipAnim]);
 
   // ── Rate & advance – full session tracking + SRS ────────────────────────────
-  const handleRate = useCallback(async (rating) => {
+  const handleRate = useCallback((rating) => {
     const card = cards[currentIndex];
     const pid = progressIds[card.word_id];
     const wid = card.word_id;
+    const topicId = card.topic_id ?? selectedTopic?.topic_id;
 
-    // ── Update per-card session stats ─────────────────────────────────────────
+    // ── 1. Update per-card session stats (synchronous) ────────────────────────
     setCardStats(prev => {
       const existing = prev[wid] || { again_count: 0, last_option: null, flagged_difficult: false };
       if (rating === 'again') {
@@ -518,63 +523,66 @@ export default function FlashcardScreen({ navigation }) {
           [wid]: {
             again_count: existing.again_count + 1,
             last_option: 'again',
-            flagged_difficult: true,      // once flagged, stays flagged for done screen
-          },
-        };
-      } else {
-        // Hard/Good/Easy → reset again_count, keep flagged if previously flagged
-        return {
-          ...prev,
-          [wid]: {
-            again_count: 0,               // RESET per spec
-            last_option: rating,
-            flagged_difficult: existing.flagged_difficult || rating === 'hard',
+            flagged_difficult: true,
           },
         };
       }
+      return {
+        ...prev,
+        [wid]: {
+          again_count: 0,
+          last_option: rating,
+          flagged_difficult: existing.flagged_difficult || rating === 'hard',
+        },
+      };
     });
 
-    // ── Legacy flip-progress (keeps session history) ──────────────────────────
-    if (pid) {
-      try { await updateFlashcardProgress(pid, { difficulty_rating: rating }); }
-      catch (e) { console.warn('rate progress:', e.message); }
-    }
-
-    // ── SRS rating (backend) ──────────────────────────────────────────────────
-    if (selectedTopic && card.topic_id !== undefined) {
-      try {
-        const topicId = card.topic_id ?? selectedTopic.topic_id;
-        const srsResult = await submitSRSRating(userId, card.word_id, topicId, rating);
-        setSrsResults(prev => ({ ...prev, [wid]: srsResult }));
-      } catch (e) { console.warn('srs rating:', e.message); }
-    }
-
-    // ── Queue management ──────────────────────────────────────────────────────
+    // ── 2. Optimistic queue update — KHÔNG chờ API ────────────────────────────
     if (rating === 'again') {
-      // Move card to end; do NOT record a final rating
+      // Requeue: đưa thẻ xuống cuối hàng, chuyển ngay
       const rest = cards.slice(currentIndex + 1);
       setCards(rest.length > 0 ? [...rest, card] : [card]);
       setCurrentIndex(0);
       setShowMeaning(false);
       flipAnim.setValue(0);
-      return;
-    }
-
-    // Hard / Good / Easy → card leaves the queue, record final rating
-    setRatings(prev => ({ ...prev, [wid]: rating }));
-    const remainingCards = cards.slice(currentIndex + 1);
-
-    if (remainingCards.length === 0) {
-      try { if (sessionId) await completeFlashcardSession(sessionId); }
-      catch (e) { console.warn('complete session:', e.message); }
-      setPhase('done');
     } else {
-      setCards(remainingCards);
-      setCurrentIndex(0);
-      setShowMeaning(false);
-      flipAnim.setValue(0);
+      // Hard / Good / Easy → card rời queue, record final rating
+      setRatings(prev => ({ ...prev, [wid]: rating }));
+      const remainingCards = cards.slice(currentIndex + 1);
+      if (remainingCards.length === 0) {
+        setPhase('done');
+        // complete session fire-and-forget
+        if (sessionId) {
+          completeFlashcardSession(sessionId)
+            .catch(e => console.warn('complete session:', e.message));
+        }
+      } else {
+        setCards(remainingCards);
+        setCurrentIndex(0);
+        setShowMeaning(false);
+        flipAnim.setValue(0);
+      }
     }
-  }, [cards, currentIndex, progressIds, ratings, sessionId, selectedTopic, userId, flipAnim]);
+
+    // ── 3. Persist rating to backend (fire-and-forget) ────────────────────────
+    const canUseRateEndpoint = sessionId && topicId != null && pid;
+    if (canUseRateEndpoint) {
+      rateCardInSession(sessionId, wid, topicId, rating)
+        .then(({ srs }) => setSrsResults(prev => ({ ...prev, [wid]: srs })))
+        .catch(e => console.warn('rate-in-session:', e.message));
+    } else {
+      // Fallback: local deck hoặc không có sessionId
+      if (pid) {
+        updateFlashcardProgress(pid, { difficulty_rating: rating })
+          .catch(e => console.warn('rate progress:', e.message));
+      }
+      if (selectedTopic && topicId != null) {
+        submitSRSRating(userId, wid, topicId, rating)
+          .then(srsResult => setSrsResults(prev => ({ ...prev, [wid]: srsResult })))
+          .catch(e => console.warn('srs rating:', e.message));
+      }
+    }
+  }, [cards, currentIndex, progressIds, sessionId, selectedTopic, userId, flipAnim]);
 
   const handleRestart = () => {
     if (selectedLocalDeck) startLocalSession(selectedLocalDeck);

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   StyleSheet, Text, TextInput, View, ScrollView,
   StatusBar, Platform, Dimensions, Image,
@@ -11,6 +11,10 @@ import { getWords, addWord } from '../api';
 import { useData } from '../context/DataContext';
 
 const { width: screenWidth } = Dimensions.get('window');
+
+// Chiều cao cố định của mỗi word card — dùng cho getItemLayout của FlatList
+// để FlatList tính trước offset mà không cần đo từng item (tăng tốc scroll đáng kể)
+const CARD_HEIGHT = 130; // px (padding 16*2 + word ~24 + phonetic ~18 + definition ~20 + example ~18 + footer ~24 + marginBottom 10)
 
 const WORD_TYPES = [
   { id: 'noun', label: 'Noun' },
@@ -48,12 +52,24 @@ export default function WordlistScreen({ navigation }) {
 
   const selectedTopic = topics?.find((t) => t.topic_id === selectedTopicId) || null;
 
+  // Ref giữ AbortController của request đang chạy — cancel khi topic thay đổi
+  const abortControllerRef = useRef(null);
+
   // ── Fetch vocabularies ───────────────────────────────────────────────────────
   const fetchVocabularies = useCallback(async () => {
+    // Hủy request cũ nếu còn đang chạy (tránh race condition khi đổi topic nhanh)
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       setLoading(true);
       setError(null);
-      const data = await getWords(selectedTopicId, selectedTopicId ? 50 : 2000, userId);
+      const data = await getWords(selectedTopicId, selectedTopicId ? 50 : 2000, userId, controller.signal);
+      // Nếu request này đã bị cancel thì không update state
+      if (controller.signal.aborted) return;
       const normalized = (data || []).map((w) => ({
         id: w.word_id,
         word: w.word,
@@ -67,16 +83,24 @@ export default function WordlistScreen({ navigation }) {
       }));
       setVocabularies(normalized);
     } catch (err) {
+      if (err.name === 'AbortError') return; // request bị cancel, bỏ qua
       console.error('WordlistScreen fetch error:', err);
       setError('Could not load vocabulary. Please try again.');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (!controller.signal.aborted) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [selectedTopicId, userId]);
 
   useEffect(() => { if (topics.length === 0) loadTopics(); }, []);
   useEffect(() => { fetchVocabularies(); }, [fetchVocabularies]);
+
+  // Cleanup: hủy request đang pending khi component unmount
+  useEffect(() => {
+    return () => { if (abortControllerRef.current) abortControllerRef.current.abort(); };
+  }, []);
 
   const handleRefresh = () => { setRefreshing(true); fetchVocabularies(); };
 
@@ -123,7 +147,9 @@ export default function WordlistScreen({ navigation }) {
   };
 
   // ── Filtered list ────────────────────────────────────────────────────────────
-  const displayList = vocabularies.filter((item) => {
+  // useMemo: chỉ recompute khi vocabularies/searchQuery/selectedFilter/starredWordIds thay đổi
+  // Tránh re-filter 900 items mỗi render không liên quan
+  const displayList = useMemo(() => vocabularies.filter((item) => {
     const q = searchQuery.toLowerCase().trim();
     const matchSearch = !q ||
       item.word.toLowerCase().includes(q) ||
@@ -134,7 +160,7 @@ export default function WordlistScreen({ navigation }) {
           selectedFilter === 'studied' ? item.wordStatus === 'studied' :
             selectedFilter === 'unstudied' ? item.wordStatus === 'unstudied' : true;
     return matchSearch && matchFilter;
-  });
+  }), [vocabularies, searchQuery, selectedFilter, starredWordIds]);
 
   // ── Render word card ─────────────────────────────────────────────────────────
   const renderVocabularyCard = ({ item }) => {
@@ -291,6 +317,17 @@ export default function WordlistScreen({ navigation }) {
                 showsVerticalScrollIndicator={false}
                 refreshing={refreshing}
                 onRefresh={handleRefresh}
+                // ── Hiệu năng ──────────────────────────────────────────────
+                // getItemLayout: FlatList tính trước offset từng item → scroll mượt, không đo runtime
+                getItemLayout={(_, index) => ({
+                  length: CARD_HEIGHT,
+                  offset: CARD_HEIGHT * index,
+                  index,
+                })}
+                initialNumToRender={10}       // render 10 item đầu tiên thay vì toàn bộ
+                maxToRenderPerBatch={8}        // mỗi batch chỉ render 8 item khi scroll
+                windowSize={5}                 // giữ 5 "màn hình" trong bộ nhớ (trên+dưới viewport)
+                removeClippedSubviews={true}   // unmount item ngoài viewport để giải phóng memory
                 ListEmptyComponent={
                   loading ? (
                     <View style={styles.centerState}>

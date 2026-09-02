@@ -29,6 +29,17 @@ ctx.verify_mode = ssl.CERT_NONE
 CONNECT_ARGS = {"ssl": ctx}
 
 # 3. Khởi tạo Engine
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=CONNECT_ARGS)
+# pool_size=10, max_overflow=20: tăng số connection tối đa để giảm thời gian chờ
+# pool_recycle=1800: recycle connection sau 30 phút để tránh MySQL server-side timeout
+# pool_timeout=30: timeout khi chờ connection từ pool
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_size=10,
+    max_overflow=20,
+    pool_recycle=1800,
+    pool_timeout=30,
+    connect_args=CONNECT_ARGS,
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()

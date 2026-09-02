@@ -271,6 +271,29 @@ class FlashcardProgressRead(BaseModel):
 FlashcardSessionRead.model_rebuild()
 
 
+class FlashcardProgressBulkCreate(BaseModel):
+    """Tạo nhiều progress records trong 1 request thay vì N request tuần tự."""
+    word_ids: list[int] = Field(..., min_length=1)
+
+
+class FlashcardProgressBulkRead(BaseModel):
+    """Kết quả trả về sau bulk create: map word_id → progress_id."""
+    progress_map: dict[int, int]   # { word_id: progress_id }
+
+
+class FlashcardRateRequest(BaseModel):
+    """Gộp updateFlashcardProgress + submitSRSRating thành 1 request."""
+    word_id: int
+    topic_id: int
+    rating: Literal["again", "hard", "good", "easy"]
+
+
+class FlashcardRateResponse(BaseModel):
+    """Kết quả gộp từ updateFlashcardProgress + SRS rating."""
+    progress: "FlashcardProgressRead"
+    srs: "SRSCardRead"
+
+
 class StarredWordCreate(BaseModel):
     user_id: int
     word_id: int
@@ -307,6 +330,10 @@ class SRSCardRead(BaseModel):
     card_status: str
     due_date: datetime | None = None
     last_reviewed: datetime | None = None
+
+
+# SRSCardRead now defined — resolve forward ref in FlashcardRateResponse
+FlashcardRateResponse.model_rebuild()
 
 
 class SessionQueueResponse(BaseModel):
@@ -394,6 +421,65 @@ class QuizResultRead(BaseModel):
     accuracy: float
     total_questions: int
     is_completed: bool
+    completed_at: datetime | None = None
+    questions: list[QuizQuestionRead] = []
+
+
+# ── Bulk quiz creation (1 HTTP call instead of N+1) ───────────────────────────
+
+class QuizQuestionBulkItem(BaseModel):
+    """One question inside a bulk-create request (no quiz_id yet)."""
+    word_id: int
+    question_text: str = Field(..., min_length=1)
+    option_a: str = Field(..., min_length=1)
+    option_b: str = Field(..., min_length=1)
+    option_c: str = Field(..., min_length=1)
+    option_d: str = Field(..., min_length=1)
+    correct_option: Literal["A", "B", "C", "D"]
+
+
+class QuizBulkCreate(BaseModel):
+    """Create a quiz header + all questions in a single request."""
+    user_id: int
+    topic_id: int | None = None
+    quiz_type: Literal[
+        "multiple_choice", "fill_blank", "word_matching", "speed_round"
+    ] = "multiple_choice"
+    questions: list[QuizQuestionBulkItem] = Field(..., min_length=1, max_length=50)
+
+
+class QuizBulkRead(BaseModel):
+    """Response for POST /quizzes/bulk – includes created quiz + all question IDs."""
+    quiz: QuizRead
+    questions: list[QuizQuestionRead]
+
+
+# ── Bulk answer submission (1 HTTP call instead of N PATCH calls) ────────────
+
+class QuizBulkAnswerItem(BaseModel):
+    question_id: int
+    user_answer: Literal["A", "B", "C", "D"]
+
+
+class QuizBulkAnswerSubmit(BaseModel):
+    """Submit all answers + finalise quiz in one call."""
+    answers: list[QuizBulkAnswerItem]
+
+
+# ── Quiz with questions (for GET /quizzes/{id}/full) ─────────────────────────
+
+class QuizWithQuestionsRead(BaseModel):
+    """Quiz header + all questions in one response."""
+    model_config = ConfigDict(from_attributes=True)
+    quiz_id: int
+    user_id: int
+    topic_id: int | None = None
+    quiz_type: str
+    total_questions: int
+    score: float | None = None
+    accuracy: float | None = None
+    is_completed: bool
+    started_at: datetime | None = None
     completed_at: datetime | None = None
     questions: list[QuizQuestionRead] = []
 

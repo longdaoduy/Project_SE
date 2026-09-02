@@ -92,12 +92,15 @@ def list_words(
         return words
 
     # === LẤY TRẠNG THÁI ĐÃ HỌC TỪ BẢNG UserCardSRS ===
-    studied_records = (
+    # Scope theo topic_id nếu có để tránh load toàn bộ SRS records của user
+    q_srs = (
         db.query(models.UserCardSRS.word_id)
         .filter(models.UserCardSRS.user_id == user_id)
-        .all()
     )
-    
+    if topic_id is not None:
+        q_srs = q_srs.filter(models.UserCardSRS.topic_id == topic_id)
+    studied_records = q_srs.all()
+
     # Tạo một set chứa ID của các từ đã học để dò tìm cho nhanh
     studied_word_ids = {r.word_id for r in studied_records}
 
@@ -748,6 +751,39 @@ def create_flashcard_progress(
     return progress
 
 
+def bulk_create_flashcard_progress(
+    db: Session, session_id: int, word_ids: list[int]
+) -> dict[int, int]:
+    """
+    Tạo FlashcardProgress cho nhiều word_ids trong 1 transaction.
+    Bỏ qua các word_id đã có progress trong session này (idempotent).
+    Trả về dict { word_id: progress_id }.
+    """
+    # Lấy các word_id đã tồn tại trong session
+    existing = (
+        db.query(models.FlashcardProgress.word_id, models.FlashcardProgress.progress_id)
+        .filter(models.FlashcardProgress.session_id == session_id)
+        .all()
+    )
+    result: dict[int, int] = {row.word_id: row.progress_id for row in existing}
+
+    # Chỉ insert các word_id chưa có
+    new_ids = [wid for wid in word_ids if wid not in result]
+    if new_ids:
+        new_records = [
+            models.FlashcardProgress(session_id=session_id, word_id=wid)
+            for wid in new_ids
+        ]
+        db.add_all(new_records)
+        db.flush()   # flush để lấy progress_id mà không cần commit từng cái
+        for rec in new_records:
+            db.refresh(rec)
+            result[rec.word_id] = rec.progress_id
+        db.commit()
+
+    return result
+
+
 def get_flashcard_progress(db: Session, progress_id: int) -> models.FlashcardProgress | None:
     return (
         db.query(models.FlashcardProgress)
@@ -1238,6 +1274,111 @@ def add_quiz_question(db: Session, payload: schemas.QuizQuestionCreate) -> model
     db.commit()
     db.refresh(question)
     return question
+
+
+def create_quiz_with_questions_bulk(
+    db: Session, payload: schemas.QuizBulkCreate
+) -> tuple[models.Quiz, list[models.QuizQuestion]]:
+    """Create quiz header + all questions in a single transaction."""
+    quiz = models.Quiz(
+        user_id=payload.user_id,
+        topic_id=payload.topic_id,
+        quiz_type=payload.quiz_type,
+        total_questions=len(payload.questions),
+    )
+    db.add(quiz)
+    db.flush()  # get quiz_id without committing
+
+    questions = []
+    for q in payload.questions:
+        question = models.QuizQuestion(
+            quiz_id=quiz.quiz_id,
+            word_id=q.word_id,
+            question_text=q.question_text,
+            option_a=q.option_a,
+            option_b=q.option_b,
+            option_c=q.option_c,
+            option_d=q.option_d,
+            correct_option=q.correct_option,
+        )
+        db.add(question)
+        questions.append(question)
+
+    db.commit()
+    db.refresh(quiz)
+    for q in questions:
+        db.refresh(q)
+    return quiz, questions
+
+
+def submit_all_answers_and_score(
+    db: Session, quiz: models.Quiz, answers: list[schemas.QuizBulkAnswerItem]
+) -> models.Quiz:
+    """Apply all answers at once then calculate score – replaces N×PATCH + POST /submit."""
+    if quiz.is_completed:
+        return quiz
+
+    # Index existing questions by question_id for O(1) lookup
+    questions = (
+        db.query(models.QuizQuestion)
+        .filter(models.QuizQuestion.quiz_id == quiz.quiz_id)
+        .all()
+    )
+    q_map = {q.question_id: q for q in questions}
+
+    now = datetime.now(timezone.utc)
+    for item in answers:
+        q = q_map.get(item.question_id)
+        if q is None:
+            continue
+        q.user_answer = item.user_answer
+        q.is_correct = item.user_answer == q.correct_option
+        q.answered_at = now
+
+    db.flush()
+
+    # Re-read from in-memory objects (already updated above)
+    correct = sum(1 for q in questions if q.is_correct)
+    total = len(questions)
+
+    quiz.score = float(correct)
+    quiz.accuracy = round((correct / total) * 100, 2) if total else 0.0
+    quiz.is_completed = True
+    quiz.completed_at = now
+    duration = _duration_minutes(quiz.started_at, quiz.completed_at)
+
+    _update_statistics_after_quiz(db, quiz.user_id, quiz.score, quiz.accuracy)
+    stats = get_user_statistics(db, quiz.user_id)
+    if stats and duration is not None:
+        stats.study_hours = round(stats.study_hours + duration / 60.0, 2)
+
+    db.commit()
+    db.refresh(quiz)
+    _ = quiz.questions  # eager-load while session open
+
+    try:
+        record_learning_history(
+            db,
+            user_id=quiz.user_id,
+            activity_type="Quiz",
+            activity_id=quiz.quiz_id,
+            score=quiz.score,
+            accuracy=quiz.accuracy,
+            duration=duration,
+        )
+    except Exception:
+        pass
+    return quiz
+
+
+def get_quiz_with_questions(db: Session, quiz_id: int) -> models.Quiz | None:
+    """Return quiz eagerly loaded with all its questions."""
+    return (
+        db.query(models.Quiz)
+        .options(joinedload(models.Quiz.questions))
+        .filter(models.Quiz.quiz_id == quiz_id)
+        .first()
+    )
 
 
 def get_quiz_question(db: Session, question_id: int) -> models.QuizQuestion | None:

@@ -6,30 +6,42 @@
  *  - Expo Web (browser): backend must be on same machine → http://localhost:8000
  *  - Android emulator:   loopback maps to 10.0.2.2 → http://10.0.2.2:8000
  *  - iOS simulator:      loopback works → http://localhost:8000
- *  - Physical device:    replace with your LAN IP, e.g. http://192.168.1.x:8000
+ *  - Physical device:    uses LAN IP — update LAN_IP below to your machine's IP
  */
 import { Platform } from 'react-native';
 
+// ⚠️ Set this to your computer's LAN IP (run `ipconfig` to find it)
+// Example: '192.168.1.5'  — keep port 8000
+const LAN_IP = '192.168.1.96';
+
+// 🌐 Ngrok URL — paste your ngrok https URL here when using ngrok tunnel
+// Example: 'https://xxxx-xxx-xxx.ngrok-free.app'
+// Set to null to fall back to LAN_IP
+const NGROK_URL = null;
+
 // Auto-select base URL by platform
 function getApiBase() {
-  if (Platform.OS === 'android') {
-    // Android emulator loopback
-    return 'http://10.0.2.2:8000';
+  // If ngrok URL is set, always use it (works on any network, any device)
+  if (NGROK_URL) return NGROK_URL;
+
+  if (Platform.OS === 'web') {
+    return 'http://localhost:8000';
   }
-  // Web browser, iOS simulator, or web preview → localhost
-  return 'http://localhost:8000';
+  // Physical device (Android or iOS) — use LAN IP
+  return `http://${LAN_IP}:8000`;
 }
 
 export const API_BASE = getApiBase();
 
 // ─── Generic helpers ──────────────────────────────────────────────────────────
 
-async function request(method, path, body = null, token = null) {
+async function request(method, path, body = null, token = null, signal = null) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
 
   const opts = { method, headers };
   if (body !== null) opts.body = JSON.stringify(body);
+  if (signal) opts.signal = signal;
 
   const res = await fetch(`${API_BASE}${path}`, opts);
   if (!res.ok) {
@@ -52,12 +64,12 @@ async function request(method, path, body = null, token = null) {
   return res.json();
 }
 
-const get = (path, params = {}, token = null) => {
+const get = (path, params = {}, token = null, signal = null) => {
   const qs = Object.entries(params)
     .filter(([, v]) => v !== null && v !== undefined)
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
     .join('&');
-  return request('GET', qs ? `${path}?${qs}` : path, null, token);
+  return request('GET', qs ? `${path}?${qs}` : path, null, token, signal);
 };
 const post = (path, body, token = null) => request('POST', path, body, token);
 const patch = (path, body, token = null) => request('PATCH', path, body, token);
@@ -73,8 +85,9 @@ export const getTopic = (topicId) =>
 
 // userId is optional because most callers only need the vocabulary itself.
 // Keep `limit` second to preserve the existing call sites.
-export const getWords = (topicId, limit = 50, userId = null) =>
-  get('/words', { topic_id: topicId, user_id: userId, limit });
+// signal: AbortController signal để cancel request khi topic thay đổi nhanh
+export const getWords = (topicId, limit = 50, userId = null, signal = null) =>
+  get('/words', { topic_id: topicId, user_id: userId, limit }, null, signal);
 
 export const getWord = (wordId) =>
   get(`/words/${wordId}`);
@@ -103,6 +116,24 @@ export const completeFlashcardSession = (sessionId) =>
  */
 export const getActiveFlashcardSession = (userId, topicId) =>
   get(`/users/${userId}/flashcard-sessions/active`, { topic_id: topicId });
+
+/**
+ * Tạo progress records cho nhiều words trong 1 request (thay vì N request tuần tự).
+ * Trả về { progress_map: { [word_id]: progress_id } }
+ */
+export const bulkCreateFlashcardProgress = (sessionId, wordIds) =>
+  post(`/flashcard-sessions/${sessionId}/progress/bulk`, { word_ids: wordIds });
+
+/**
+ * Gộp updateFlashcardProgress(difficulty_rating) + submitSRSRating thành 1 request.
+ * Trả về { progress, srs }
+ */
+export const rateCardInSession = (sessionId, wordId, topicId, rating) =>
+  post(`/flashcard-sessions/${sessionId}/rate`, {
+    word_id: wordId,
+    topic_id: topicId,
+    rating,
+  });
 
 export const createFlashcardProgress = (sessionId, wordId) =>
   post('/flashcard-progress', { session_id: sessionId, word_id: wordId });
@@ -179,54 +210,74 @@ export const getUserLoginLogs = (userId, limit = 20) =>
 // ─── Quiz ─────────────────────────────────────────────────────────────────────
 
 /**
- * Create a quiz record and add all questions in one shot.
+ * Create a quiz + all questions in ONE request (POST /quizzes/bulk).
+ * Replaces the old N+1 pattern (1 POST /quizzes + N POST /quizzes/{id}/questions).
+ *
  * @param {number} userId
  * @param {number|null} topicId
  * @param {string} quizType  one of: multiple_choice | fill_blank | word_matching | speed_round
  * @param {Array} questionsPayload  array of {word_id, question_text, option_a-d, correct_option}
- * @returns {quiz, questions}  the created quiz and its backend question records
+ * @returns {{ quiz, questions }}  the created quiz and its backend question records
  */
 export async function createQuizWithQuestions(userId, topicId, quizType, questionsPayload) {
-  // 1. create quiz header
-  const quiz = await post('/quizzes', {
+  // Strip client-only fields (_word, sentence, answer, hint) before sending
+  const sanitised = questionsPayload.map(({ _word, sentence, answer, hint, ...rest }) => rest);
+
+  const result = await post('/quizzes/bulk', {
     user_id: userId,
     topic_id: topicId ?? null,
     quiz_type: quizType,
-    total_questions: questionsPayload.length,
+    questions: sanitised,
   });
-
-  // 2. add questions sequentially (small number, so serial is fine)
-  const questions = [];
-  for (const q of questionsPayload) {
-    const bq = await post(`/quizzes/${quiz.quiz_id}/questions`, {
-      quiz_id: quiz.quiz_id,
-      ...q,
-    });
-    questions.push(bq);
-  }
-  return { quiz, questions };
+  return { quiz: result.quiz, questions: result.questions };
 }
 
 export const getQuiz = (quizId) =>
   get(`/quizzes/${quizId}`);
 
+/**
+ * Fetch quiz with all questions in one request (GET /quizzes/{id}/full).
+ * Use this instead of getQuiz() when you need the questions list.
+ */
+export const getQuizFull = (quizId) =>
+  get(`/quizzes/${quizId}/full`);
+
 export const getUserQuizzes = (userId, limit = 20, offset = 0) =>
   get(`/users/${userId}/quizzes`, { limit, offset });
 
 /**
- * Submit a single answer for a question.
+ * Submit ALL answers + finalise quiz in ONE request (POST /quizzes/{id}/answers).
+ * Replaces the old pattern of N PATCH /quiz-questions/{id}/answer + POST /quizzes/{id}/submit.
+ * Returns QuizResultRead { quiz_id, score, accuracy, questions[] } — no follow-up GET needed.
+ *
+ * @param {number} quizId
+ * @param {Object} answeredMap  { [question_id]: 'A'|'B'|'C'|'D' }
+ */
+export const submitAllAnswers = (quizId, answeredMap) =>
+  post(`/quizzes/${quizId}/answers`, {
+    answers: Object.entries(answeredMap).map(([question_id, user_answer]) => ({
+      question_id: Number(question_id),
+      user_answer,
+    })),
+  });
+
+/**
+ * Submit a single answer for a question (kept for backward compatibility).
+ * Prefer submitAllAnswers() for new code.
  */
 export const submitAnswer = (questionId, userAnswer) =>
   patch(`/quiz-questions/${questionId}/answer`, { user_answer: userAnswer });
 
 /**
- * Finalise a quiz and get the scored result.
+ * Finalise a quiz (legacy – kept for backward compatibility).
+ * Prefer submitAllAnswers() which does both in one call.
  */
 export const submitQuiz = (quizId) =>
   post(`/quizzes/${quizId}/submit`, {});
 
 /**
- * Fetch updated question list (with is_correct populated) after submission.
+ * Fetch a single question (kept for backward compatibility).
+ * Prefer getQuizFull() to fetch all questions at once.
  */
 export const getQuizQuestion = (questionId) =>
   get(`/quiz-questions/${questionId}`);
@@ -370,6 +421,7 @@ export const addWord = (payload) =>
 /**
  * For fill/match/speed we build a dummy "correct_option=A" question per word
  * and mark it correct/incorrect based on local scoring.
+ * Uses bulk APIs: 1 POST /quizzes/bulk + 1 POST /quizzes/{id}/answers (instead of N+1+N+1 calls).
  *
  * @param {number} userId
  * @param {number|null} topicId
@@ -389,17 +441,19 @@ export async function saveLocalQuizResult(userId, topicId, quizType, results) {
       correct_option: 'A',
     }));
 
+    // 1 request instead of 1 + N
     const { quiz, questions } = await createQuizWithQuestions(
       userId, topicId, quizType, questionsPayload
     );
 
-    // submit answers based on local result
+    // Build answeredMap from local results
+    const answeredMap = {};
     for (let i = 0; i < questions.length; i++) {
-      const answer = results[i].is_correct ? 'A' : 'B';
-      await submitAnswer(questions[i].question_id, answer);
+      answeredMap[questions[i].question_id] = results[i].is_correct ? 'A' : 'B';
     }
 
-    await submitQuiz(quiz.quiz_id);
+    // 1 request instead of N + 1
+    await submitAllAnswers(quiz.quiz_id, answeredMap);
     return quiz;
   } catch (e) {
     console.warn('saveLocalQuizResult error (non-critical):', e.message);

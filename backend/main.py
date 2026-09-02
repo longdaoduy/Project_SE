@@ -665,6 +665,75 @@ def create_flashcard_progress(payload: schemas.FlashcardProgressCreate, db: Sess
     return crud.create_flashcard_progress(db, payload)
 
 
+@app.post(
+    "/flashcard-sessions/{session_id}/progress/bulk",
+    response_model=schemas.FlashcardProgressBulkRead,
+    tags=["flashcards"],
+)
+def bulk_create_flashcard_progress(
+    session_id: int,
+    payload: schemas.FlashcardProgressBulkCreate,
+    db: Session = Depends(get_db),
+):
+    """
+    Tạo progress records cho nhiều words trong 1 request.
+    Giảm N round-trips (1 per card) xuống còn 1 round-trip khi bắt đầu session.
+    Idempotent: bỏ qua word_id đã tồn tại.
+    """
+    session = crud.get_flashcard_session(db, session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    progress_map = crud.bulk_create_flashcard_progress(db, session_id, payload.word_ids)
+    return {"progress_map": progress_map}
+
+
+@app.post(
+    "/flashcard-sessions/{session_id}/rate",
+    response_model=schemas.FlashcardRateResponse,
+    tags=["flashcards"],
+)
+def rate_card_in_session(
+    session_id: int,
+    payload: schemas.FlashcardRateRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Gộp updateFlashcardProgress(difficulty_rating) + submitSRSRating thành 1 request.
+    Giảm 2 round-trips xuống còn 1 mỗi lần user rate 1 thẻ.
+    """
+    session = crud.get_flashcard_session(db, session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    if not crud.get_word_by_id(db, payload.word_id):
+        raise HTTPException(404, "Word not found")
+
+    # 1. Lấy progress record cho word này trong session
+    progress = (
+        db.query(models.FlashcardProgress)
+        .filter(
+            models.FlashcardProgress.session_id == session_id,
+            models.FlashcardProgress.word_id == payload.word_id,
+        )
+        .first()
+    )
+    if not progress:
+        raise HTTPException(404, "Progress record not found for this word in session")
+
+    # 2. Update progress + SRS trong cùng 1 DB transaction
+    update_payload = schemas.FlashcardProgressUpdate(difficulty_rating=payload.rating)
+    updated_progress = crud.update_flashcard_progress(db, progress, update_payload)
+
+    srs = crud.apply_srs_rating(
+        db,
+        user_id=session.user_id,
+        word_id=payload.word_id,
+        topic_id=payload.topic_id,
+        rating=payload.rating,
+    )
+
+    return {"progress": updated_progress, "srs": srs}
+
+
 @app.patch("/flashcard-progress/{progress_id}", response_model=schemas.FlashcardProgressRead, tags=["flashcards"])
 def update_flashcard_progress(
     progress_id: int,
@@ -797,6 +866,20 @@ def get_daily_status_bulk(
 # FR3 – Quiz / Test
 # ============================================================
 
+@app.post("/quizzes/bulk", response_model=schemas.QuizBulkRead, tags=["quiz"])
+def create_quiz_bulk(payload: schemas.QuizBulkCreate, db: Session = Depends(get_db)):
+    """
+    Create a quiz + all its questions in ONE request and ONE transaction.
+    Replaces the old pattern of POST /quizzes + N × POST /quizzes/{id}/questions.
+    """
+    if not crud.get_user_by_id(db, payload.user_id):
+        raise HTTPException(404, "User not found")
+    if payload.topic_id and not crud.get_topic_by_id(db, payload.topic_id):
+        raise HTTPException(404, "Topic not found")
+    quiz, questions = crud.create_quiz_with_questions_bulk(db, payload)
+    return {"quiz": quiz, "questions": questions}
+
+
 @app.post("/quizzes", response_model=schemas.QuizRead, tags=["quiz"])
 def create_quiz(payload: schemas.QuizCreate, db: Session = Depends(get_db)):
     if not crud.get_user_by_id(db, payload.user_id):
@@ -804,6 +887,15 @@ def create_quiz(payload: schemas.QuizCreate, db: Session = Depends(get_db)):
     if payload.topic_id and not crud.get_topic_by_id(db, payload.topic_id):
         raise HTTPException(404, "Topic not found")
     return crud.create_quiz(db, payload)
+
+
+@app.get("/quizzes/{quiz_id}/full", response_model=schemas.QuizWithQuestionsRead, tags=["quiz"])
+def get_quiz_full(quiz_id: int, db: Session = Depends(get_db)):
+    """Return quiz header + all questions eagerly loaded (replaces N × GET /quiz-questions/{id})."""
+    quiz = crud.get_quiz_with_questions(db, quiz_id)
+    if not quiz:
+        raise HTTPException(404, "Quiz not found")
+    return quiz
 
 
 @app.get("/quizzes/{quiz_id}", response_model=schemas.QuizRead, tags=["quiz"])
@@ -858,6 +950,25 @@ def answer_quiz_question(
     if not q:
         raise HTTPException(404, "Question not found")
     return crud.submit_quiz_answer(db, q, payload)
+
+
+@app.post("/quizzes/{quiz_id}/answers", response_model=schemas.QuizResultRead, tags=["quiz"])
+def submit_all_answers(
+    quiz_id: int,
+    payload: schemas.QuizBulkAnswerSubmit,
+    db: Session = Depends(get_db),
+):
+    """
+    Submit ALL answers + finalise quiz in ONE request.
+    Replaces the old pattern of N × PATCH /quiz-questions/{id}/answer + POST /quizzes/{id}/submit.
+    Returns the full result (quiz + scored questions) so the frontend needs no follow-up GET.
+    """
+    quiz = crud.get_quiz(db, quiz_id)
+    if not quiz:
+        raise HTTPException(404, "Quiz not found")
+    if quiz.is_completed:
+        raise HTTPException(400, "Quiz already submitted")
+    return crud.submit_all_answers_and_score(db, quiz, payload.answers)
 
 
 @app.post("/quizzes/{quiz_id}/submit", response_model=schemas.QuizResultRead, tags=["quiz"])
