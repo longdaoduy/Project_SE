@@ -16,7 +16,7 @@ from typing import List
 import logging
 import concurrent.futures
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -540,7 +540,9 @@ def get_weekly_activity(user_id: int, db: Session = Depends(get_db)):
 def get_user_statistics(user_id: int, db: Session = Depends(get_db)):
     if not crud.get_user_by_id(db, user_id):
         raise HTTPException(404, "User not found")
-    stats = crud.refresh_user_statistics(db, user_id)
+    stats = crud.get_user_statistics(db, user_id)
+    if not stats:
+        stats = crud.refresh_user_statistics(db, user_id)
     if not stats:
         raise HTTPException(404, "Statistics not found")
     return stats
@@ -565,7 +567,13 @@ def get_my_history(
 
 @app.get("/me/statistics", response_model=schemas.UserStatisticsRead, tags=["history"])
 def get_my_statistics(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    stats = crud.refresh_user_statistics(db, current_user.user_id)
+    # Read the pre-computed row directly — fast single-row lookup.
+    # refresh_user_statistics (full rebuild) is only called when no row exists yet.
+    stats = crud.get_user_statistics(db, current_user.user_id)
+    if not stats:
+        # First login: build from scratch once, then it stays up to date via
+        # the _update_statistics_after_* hooks called after each activity.
+        stats = crud.refresh_user_statistics(db, current_user.user_id)
     if not stats:
         raise HTTPException(404, "Statistics not found")
     return stats
@@ -1085,11 +1093,14 @@ def create_ai_reading(payload: schemas.AIReadingCreate, db: Session = Depends(ge
 def submit_ai_reading(
     reading_id: int,
     payload: schemas.AIReadingSubmitRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """
     Submit all answers at once with elapsed time.
-    Generates per-question explanations (AI call) on first submission only.
+    Scoring is synchronous and returns immediately.
+    Explanation generation (slow AI call) runs as a background task AFTER the
+    response has been sent — the client sees results without waiting for it.
     Auto-submission when timer expires sends the same request from the frontend.
     """
     reading = crud.get_ai_reading(db, reading_id)
@@ -1103,13 +1114,21 @@ def submit_ai_reading(
 
     from .seed_gemini import generate_explanations
 
-    return crud.submit_ai_reading_with_answers(
+    result = crud.submit_ai_reading_with_answers(
         db,
         reading=reading,
         answers={int(k): v for k, v in payload.answers.items()},
         completion_seconds=payload.completion_seconds,
+    )
+
+    # Schedule explanation generation to run after response is delivered
+    background_tasks.add_task(
+        crud.backfill_explanations,
+        reading_id=result.reading_id,
         generate_explanations_fn=generate_explanations,
     )
+
+    return result
 
 
 @app.post("/ai-readings/{reading_id}/retake", response_model=schemas.AIReadingRead, tags=["ai-reading"])

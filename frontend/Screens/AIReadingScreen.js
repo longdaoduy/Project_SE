@@ -413,10 +413,12 @@ export default function AIReadingScreen({ navigation, route }) {
         selectedAnswers,
         elapsed,
       );
+      // Show result immediately — don't wait for history to reload
       setCurrentReading(scored);
       setResultReading(scored);
       setViewState('result');
-      await loadHistory();
+      // Refresh history in the background so it's ready when user navigates back
+      loadHistory().catch(() => {});
     } catch (e) {
       setScreenError(e.message || 'Submit failed');
     } finally {

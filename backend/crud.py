@@ -1589,11 +1589,12 @@ def submit_ai_reading_with_answers(
     reading: models.AIReading,
     answers: dict[int, str],
     completion_seconds: int,
-    generate_explanations_fn,        # callable from seed_gemini
 ) -> models.AIReading:
     """
-    One-shot submit: record answers, score, generate explanations (first attempt only),
-    mark completed, write history.
+    One-shot submit: record answers, score, mark completed, write history.
+    Explanation generation is intentionally excluded — it is a slow AI call
+    that runs as a background task after this function returns so the user
+    sees results immediately.
     """
     if reading.is_completed:
         db.refresh(reading)
@@ -1613,7 +1614,7 @@ def submit_ai_reading_with_answers(
             q.user_answer = ans
             q.is_correct = ans == q.correct_option
 
-    # 2. Score
+    # 2. Score + mark complete
     correct = sum(1 for q in questions if q.is_correct)
     total = len(questions)
     reading.score = float(correct)
@@ -1621,30 +1622,8 @@ def submit_ai_reading_with_answers(
     reading.is_completed = True
     reading.completion_seconds = min(completion_seconds, reading.time_limit_seconds)
     reading.completed_at = datetime.now(timezone.utc)
-    db.flush()
 
-    # 3. Generate explanations (only when not already present – covers first attempt)
-    needs_explanation = [q for q in questions if not q.explanation]
-    if needs_explanation:
-        try:
-            q_dicts = [
-                {
-                    "question_text": q.question_text,
-                    "option_a": q.option_a,
-                    "option_b": q.option_b,
-                    "option_c": q.option_c,
-                    "option_d": q.option_d,
-                    "correct_option": q.correct_option,
-                }
-                for q in needs_explanation
-            ]
-            explanations = generate_explanations_fn(reading.generated_passage, q_dicts)
-            for q, expl in zip(needs_explanation, explanations):
-                q.explanation = expl
-        except Exception as exc:
-            print(f"⚠️  Explanation generation failed: {exc}")
-
-    # 4. Stats + history
+    # 3. Stats + history
     _update_statistics_after_reading(db, reading.user_id, reading.accuracy)
     db.commit()
     db.refresh(reading)
@@ -1662,6 +1641,57 @@ def submit_ai_reading_with_answers(
     except Exception:
         pass
     return reading
+
+
+def backfill_explanations(
+    reading_id: int,
+    generate_explanations_fn,
+) -> None:
+    """
+    Generate and persist explanation text for every question that still lacks one.
+    Runs AFTER the submit response has been returned to the client so it does not
+    block the user-facing latency.  Uses its own DB session so it is safe to call
+    from a background thread / FastAPI BackgroundTask.
+    """
+    from .database import SessionLocal  # local import avoids circular deps
+    db = SessionLocal()
+    try:
+        reading = (
+            db.query(models.AIReading)
+            .filter(models.AIReading.reading_id == reading_id)
+            .first()
+        )
+        if not reading:
+            return
+
+        questions = (
+            db.query(models.AIReadingQuestion)
+            .filter(models.AIReadingQuestion.reading_id == reading_id)
+            .all()
+        )
+        needs_explanation = [q for q in questions if not q.explanation]
+        if not needs_explanation:
+            return
+
+        q_dicts = [
+            {
+                "question_text": q.question_text,
+                "option_a": q.option_a,
+                "option_b": q.option_b,
+                "option_c": q.option_c,
+                "option_d": q.option_d,
+                "correct_option": q.correct_option,
+            }
+            for q in needs_explanation
+        ]
+        explanations = generate_explanations_fn(reading.generated_passage, q_dicts)
+        for q, expl in zip(needs_explanation, explanations):
+            q.explanation = expl
+        db.commit()
+    except Exception as exc:
+        print(f"⚠️  backfill_explanations failed for reading {reading_id}: {exc}")
+    finally:
+        db.close()
 
 
 def retake_ai_reading(

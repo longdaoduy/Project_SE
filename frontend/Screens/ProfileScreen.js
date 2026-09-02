@@ -17,12 +17,12 @@ import { AntDesign } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useIsFocused } from '@react-navigation/native';
 import { useData } from '../context/DataContext';
-import { getMe, getMyHistory, getMyStatistics, getMyWeeklyActivity } from '../api';
+import { getMyWeeklyActivity } from '../api';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 export default function ProfileScreen({navigation}) {
-    const { token } = useData();
+    const { token, currentUser, statistics, statisticsLoading, refreshStatistics } = useData();
     const isFocused = useIsFocused();
     const [profileData, setProfileData] = useState({
         name: '—',
@@ -66,26 +66,26 @@ export default function ProfileScreen({navigation}) {
             try {
                 setIsLoading(true);
                 setError('');
-                const [me, stats, weekly] = await Promise.all([
-                    getMe(token),
-                    getMyStatistics(token),
-                    getMyWeeklyActivity(token),
-                ]);
 
-                const totalWords = stats?.total_words || 0;
-                const currentStreak = stats?.current_streak || 0;
-                const totalXp = stats?.total_xp || 0;
-                const totalQuizzes = stats?.total_quizzes || 0;
-                const studyHours = Number(stats?.study_hours || 0);
+                // getMe is skipped — currentUser from DataContext has full_name/email/english_level
+                // getMyStatistics is skipped — statistics from DataContext is pre-fetched and shared
+                // Only weekly activity is fetched here (not cached globally)
+                const weekly = await getMyWeeklyActivity(token);
+
+                const totalWords    = statistics?.total_words    || 0;
+                const currentStreak = statistics?.current_streak || 0;
+                const totalXp       = statistics?.total_xp       || 0;
+                const totalQuizzes  = statistics?.total_quizzes  || 0;
+                const studyHours    = Number(statistics?.study_hours || 0);
 
                 const dynamicAchievements = [
-                    { id: 1, title: 'First 10 Words', unlocked: totalWords >= 10 },
-                    { id: 2, title: '50 Words Master', unlocked: totalWords >= 50 },
-                    { id: 3, title: '3-Day Streak', unlocked: currentStreak >= 3 },
-                    { id: 4, title: '7-Day Streak', unlocked: currentStreak >= 7 },
-                    { id: 5, title: 'Quiz Champion', unlocked: totalQuizzes >= 5 },
-                    { id: 6, title: 'XP Hunter', unlocked: totalXp >= 250 },
-                    { id: 7, title: 'Dedicated Learner', unlocked: studyHours >= 2 },
+                    { id: 1, title: 'First 10 Words',      unlocked: totalWords   >= 10 },
+                    { id: 2, title: '50 Words Master',     unlocked: totalWords   >= 50 },
+                    { id: 3, title: '3-Day Streak',        unlocked: currentStreak >= 3 },
+                    { id: 4, title: '7-Day Streak',        unlocked: currentStreak >= 7 },
+                    { id: 5, title: 'Quiz Champion',       unlocked: totalQuizzes  >= 5 },
+                    { id: 6, title: 'XP Hunter',           unlocked: totalXp      >= 250 },
+                    { id: 7, title: 'Dedicated Learner',   unlocked: studyHours   >= 2 },
                 ];
 
                 const weekdayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -95,10 +95,7 @@ export default function ProfileScreen({navigation}) {
                         const d = new Date(item.date);
                         dayLabel = weekdayNames[d.getDay()] || item.date.slice(-2);
                     } catch (_) {}
-                    return {
-                        day: dayLabel,
-                        words: item.words || 0,
-                    };
+                    return { day: dayLabel, words: item.words || 0 };
                 });
 
                 const studyTime = studyHours < 1
@@ -106,16 +103,16 @@ export default function ProfileScreen({navigation}) {
                     : `${studyHours.toFixed(1)}h`;
 
                 setProfileData({
-                    name: me.full_name || '—',
-                    email: me.email || '—',
-                    englishLevel: me.english_level || '—',
+                    name: currentUser?.full_name || '—',
+                    email: currentUser?.email    || '—',
+                    englishLevel: currentUser?.english_level || '—',
                     stats: {
                         streaks: currentStreak,
                         level: Math.max(1, Math.floor(totalXp / 100) + 1),
                         xp: totalXp,
                         words: totalWords,
                         quizzes: totalQuizzes,
-                        perfect: Math.round((stats.average_score || 0) / 10),
+                        perfect: Math.round((statistics?.average_score || 0) / 10),
                         hours: studyTime,
                     },
                     weeklyHistory: formattedWeekly.length > 0 ? formattedWeekly : [
@@ -132,7 +129,7 @@ export default function ProfileScreen({navigation}) {
         };
 
         loadProfile();
-    }, [token, isFocused]);
+    }, [token, isFocused, currentUser, statistics]);
 
     const totalWordsThisWeek = profileData.weeklyHistory.reduce((sum, item) => sum + item.words, 0);
     {/*Lấy số từ học được nhiều nhất trong tuần để tính phần trăm chiều cao cột biểu đồ*/}

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getMe, getTopics, getStarredWords, starWord, unstarWord } from '../api';
+import { getMe, getMyStatistics, getMyDailySummary, getTopics, getStarredWords, starWord, unstarWord } from '../api';
 
 async function clearAuthStorage() {
   await Promise.all([
@@ -60,6 +60,54 @@ export function DataProvider({ children }) {
     };
     restoreAuth();
   }, []);
+
+  // ── Statistics cache (shared between HomeScreen and ProfileScreen) ───────────
+  // Avoids each screen fetching /me/statistics independently on every mount.
+  const [statistics,        setStatistics]        = useState(null);
+  const [statisticsLoading, setStatisticsLoading] = useState(false);
+
+  const refreshStatistics = useCallback(async (tokenOverride) => {
+    const tok = tokenOverride ?? token;
+    if (!tok) return;
+    try {
+      setStatisticsLoading(true);
+      const data = await getMyStatistics(tok);
+      setStatistics(data ?? null);
+    } catch (e) {
+      console.warn('refreshStatistics error:', e.message);
+    } finally {
+      setStatisticsLoading(false);
+    }
+  }, [token]);
+
+  // Fetch once when auth is ready and a token exists.
+  // Individual screens call refreshStatistics() when they need fresh data
+  // (e.g. after completing a quiz or flashcard session).
+  useEffect(() => {
+    if (authReady && token) refreshStatistics(token);
+  }, [authReady, token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Daily summary cache ───────────────────────────────────────────────────
+  const [dailySummary,        setDailySummary]        = useState(null);
+  const [dailySummaryLoading, setDailySummaryLoading] = useState(false);
+
+  const refreshDailySummary = useCallback(async (tokenOverride) => {
+    const tok = tokenOverride ?? token;
+    if (!tok) return;
+    try {
+      setDailySummaryLoading(true);
+      const data = await getMyDailySummary(tok).catch(() => null);
+      setDailySummary(data ?? null);
+    } catch (e) {
+      console.warn('refreshDailySummary error:', e.message);
+    } finally {
+      setDailySummaryLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (authReady && token) refreshDailySummary(token);
+  }, [authReady, token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Backend topics ──────────────────────────────────────────────────────────
   const [topics,        setTopics]        = useState([]);
@@ -285,6 +333,8 @@ export function DataProvider({ children }) {
       currentUser, setCurrentUser,
       userId, setUserId,
       authReady,
+      statistics, statisticsLoading, refreshStatistics,
+      dailySummary, dailySummaryLoading, refreshDailySummary,
       topics, topicsLoading, topicsError, loadTopics,
       decks, addDeck, saveDeckEdit, updateDeckProgress, deleteDeck, clearUserDecks,
       starredWordIds, starredWords, starredLoading, loadStarredWords, toggleStar,
