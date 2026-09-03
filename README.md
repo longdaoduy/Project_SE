@@ -1,45 +1,45 @@
 # SmartEng — AI-Powered English Learning App
 
-SmartEng là ứng dụng học tiếng Anh thông minh dành cho mobile và web, kết hợp flashcard theo thuật toán lặp cách quãng (SRS), bộ quiz đa dạng, và bài đọc hiểu do AI tạo ra. Người dùng tích lũy XP, theo dõi streak hàng ngày và xem biểu đồ tiến độ học tập mỗi tuần.
+SmartEng is a smart English vocabulary learning app for mobile and web. It combines spaced-repetition flashcards (SRS), multiple quiz modes, and AI-generated reading comprehension tests. Users earn XP, maintain daily streaks, and track their weekly learning progress.
 
 ---
 
-## Tính năng chính
+## Features
 
-| Tính năng | Mô tả |
+| Feature | Description |
 |---|---|
-| **Flashcard SRS** | Học từ vựng theo thuật toán SM-2. Mỗi thẻ được đánh giá Again / Hard / Good / Easy để hệ thống lên lịch ôn tập tối ưu |
-| **Vocab Quiz** | 4 chế độ: Multiple Choice, Fill-in-the-Blank, Word Matching, Speed Round. Kết quả lưu lịch sử và cộng XP |
-| **AI Reading** | Tạo đoạn văn + câu hỏi trắc nghiệm từ danh sách từ vựng bất kỳ. Hỗ trợ các cấp độ A1–C2. Sau khi nộp bài, AI tự động giải thích từng đáp án |
-| **Word List** | Tra cứu từ vựng theo chủ đề, xem định nghĩa tiếng Việt, ví dụ, phiên âm. Gắn sao từ yêu thích |
-| **Profile & Stats** | Streak, XP, tổng từ đã học, số quiz hoàn thành, giờ học. Biểu đồ hoạt động 7 ngày |
-| **Deck tự tạo** | Người dùng tạo bộ flashcard riêng từ bất kỳ từ nào, lưu offline trên thiết bị |
-| **Xác thực email** | Đăng ký tài khoản yêu cầu xác minh OTP qua email |
+| **Flashcard SRS** | Learn vocabulary using the SM-2 spaced repetition algorithm. Rate each card as Again / Hard / Good / Easy to schedule optimal review intervals |
+| **Vocab Quiz** | Four modes: Multiple Choice, Fill-in-the-Blank, Word Matching, and Speed Round. Results are saved to history and award XP |
+| **AI Reading** | Generate a reading passage and multiple-choice comprehension questions from any vocabulary list. Supports CEFR levels A1–C2. After submission, the AI automatically explains each answer |
+| **Word List** | Browse vocabulary by topic, view Vietnamese definitions, example sentences, and phonetics. Star favourite words for quick access |
+| **Profile & Stats** | Track streak, XP, total words learned, quizzes completed, and study hours. Includes a 7-day activity bar chart |
+| **Custom Decks** | Create personal flashcard decks from any words and save them offline on the device |
+| **Email Verification** | Account registration requires OTP verification via email |
 
 ---
 
-## Cấu trúc dự án
+## Project Structure
 
 ```
 Project_SE/
-├── backend/          # FastAPI REST API
-│   ├── main.py       # Tất cả các endpoint
-│   ├── crud.py       # Logic truy vấn cơ sở dữ liệu
-│   ├── models.py     # SQLAlchemy ORM models
-│   ├── schemas.py    # Pydantic schemas (request / response)
-│   ├── database.py   # Engine + session (MySQL / Aiven)
-│   ├── security.py   # JWT, bcrypt
-│   ├── seed_gemini.py# Tích hợp AI (OpenRouter / Gemini)
-│   ├── email_service.py # SMTP email verification
-│   ├── profanity_filter.py
-│   ├── .env          # ⚠️ Không commit — xem .env.example
-│   └── .env.example  # Template biến môi trường
+├── backend/                  # FastAPI REST API
+│   ├── main.py               # All route handlers
+│   ├── crud.py               # Database query logic
+│   ├── models.py             # SQLAlchemy ORM models
+│   ├── schemas.py            # Pydantic request / response schemas
+│   ├── database.py           # Engine + session (MySQL / Aiven)
+│   ├── security.py           # JWT + bcrypt
+│   ├── seed_gemini.py        # AI integration (OpenRouter / Gemini)
+│   ├── email_service.py      # SMTP email verification
+│   ├── profanity_filter.py   # Input content moderation
+│   ├── .env                  # ⚠️ Not committed — see .env.example
+│   └── .env.example          # Environment variable template
 │
-├── frontend/         # React Native (Expo SDK 54)
-│   ├── App.js        # Navigation stack
-│   ├── api.js        # Tất cả API calls (single source of truth)
+├── frontend/                 # React Native (Expo SDK 54)
+│   ├── App.js                # Navigation stack
+│   ├── api.js                # All API calls (single source of truth)
 │   ├── context/
-│   │   └── DataContext.js  # Global state: auth, topics, statistics, decks
+│   │   └── DataContext.js    # Global state: auth, topics, statistics, decks
 │   └── Screens/
 │       ├── HomeScreen.js
 │       ├── ProfileScreen.js
@@ -56,8 +56,9 @@ Project_SE/
 │       ├── RegisterScreen.js
 │       └── SettingScreen.js
 │
-├── requirements.txt  # Python dependencies
-└── ca.pem            # SSL certificate cho Aiven MySQL
+├── requirements.txt          # Python dependencies
+├── ca.pem                    # SSL certificate for Aiven MySQL
+└── README.md
 ```
 
 ---
@@ -65,57 +66,57 @@ Project_SE/
 ## Tech Stack
 
 ### Backend
-| Thành phần | Công nghệ |
+| Component | Technology |
 |---|---|
 | Framework | FastAPI |
 | ORM | SQLAlchemy 2 |
 | Database | MySQL (Aiven Cloud) |
-| Auth | JWT (PyJWT) + bcrypt |
-| AI | OpenRouter API (ling-3.0-flash) / Gemini fallback |
+| Authentication | JWT (PyJWT) + bcrypt |
+| AI | OpenRouter API (`ling-3.0-flash`) / Gemini fallback |
 | Email | SMTP (Gmail App Password) |
 | Server | Uvicorn |
 
 ### Frontend
-| Thành phần | Công nghệ |
+| Component | Technology |
 |---|---|
 | Framework | React Native 0.81 + Expo SDK 54 |
 | Navigation | React Navigation v7 (Stack) |
 | Animations | React Native Animated API |
-| Storage | AsyncStorage (decks, auth token) |
-| TTS | expo-speech |
-| Platform | Android, iOS, Web |
+| Local Storage | AsyncStorage (decks, auth token) |
+| Text-to-Speech | expo-speech |
+| Platforms | Android, iOS, Web |
 
 ---
 
-## Cài đặt & Chạy
+## Getting Started
 
-### Yêu cầu
+### Prerequisites
 - Python 3.11+
 - Node.js 18+
-- Expo CLI (`npm install -g expo-cli`)
-- MySQL database (hoặc tài khoản Aiven miễn phí)
+- Expo CLI — `npm install -g expo-cli`
+- A MySQL database (or a free [Aiven](https://aiven.io) account)
 
 ### 1. Backend
 
 ```bash
-# Tạo virtual environment
+# Create and activate a virtual environment
 python -m venv .venv
-.venv\Scripts\activate        # Windows
-# source .venv/bin/activate   # macOS/Linux
+.venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # macOS / Linux
 
-# Cài dependencies
+# Install dependencies
 pip install -r requirements.txt
 
-# Cấu hình môi trường
+# Configure environment variables
 copy backend\.env.example backend\.env
-# Mở backend/.env và điền các giá trị thật (DB, API key, SMTP)
+# Open backend/.env and fill in your real values (DB, API keys, SMTP)
 
-# Chạy server
+# Start the development server
 cd backend
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-API docs tự động có tại: `http://localhost:8000/docs`
+Interactive API docs are available at `http://localhost:8000/docs`.
 
 ### 2. Frontend
 
@@ -123,31 +124,31 @@ API docs tự động có tại: `http://localhost:8000/docs`
 cd frontend
 npm install
 
-# Mở frontend/api.js và cập nhật LAN_IP thành địa chỉ IP máy tính của bạn
-# const LAN_IP = '192.168.x.x';
+# Open frontend/api.js and set LAN_IP to your machine's local IP address
+# const LAN_IP = '192.168.x.x';   (run `ipconfig` on Windows to find it)
 
-# Chạy
 npx expo start
 ```
 
-Quét QR bằng Expo Go trên điện thoại, hoặc nhấn `a` (Android emulator) / `w` (trình duyệt web).
+Scan the QR code with the Expo Go app, or press `a` for Android emulator / `w` for the browser.
 
 ---
 
-## Biến môi trường (backend/.env)
+## Environment Variables
 
-| Biến | Mô tả |
+All variables live in `backend/.env`. Copy `backend/.env.example` as a starting point.
+
+| Variable | Description |
 |---|---|
-| `DATABASE_URL` | Connection string MySQL đầy đủ |
-| `DB_SSL_CA` | Đường dẫn tới file `ca.pem` (Aiven SSL) |
-| `OPENROUTER_API_KEY` | API key từ [openrouter.ai](https://openrouter.ai) |
-| `OPENROUTER_MODEL` | Model AI mặc định (`inclusionai/ling-3.0-flash:free`) |
-| `SMTP_HOST / SMTP_PORT` | Cấu hình SMTP để gửi email xác thực |
-| `SMTP_USERNAME / SMTP_PASSWORD` | Gmail address + App Password |
-| `EMAIL_VERIFICATION_SECRET` | Chuỗi ngẫu nhiên dài để bảo vệ mã OTP |
-| `APP_TIMEZONE` | Múi giờ tính streak (mặc định `Asia/Ho_Chi_Minh`) |
-
-Xem đầy đủ tại [`backend/.env.example`](backend/.env.example).
+| `DATABASE_URL` | Full MySQL connection string (pymysql driver) |
+| `DB_SSL_CA` | Path to the `ca.pem` SSL certificate (Aiven) |
+| `OPENROUTER_API_KEY` | API key from [openrouter.ai](https://openrouter.ai) |
+| `OPENROUTER_MODEL` | AI model to use (default: `inclusionai/ling-3.0-flash:free`) |
+| `GEMINI_API_KEY` | Gemini API key (fallback AI provider) |
+| `SMTP_HOST` / `SMTP_PORT` | SMTP server for sending verification emails |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | Gmail address + App Password |
+| `EMAIL_VERIFICATION_SECRET` | Long random string to protect OTP digests |
+| `APP_TIMEZONE` | Timezone for streaks and activity (default: `Asia/Ho_Chi_Minh`) |
 
 ---
 
@@ -155,22 +156,22 @@ Xem đầy đủ tại [`backend/.env.example`](backend/.env.example).
 
 Base URL: `http://<host>:8000`
 
-| Nhóm | Endpoint tiêu biểu | Mô tả |
+| Group | Key Endpoints | Description |
 |---|---|---|
-| Auth | `POST /users`, `POST /users/login` | Đăng ký, đăng nhập |
-| User | `GET /me`, `PATCH /me` | Thông tin tài khoản |
-| Statistics | `GET /me/statistics` | XP, streak, tổng từ, giờ học |
-| Vocabulary | `GET /topics`, `GET /words` | Danh sách chủ đề và từ vựng |
-| Flashcard | `POST /flashcard-sessions`, `POST /flashcard-sessions/{id}/rate` | Tạo session, đánh giá thẻ (SRS) |
-| Quiz | `POST /quizzes/bulk`, `POST /quizzes/{id}/answers` | Tạo quiz + nộp toàn bộ đáp án 1 lần |
-| AI Reading | `POST /ai-readings`, `POST /ai-readings/{id}/submit` | Tạo bài đọc AI, nộp bài |
-| History | `GET /me/history`, `GET /me/weekly-activity` | Lịch sử học tập |
+| Auth | `POST /users` · `POST /users/login` | Register and log in |
+| User | `GET /me` · `PATCH /me` | Read and update account info |
+| Statistics | `GET /me/statistics` · `GET /me/weekly-activity` | XP, streak, study hours, weekly chart |
+| Vocabulary | `GET /topics` · `GET /words` | Topics and word lists |
+| Flashcard | `POST /flashcard-sessions` · `POST /flashcard-sessions/{id}/rate` | Create session, rate a card (SRS) |
+| Quiz | `POST /quizzes/bulk` · `POST /quizzes/{id}/answers` | Create quiz + submit all answers in one call |
+| AI Reading | `POST /ai-readings` · `POST /ai-readings/{id}/submit` | Generate AI reading test, submit answers |
+| History | `GET /me/history` · `GET /users/{id}/history/page` | Paginated learning history |
 
-Xem chi tiết tại `/docs` (Swagger UI) khi server đang chạy.
+Full interactive documentation is available at `/docs` while the server is running.
 
 ---
 
-## Database Schema (tóm tắt)
+## Database Schema
 
 ```
 users ──< flashcard_sessions ──< flashcard_progress
@@ -187,6 +188,6 @@ topics ──< words
 
 ---
 
-## Liên hệ
+## Course Info
 
-Dự án được phát triển trong khuôn khổ môn **IT Software Engineering** — Năm 2, Học kỳ III.
+Developed as part of the **IT Software Engineering** course — Year 2, Semester III.
