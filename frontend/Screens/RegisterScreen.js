@@ -210,7 +210,7 @@ export default function RegisterScreen({ navigation }) {
                                 {step === 4 && 'Verify email'}
                             </Text>
                             <Text style={styles.stepSubtitle}>
-                                {step === 4 ? 'Final step' : `Step ${step} of 3`}
+                                {step === 4 ? 'Final step' : `Step ${step} of 4`}
                             </Text>
                         </View>
                     </View>
@@ -325,46 +325,46 @@ export default function RegisterScreen({ navigation }) {
                                     We’ll personalize your learning path.
                                 </Text>
                                 <View style={{ marginTop: 12, maxHeight: 320 }}>
-                                <ScrollView 
-                                    showsVerticalScrollIndicator={false}
-                                    contentContainerStyle={{ paddingVertical: 4, paddingHorizontal: 2 }} // Tránh bị cấn shadow/border
-                                >
-                                    {LEVELS.map((level) => {
-                                    const selected = formData.level === level.id;
-                                    return (
-                                        <TouchableOpacity
-                                        key={level.id}
-                                        style={[
-                                            styles.levelCard,
-                                            selected && styles.selectedLevelCard,
-                                        ]}
-                                        activeOpacity={0.7}
-                                        onPress={() => updateForm('level', level.id)}
-                                        >
-                                        <View style={styles.levelTextWrap}>
-                                            <Text
-                                            style={[
-                                                styles.levelTitle,
-                                                selected && styles.selectedText,
-                                            ]}
-                                            >
-                                            {level.title}
-                                            </Text>
-                                            <Text style={styles.levelSub}>{level.sub}</Text>
-                                        </View>
+                                    <ScrollView
+                                        showsVerticalScrollIndicator={false}
+                                        contentContainerStyle={{ paddingVertical: 4, paddingHorizontal: 2 }} // Tránh bị cấn shadow/border
+                                    >
+                                        {LEVELS.map((level) => {
+                                            const selected = formData.level === level.id;
+                                            return (
+                                                <TouchableOpacity
+                                                    key={level.id}
+                                                    style={[
+                                                        styles.levelCard,
+                                                        selected && styles.selectedLevelCard,
+                                                    ]}
+                                                    activeOpacity={0.7}
+                                                    onPress={() => updateForm('level', level.id)}
+                                                >
+                                                    <View style={styles.levelTextWrap}>
+                                                        <Text
+                                                            style={[
+                                                                styles.levelTitle,
+                                                                selected && styles.selectedText,
+                                                            ]}
+                                                        >
+                                                            {level.title}
+                                                        </Text>
+                                                        <Text style={styles.levelSub}>{level.sub}</Text>
+                                                    </View>
 
-                                        <View
-                                            style={[
-                                            styles.radio,
-                                            selected && styles.radioActive,
-                                            ]}
-                                        >
-                                            {selected && <View style={styles.radioInner} />}
-                                        </View>
-                                        </TouchableOpacity>
-                                    );
-                                    })}
-                                </ScrollView>
+                                                    <View
+                                                        style={[
+                                                            styles.radio,
+                                                            selected && styles.radioActive,
+                                                        ]}
+                                                    >
+                                                        {selected && <View style={styles.radioInner} />}
+                                                    </View>
+                                                </TouchableOpacity>
+                                            );
+                                        })}
+                                    </ScrollView>
                                 </View>
                             </View>
                         )}

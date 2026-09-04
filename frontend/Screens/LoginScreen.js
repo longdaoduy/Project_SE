@@ -1,14 +1,14 @@
 import React, { useState } from 'react';
-import { 
-    StyleSheet, 
-    Text, 
+import {
+    StyleSheet,
+    Text,
     TextInput,
-    View, 
-    ScrollView, 
-    StatusBar, 
-    Platform, 
+    View,
+    ScrollView,
+    StatusBar,
+    Platform,
     Dimensions,
-    Image ,
+    Image,
     TouchableOpacity,
     Alert,
 } from 'react-native';
@@ -21,7 +21,7 @@ import { useData } from '../context/DataContext';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-export default function LoginScreen({navigation}) {
+export default function LoginScreen({ navigation }) {
     const [showPassword, setShowPassword] = useState(false);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -65,8 +65,8 @@ export default function LoginScreen({navigation}) {
             >
                 {/* Thanh trạng thái màu sáng */}
                 <StatusBar barStyle="light-content" />
-                
-                <ScrollView contentContainerStyle={styles.scrollContainer} 
+
+                <ScrollView contentContainerStyle={styles.scrollContainer}
                     showsVerticalScrollIndicator={false}>
                     {/* PHẦN HEADER SECTION */}
                     <View style={styles.headerSection}>
@@ -74,7 +74,7 @@ export default function LoginScreen({navigation}) {
                         <Text style={styles.appSubtitle}>Master English, smarter</Text>
                     </View>
 
-                    
+
                     <View style={styles.whiteCardContainer}>
                         <Text style={styles.appWelcome}>
                             Welcome Back !👋
@@ -113,7 +113,7 @@ export default function LoginScreen({navigation}) {
                                     value={email}
                                     onChangeText={setEmail}
                                 />
-                                
+
                             </View>
                         </View>
 
@@ -153,7 +153,7 @@ export default function LoginScreen({navigation}) {
 
                         {/* Nút đăng ký */}
                         <View style={{ flexDirection: 'row', marginTop: 10 }}>
-                            <Text style={{ color: '#666' , fontSize: 16}}>Don't have an account? </Text>
+                            <Text style={{ color: '#666', fontSize: 16 }}>Don't have an account? </Text>
                             <TouchableOpacity onPress={() => navigation.navigate('Register')}>
                                 <Text style={{ color: '#667eea', fontWeight: '600' }}>Sign Up for free</Text>
                             </TouchableOpacity>
@@ -176,16 +176,16 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
 
-    
+
     phoneContainer: {
-        
+
         width: Platform.OS === 'web' ? 400 : '100%',
         height: Platform.OS === 'web' ? 800 : '100%',
-        
+
         // Tạo hiệu ứng giống chiếc điện thoại khi xem trên máy tính
         borderRadius: Platform.OS === 'web' ? 35 : 0,
         overflow: 'hidden',
-        
+
         // Đổ bóng cho khung trên Web
         ...Platform.select({
             web: {
@@ -199,7 +199,7 @@ const styles = StyleSheet.create({
 
     // Cấu hình chuẩn cho ScrollView con bên trong
     scrollContainer: {
-        flexGrow: 1, 
+        flexGrow: 1,
         justifyContent: 'space-between', // Đẩy Header lên đỉnh, Card trắng xuống đáy
     },
 
@@ -223,7 +223,7 @@ const styles = StyleSheet.create({
         opacity: 0.9,
     },
 
-    
+
     whiteCardContainer: {
         flex: 1, // Tự động chiếm trọn phần không gian trống bên dưới
         backgroundColor: '#F0F2FF',
@@ -276,7 +276,7 @@ const styles = StyleSheet.create({
         fontSize: 18,
         color: '#ffffff',
         fontWeight: '600',
-        
+
     },
 
     facebookButtonContainer: {
@@ -324,7 +324,7 @@ const styles = StyleSheet.create({
     //Password Section styles
     passwordSection: {
         marginTop: 20,
-        width: '100%',  
+        width: '100%',
     },
 
     passwordSectionTitle: {
@@ -334,7 +334,7 @@ const styles = StyleSheet.create({
     },
 
     passwordInput: {
-        width: '100%',
+        flex: 1,
         padding: 10,
         fontSize: 16,
 
@@ -379,10 +379,6 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         marginTop: 10,
         textAlign: 'right',
-    },  
-    
-    eyeButton: {
-        marginLeft: 0,
     },
-    
+
 });
