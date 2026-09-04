@@ -333,7 +333,7 @@ const styles = StyleSheet.create({
         marginBottom: 8,
     },
     emailInput: {
-        width: '100%',
+        flex: 1,
         padding: 10,
         fontSize: 16,
 
