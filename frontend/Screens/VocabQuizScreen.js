@@ -24,13 +24,26 @@ export default function VocabQuizScreen({ navigation, route }) {
   const [alertVisible, setAlertVisible] = useState(false);
   const [alertMessage, setAlertMessage] = useState('');
   const [topicsExpanded, setTopicsExpanded] = useState(true);
-  const [visibleTopicsCount, setVisibleTopicsCount] = useState(TOPICS_PER_PAGE);
+  const [topicPage, setTopicPage]   = useState(0);
+  const [deckPage,  setDeckPage]    = useState(0);
   const [userStats, setUserStats] = useState(null);
   const [statsLoading, setStatsLoading] = useState(true);
   const [topicWordCount, setTopicWordCount] = useState(null); // actual word count fetched from backend
   const [countLoading, setCountLoading] = useState(false);
 
-  const visibleTopics = topics.slice(0, visibleTopicsCount);
+  const topicTotalPages = Math.max(1, Math.ceil(topics.length / TOPICS_PER_PAGE));
+  const clampedTopicPage = Math.min(topicPage, topicTotalPages - 1);
+  const visibleTopics = topics.slice(
+    clampedTopicPage * TOPICS_PER_PAGE,
+    clampedTopicPage * TOPICS_PER_PAGE + TOPICS_PER_PAGE
+  );
+
+  const deckTotalPages = Math.max(1, Math.ceil(decks.length / TOPICS_PER_PAGE));
+  const clampedDeckPage = Math.min(deckPage, deckTotalPages - 1);
+  const visibleDecks = decks.slice(
+    clampedDeckPage * TOPICS_PER_PAGE,
+    clampedDeckPage * TOPICS_PER_PAGE + TOPICS_PER_PAGE
+  );
   const isUserDeckSource = Boolean(routeDeckWords || selectedDeck?.words);
 
   const fetchStats = useCallback(async () => {
@@ -240,7 +253,7 @@ export default function VocabQuizScreen({ navigation, route }) {
               {decks.length > 0 && (
                 <View style={styles.sectionBlock}>
                   <Text style={styles.sectionTitle}>Your Decks</Text>
-                  {decks.map((deck) => (
+                  {visibleDecks.map((deck) => (
                     <TouchableOpacity key={deck.id}
                       style={[styles.deckCard, selectedDeck?.id === deck.id && styles.deckCardActive]}
                       onPress={() => handleSelectDeck(deck)}>
@@ -256,6 +269,27 @@ export default function VocabQuizScreen({ navigation, route }) {
                       <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
                     </TouchableOpacity>
                   ))}
+                  {deckTotalPages > 1 && (
+                    <View style={styles.paginationRow}>
+                      <TouchableOpacity
+                        style={[styles.pageBtn, clampedDeckPage === 0 && styles.pageBtnDisabled]}
+                        activeOpacity={0.7}
+                        disabled={clampedDeckPage === 0}
+                        onPress={() => setDeckPage((p) => Math.max(0, p - 1))}
+                      >
+                        <Ionicons name="chevron-back" size={18} color={clampedDeckPage === 0 ? '#cbd5e1' : '#16A487'} />
+                      </TouchableOpacity>
+                      <Text style={styles.pageLabel}>{clampedDeckPage + 1} / {deckTotalPages}</Text>
+                      <TouchableOpacity
+                        style={[styles.pageBtn, clampedDeckPage === deckTotalPages - 1 && styles.pageBtnDisabled]}
+                        activeOpacity={0.7}
+                        disabled={clampedDeckPage === deckTotalPages - 1}
+                        onPress={() => setDeckPage((p) => Math.min(deckTotalPages - 1, p + 1))}
+                      >
+                        <Ionicons name="chevron-forward" size={18} color={clampedDeckPage === deckTotalPages - 1 ? '#cbd5e1' : '#16A487'} />
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
               )}
 
@@ -298,12 +332,26 @@ export default function VocabQuizScreen({ navigation, route }) {
                         <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
                       </TouchableOpacity>
                     ))}
-                    {topics.length > visibleTopics.length && (
-                      <TouchableOpacity style={styles.showMoreBtn} activeOpacity={0.8}
-                        onPress={() => setVisibleTopicsCount((prev) => prev + TOPICS_PER_PAGE)}>
-                        <Ionicons name="chevron-down" size={16} color="#16A487" />
-                        <Text style={styles.showMoreText}>Show more ({topics.length - visibleTopics.length} remaining)</Text>
-                      </TouchableOpacity>
+                    {topicTotalPages > 1 && (
+                      <View style={styles.paginationRow}>
+                        <TouchableOpacity
+                          style={[styles.pageBtn, clampedTopicPage === 0 && styles.pageBtnDisabled]}
+                          activeOpacity={0.7}
+                          disabled={clampedTopicPage === 0}
+                          onPress={() => setTopicPage((p) => Math.max(0, p - 1))}
+                        >
+                          <Ionicons name="chevron-back" size={18} color={clampedTopicPage === 0 ? '#cbd5e1' : '#16A487'} />
+                        </TouchableOpacity>
+                        <Text style={styles.pageLabel}>{clampedTopicPage + 1} / {topicTotalPages}</Text>
+                        <TouchableOpacity
+                          style={[styles.pageBtn, clampedTopicPage === topicTotalPages - 1 && styles.pageBtnDisabled]}
+                          activeOpacity={0.7}
+                          disabled={clampedTopicPage === topicTotalPages - 1}
+                          onPress={() => setTopicPage((p) => Math.min(topicTotalPages - 1, p + 1))}
+                        >
+                          <Ionicons name="chevron-forward" size={18} color={clampedTopicPage === topicTotalPages - 1 ? '#cbd5e1' : '#16A487'} />
+                        </TouchableOpacity>
+                      </View>
                     )}
                   </>
                 ) : null}
@@ -523,4 +571,10 @@ const styles = StyleSheet.create({
   modalMsg: { fontSize: 15, color: '#475569', textAlign: 'center', marginBottom: 24, lineHeight: 22 },
   modalBtn: { backgroundColor: '#16A487', width: '100%', paddingVertical: 14, borderRadius: 14, alignItems: 'center' },
   modalBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 16 },
+
+  // Pagination controls
+  paginationRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16, marginTop: 4, marginBottom: 8 },
+  pageBtn: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#ffffff', borderWidth: 1.5, borderColor: '#99e3d5', alignItems: 'center', justifyContent: 'center' },
+  pageBtnDisabled: { borderColor: '#e2e8f0', backgroundColor: '#f8fafc' },
+  pageLabel: { fontSize: 14, fontWeight: '700', color: '#475569', minWidth: 48, textAlign: 'center' },
 });

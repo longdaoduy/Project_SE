@@ -127,9 +127,14 @@ export default function QuizSpeedRound({ navigation, route }) {
   // ── LOADING ───────────────────────────────────────────────────────────────
   if (phase === 'loading') {
     return (
-      <View style={st.center}>
-        <ActivityIndicator size="large" color="#FF9500" />
-        <Text style={st.loadingText}>Loading words…</Text>
+      <View style={st.webWrapper}>
+        <LinearGradient colors={['#FFCE0A', '#FF9500']} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={st.phoneContainer}>
+          <StatusBar barStyle="light-content" />
+          <View style={st.center}>
+            <ActivityIndicator size="large" color="#FF9500" />
+            <Text style={st.loadingText}>Loading words…</Text>
+          </View>
+        </LinearGradient>
       </View>
     );
   }

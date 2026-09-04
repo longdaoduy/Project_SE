@@ -6,8 +6,12 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-# Load biến môi trường từ backend/.env (xem backend/.env.example)
-load_dotenv(Path(__file__).resolve().parent / ".env")
+# Load the primary backend configuration. Older checkouts kept the database
+# settings in app_beta/.env, so retain that as a local compatibility fallback.
+BACKEND_DIR = Path(__file__).resolve().parent
+load_dotenv(BACKEND_DIR / ".env")
+if not os.getenv("DATABASE_URL"):
+    load_dotenv(BACKEND_DIR.parent / "app_beta" / ".env")
 
 # 1. URL kết nối Aiven – bắt buộc khai báo trong .env
 DATABASE_URL = os.getenv("DATABASE_URL", "")
@@ -25,6 +29,17 @@ ctx.verify_mode = ssl.CERT_NONE
 CONNECT_ARGS = {"ssl": ctx}
 
 # 3. Khởi tạo Engine
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=CONNECT_ARGS)
+# pool_size=10, max_overflow=20: tăng số connection tối đa để giảm thời gian chờ
+# pool_recycle=1800: recycle connection sau 30 phút để tránh MySQL server-side timeout
+# pool_timeout=30: timeout khi chờ connection từ pool
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_size=10,
+    max_overflow=20,
+    pool_recycle=1800,
+    pool_timeout=30,
+    connect_args=CONNECT_ARGS,
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()

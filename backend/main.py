@@ -14,8 +14,9 @@ Endpoint groups:
 
 from typing import List
 import logging
+import concurrent.futures
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -26,7 +27,7 @@ from .security import (
     create_access_token, decode_access_token,
     hash_password, needs_rehash, verify_password,
 )
-from .email_service import send_verification_email
+from .email_service import send_verification_email, validate_email_domain
 
 app = FastAPI(title="SmartEng API", version="3.1.0")
 bearer = HTTPBearer(auto_error=False)
@@ -177,7 +178,7 @@ def create_word(payload: schemas.WordCreate, db: Session = Depends(get_db)):
 
 @app.get("/words", response_model=List[schemas.WordRead], tags=["vocabulary"])
 def get_words(
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(100, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     topic_id: int | None = Query(default=None, ge=1),
     user_id: int | None = Query(default=None, ge=1),
@@ -209,10 +210,23 @@ def get_random_flashcards(
 # FR1 – User Management
 # ============================================================
 
+@app.get("/users/check-email", tags=["users"])
+def check_email(email: str = Query(...), db: Session = Depends(get_db)):
+    """Check whether an email address is already registered. Used by the
+    registration form to give instant feedback before the user completes all steps."""
+    exists = crud.get_user_by_email(db, email) is not None
+    return {"exists": exists}
+
+
 @app.post("/users", response_model=schemas.UserRead, tags=["users"])
 def register_user(payload: schemas.UserCreate, db: Session = Depends(get_db)):
     if crud.get_user_by_email(db, payload.email):
         raise HTTPException(400, "Email already registered")
+    # Reject domains with no DNS MX/A record (e.g. completely made-up addresses)
+    try:
+        validate_email_domain(payload.email)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
     try:
         user = crud.create_user(db, payload, hashed_password=hash_password(payload.password))
         code = crud.create_email_verification_code(db, user)
@@ -524,7 +538,11 @@ def get_weekly_activity(user_id: int, db: Session = Depends(get_db)):
 
 @app.get("/users/{user_id}/statistics", response_model=schemas.UserStatisticsRead, tags=["history"])
 def get_user_statistics(user_id: int, db: Session = Depends(get_db)):
+    if not crud.get_user_by_id(db, user_id):
+        raise HTTPException(404, "User not found")
     stats = crud.get_user_statistics(db, user_id)
+    if not stats:
+        stats = crud.refresh_user_statistics(db, user_id)
     if not stats:
         raise HTTPException(404, "Statistics not found")
     return stats
@@ -549,7 +567,13 @@ def get_my_history(
 
 @app.get("/me/statistics", response_model=schemas.UserStatisticsRead, tags=["history"])
 def get_my_statistics(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    # Read the pre-computed row directly — fast single-row lookup.
+    # refresh_user_statistics (full rebuild) is only called when no row exists yet.
     stats = crud.get_user_statistics(db, current_user.user_id)
+    if not stats:
+        # First login: build from scratch once, then it stays up to date via
+        # the _update_statistics_after_* hooks called after each activity.
+        stats = crud.refresh_user_statistics(db, current_user.user_id)
     if not stats:
         raise HTTPException(404, "Statistics not found")
     return stats
@@ -558,6 +582,23 @@ def get_my_statistics(current_user=Depends(get_current_user), db: Session = Depe
 @app.get("/me/weekly-activity", response_model=schemas.WeeklyActivityResponse, tags=["history"])
 def get_my_weekly_activity(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
     return {"items": crud.get_weekly_activity(db, current_user.user_id)}
+
+
+@app.get("/me/daily-summary", tags=["history"])
+def get_my_daily_summary(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    """Return today's learning progress across ALL topics for the current user.
+    Used by HomeScreen to display the 'Today's goal' progress bar.
+
+    Returns:
+      words_learned_today – distinct words rated for the first time today
+                            (sum of DailyLearningLog rows for today)
+      daily_goal          – user's configured daily word target
+    """
+    words_today = crud.get_words_learned_today(db, current_user.user_id)
+    return {
+        "words_learned_today": words_today,
+        "daily_goal": current_user.daily_goal,
+    }
 
 
 # ============================================================
@@ -630,6 +671,75 @@ def create_flashcard_progress(payload: schemas.FlashcardProgressCreate, db: Sess
     if not crud.get_word_by_id(db, payload.word_id):
         raise HTTPException(404, "Word not found")
     return crud.create_flashcard_progress(db, payload)
+
+
+@app.post(
+    "/flashcard-sessions/{session_id}/progress/bulk",
+    response_model=schemas.FlashcardProgressBulkRead,
+    tags=["flashcards"],
+)
+def bulk_create_flashcard_progress(
+    session_id: int,
+    payload: schemas.FlashcardProgressBulkCreate,
+    db: Session = Depends(get_db),
+):
+    """
+    Tạo progress records cho nhiều words trong 1 request.
+    Giảm N round-trips (1 per card) xuống còn 1 round-trip khi bắt đầu session.
+    Idempotent: bỏ qua word_id đã tồn tại.
+    """
+    session = crud.get_flashcard_session(db, session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    progress_map = crud.bulk_create_flashcard_progress(db, session_id, payload.word_ids)
+    return {"progress_map": progress_map}
+
+
+@app.post(
+    "/flashcard-sessions/{session_id}/rate",
+    response_model=schemas.FlashcardRateResponse,
+    tags=["flashcards"],
+)
+def rate_card_in_session(
+    session_id: int,
+    payload: schemas.FlashcardRateRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Gộp updateFlashcardProgress(difficulty_rating) + submitSRSRating thành 1 request.
+    Giảm 2 round-trips xuống còn 1 mỗi lần user rate 1 thẻ.
+    """
+    session = crud.get_flashcard_session(db, session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    if not crud.get_word_by_id(db, payload.word_id):
+        raise HTTPException(404, "Word not found")
+
+    # 1. Lấy progress record cho word này trong session
+    progress = (
+        db.query(models.FlashcardProgress)
+        .filter(
+            models.FlashcardProgress.session_id == session_id,
+            models.FlashcardProgress.word_id == payload.word_id,
+        )
+        .first()
+    )
+    if not progress:
+        raise HTTPException(404, "Progress record not found for this word in session")
+
+    # 2. Update progress + SRS trong cùng 1 DB transaction
+    update_payload = schemas.FlashcardProgressUpdate(difficulty_rating=payload.rating)
+    updated_progress = crud.update_flashcard_progress(db, progress, update_payload)
+
+    srs = crud.apply_srs_rating(
+        db,
+        user_id=session.user_id,
+        word_id=payload.word_id,
+        topic_id=payload.topic_id,
+        rating=payload.rating,
+    )
+
+    return {"progress": updated_progress, "srs": srs}
 
 
 @app.patch("/flashcard-progress/{progress_id}", response_model=schemas.FlashcardProgressRead, tags=["flashcards"])
@@ -732,9 +842,51 @@ def get_daily_status(
     return crud.get_daily_status(db, user_id=user_id, topic_id=topic_id)
 
 
+@app.get("/flashcards/daily-status/bulk", tags=["flashcards"])
+def get_daily_status_bulk(
+    user_id: int = Query(..., ge=1),
+    topic_ids: str = Query(..., description="Comma-separated list of topic IDs, e.g. '1,2,3'"),
+    db: Session = Depends(get_db),
+):
+    """
+    Return today's learning progress for multiple (user, topic) pairs in one
+    request. Replaces N sequential calls with a single round-trip.
+
+    Returns a dict keyed by topic_id (as string).
+    """
+    if not crud.get_user_by_id(db, user_id):
+        raise HTTPException(404, "User not found")
+
+    try:
+        ids = [int(x.strip()) for x in topic_ids.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(400, "topic_ids must be comma-separated integers")
+
+    if not ids:
+        return {}
+
+    result = crud.get_daily_status_bulk(db, user_id=user_id, topic_ids=ids)
+    # JSON keys must be strings
+    return {str(k): v for k, v in result.items()}
+
+
 # ============================================================
 # FR3 – Quiz / Test
 # ============================================================
+
+@app.post("/quizzes/bulk", response_model=schemas.QuizBulkRead, tags=["quiz"])
+def create_quiz_bulk(payload: schemas.QuizBulkCreate, db: Session = Depends(get_db)):
+    """
+    Create a quiz + all its questions in ONE request and ONE transaction.
+    Replaces the old pattern of POST /quizzes + N × POST /quizzes/{id}/questions.
+    """
+    if not crud.get_user_by_id(db, payload.user_id):
+        raise HTTPException(404, "User not found")
+    if payload.topic_id and not crud.get_topic_by_id(db, payload.topic_id):
+        raise HTTPException(404, "Topic not found")
+    quiz, questions = crud.create_quiz_with_questions_bulk(db, payload)
+    return {"quiz": quiz, "questions": questions}
+
 
 @app.post("/quizzes", response_model=schemas.QuizRead, tags=["quiz"])
 def create_quiz(payload: schemas.QuizCreate, db: Session = Depends(get_db)):
@@ -743,6 +895,15 @@ def create_quiz(payload: schemas.QuizCreate, db: Session = Depends(get_db)):
     if payload.topic_id and not crud.get_topic_by_id(db, payload.topic_id):
         raise HTTPException(404, "Topic not found")
     return crud.create_quiz(db, payload)
+
+
+@app.get("/quizzes/{quiz_id}/full", response_model=schemas.QuizWithQuestionsRead, tags=["quiz"])
+def get_quiz_full(quiz_id: int, db: Session = Depends(get_db)):
+    """Return quiz header + all questions eagerly loaded (replaces N × GET /quiz-questions/{id})."""
+    quiz = crud.get_quiz_with_questions(db, quiz_id)
+    if not quiz:
+        raise HTTPException(404, "Quiz not found")
+    return quiz
 
 
 @app.get("/quizzes/{quiz_id}", response_model=schemas.QuizRead, tags=["quiz"])
@@ -799,6 +960,25 @@ def answer_quiz_question(
     return crud.submit_quiz_answer(db, q, payload)
 
 
+@app.post("/quizzes/{quiz_id}/answers", response_model=schemas.QuizResultRead, tags=["quiz"])
+def submit_all_answers(
+    quiz_id: int,
+    payload: schemas.QuizBulkAnswerSubmit,
+    db: Session = Depends(get_db),
+):
+    """
+    Submit ALL answers + finalise quiz in ONE request.
+    Replaces the old pattern of N × PATCH /quiz-questions/{id}/answer + POST /quizzes/{id}/submit.
+    Returns the full result (quiz + scored questions) so the frontend needs no follow-up GET.
+    """
+    quiz = crud.get_quiz(db, quiz_id)
+    if not quiz:
+        raise HTTPException(404, "Quiz not found")
+    if quiz.is_completed:
+        raise HTTPException(400, "Quiz already submitted")
+    return crud.submit_all_answers_and_score(db, quiz, payload.answers)
+
+
 @app.post("/quizzes/{quiz_id}/submit", response_model=schemas.QuizResultRead, tags=["quiz"])
 def submit_quiz(quiz_id: int, db: Session = Depends(get_db)):
     quiz = crud.get_quiz(db, quiz_id)
@@ -818,24 +998,22 @@ def create_ai_reading(payload: schemas.AIReadingCreate, db: Session = Depends(ge
     """
     Generate a reading passage + exactly 5 comprehension questions + a descriptive title.
     Topic is optional; difficulty drives time_limit_seconds automatically.
+
+    Performance: passage is generated first (questions need it), then title and
+    questions are generated in parallel via a thread pool — cutting total latency
+    roughly in half compared to three sequential AI calls.
     """
     if not crud.get_user_by_id(db, payload.user_id):
         raise HTTPException(404, "User not found")
 
     # ── Profanity / inappropriate-input guard ─────────────────────────────
-    # Validate ALL user-supplied text fields BEFORE calling the AI.
-    # This check runs server-side and cannot be bypassed by frontend clients.
     from .profanity_filter import contains_profanity
-
     fields_to_check = [
         payload.input_vocabulary or "",
         payload.topic_param or "",
     ]
     if any(contains_profanity(field) for field in fields_to_check):
-        raise HTTPException(
-            status_code=422,
-            detail="INAPPROPRIATE_INPUT",
-        )
+        raise HTTPException(status_code=422, detail="INAPPROPRIATE_INPUT")
     # ─────────────────────────────────────────────────────────────────────
 
     from .seed_gemini import (
@@ -844,6 +1022,7 @@ def create_ai_reading(payload: schemas.AIReadingCreate, db: Session = Depends(ge
         generate_test_title,
     )
 
+    # ── Step 1: generate passage (questions and title both depend on it) ──
     try:
         generated_passage = generate_reading_passage(
             vocabulary=payload.input_vocabulary,
@@ -855,27 +1034,41 @@ def create_ai_reading(payload: schemas.AIReadingCreate, db: Session = Depends(ge
             f"[Passage generation failed: {exc}] Vocabulary: {payload.input_vocabulary}"
         )
 
-    # Generate a descriptive title (non-blocking; falls back to vocab-based label)
+    # ── Step 2: generate title AND questions in parallel ──────────────────
     title = None
-    try:
-        title = generate_test_title(
+    questions_data: list[dict] = []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        future_title = pool.submit(
+            generate_test_title,
             passage=generated_passage,
             vocabulary=payload.input_vocabulary,
             difficulty=payload.difficulty_param,
         )
-    except Exception:
-        pass
+        future_questions = pool.submit(
+            generate_comprehension_questions,
+            passage=generated_passage,
+            vocabulary=payload.input_vocabulary,
+            count=5,
+        )
 
+        try:
+            title = future_title.result()
+        except Exception:
+            title = None  # falls back to vocab-based label in crud
+
+        try:
+            questions_data = future_questions.result()
+        except Exception:
+            questions_data = []
+
+    # ── Step 3: persist to DB ─────────────────────────────────────────────
     reading = crud.create_ai_reading(
         db, payload, generated_passage=generated_passage, title=title
     )
 
-    try:
-        for q in generate_comprehension_questions(
-            passage=generated_passage,
-            vocabulary=payload.input_vocabulary,
-            count=5,           # always exactly 5 questions
-        ):
+    for q in questions_data:
+        try:
             crud.add_ai_reading_question(
                 db,
                 schemas.AIReadingQuestionCreate(
@@ -888,8 +1081,8 @@ def create_ai_reading(payload: schemas.AIReadingCreate, db: Session = Depends(ge
                     correct_option=q["correct_option"],
                 ),
             )
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     db.refresh(reading)
     _ = reading.comprehension_questions
@@ -900,11 +1093,14 @@ def create_ai_reading(payload: schemas.AIReadingCreate, db: Session = Depends(ge
 def submit_ai_reading(
     reading_id: int,
     payload: schemas.AIReadingSubmitRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """
     Submit all answers at once with elapsed time.
-    Generates per-question explanations (AI call) on first submission only.
+    Scoring is synchronous and returns immediately.
+    Explanation generation (slow AI call) runs as a background task AFTER the
+    response has been sent — the client sees results without waiting for it.
     Auto-submission when timer expires sends the same request from the frontend.
     """
     reading = crud.get_ai_reading(db, reading_id)
@@ -918,13 +1114,21 @@ def submit_ai_reading(
 
     from .seed_gemini import generate_explanations
 
-    return crud.submit_ai_reading_with_answers(
+    result = crud.submit_ai_reading_with_answers(
         db,
         reading=reading,
         answers={int(k): v for k, v in payload.answers.items()},
         completion_seconds=payload.completion_seconds,
+    )
+
+    # Schedule explanation generation to run after response is delivered
+    background_tasks.add_task(
+        crud.backfill_explanations,
+        reading_id=result.reading_id,
         generate_explanations_fn=generate_explanations,
     )
+
+    return result
 
 
 @app.post("/ai-readings/{reading_id}/retake", response_model=schemas.AIReadingRead, tags=["ai-reading"])

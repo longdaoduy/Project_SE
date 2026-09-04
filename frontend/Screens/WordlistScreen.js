@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   StyleSheet, Text, TextInput, View, ScrollView,
   StatusBar, Platform, Dimensions, Image,
@@ -11,6 +11,10 @@ import { getWords, addWord } from '../api';
 import { useData } from '../context/DataContext';
 
 const { width: screenWidth } = Dimensions.get('window');
+
+// Chiều cao cố định của mỗi word card — dùng cho getItemLayout của FlatList
+// để FlatList tính trước offset mà không cần đo từng item (tăng tốc scroll đáng kể)
+const CARD_HEIGHT = 130; // px (padding 16*2 + word ~24 + phonetic ~18 + definition ~20 + example ~18 + footer ~24 + marginBottom 10)
 
 const WORD_TYPES = [
   { id: 'noun', label: 'Noun' },
@@ -48,12 +52,24 @@ export default function WordlistScreen({ navigation }) {
 
   const selectedTopic = topics?.find((t) => t.topic_id === selectedTopicId) || null;
 
+  // Ref giữ AbortController của request đang chạy — cancel khi topic thay đổi
+  const abortControllerRef = useRef(null);
+
   // ── Fetch vocabularies ───────────────────────────────────────────────────────
   const fetchVocabularies = useCallback(async () => {
+    // Hủy request cũ nếu còn đang chạy (tránh race condition khi đổi topic nhanh)
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       setLoading(true);
       setError(null);
-      const data = await getWords(selectedTopicId, 200, userId);
+      const data = await getWords(selectedTopicId, selectedTopicId ? 50 : 2000, userId, controller.signal);
+      // Nếu request này đã bị cancel thì không update state
+      if (controller.signal.aborted) return;
       const normalized = (data || []).map((w) => ({
         id: w.word_id,
         word: w.word,
@@ -67,16 +83,24 @@ export default function WordlistScreen({ navigation }) {
       }));
       setVocabularies(normalized);
     } catch (err) {
+      if (err.name === 'AbortError') return; // request bị cancel, bỏ qua
       console.error('WordlistScreen fetch error:', err);
       setError('Could not load vocabulary. Please try again.');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (!controller.signal.aborted) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [selectedTopicId, userId]);
 
   useEffect(() => { if (topics.length === 0) loadTopics(); }, []);
   useEffect(() => { fetchVocabularies(); }, [fetchVocabularies]);
+
+  // Cleanup: hủy request đang pending khi component unmount
+  useEffect(() => {
+    return () => { if (abortControllerRef.current) abortControllerRef.current.abort(); };
+  }, []);
 
   const handleRefresh = () => { setRefreshing(true); fetchVocabularies(); };
 
@@ -123,7 +147,9 @@ export default function WordlistScreen({ navigation }) {
   };
 
   // ── Filtered list ────────────────────────────────────────────────────────────
-  const displayList = vocabularies.filter((item) => {
+  // useMemo: chỉ recompute khi vocabularies/searchQuery/selectedFilter/starredWordIds thay đổi
+  // Tránh re-filter 900 items mỗi render không liên quan
+  const displayList = useMemo(() => vocabularies.filter((item) => {
     const q = searchQuery.toLowerCase().trim();
     const matchSearch = !q ||
       item.word.toLowerCase().includes(q) ||
@@ -134,7 +160,7 @@ export default function WordlistScreen({ navigation }) {
           selectedFilter === 'studied' ? item.wordStatus === 'studied' :
             selectedFilter === 'unstudied' ? item.wordStatus === 'unstudied' : true;
     return matchSearch && matchFilter;
-  });
+  }), [vocabularies, searchQuery, selectedFilter, starredWordIds]);
 
   // ── Render word card ─────────────────────────────────────────────────────────
   const renderVocabularyCard = ({ item }) => {
@@ -208,8 +234,8 @@ export default function WordlistScreen({ navigation }) {
                   {selectedTopic ? `${selectedTopic.topic_name} · ` : ''}{vocabularies.length} words
                 </Text>
               </View>
-              <TouchableOpacity style={styles.addButton} onPress={() => setViewState('add')}>
-                <Ionicons name="add" size={20} color="#ffffff" />
+              <TouchableOpacity style={styles.addButton} onPress={() => navigation.navigate('FlashcardScreen')}>
+                <Ionicons name="albums-outline" size={18} color="#ffffff" />
               </TouchableOpacity>
             </View>
 
@@ -291,6 +317,17 @@ export default function WordlistScreen({ navigation }) {
                 showsVerticalScrollIndicator={false}
                 refreshing={refreshing}
                 onRefresh={handleRefresh}
+                // ── Hiệu năng ──────────────────────────────────────────────
+                // getItemLayout: FlatList tính trước offset từng item → scroll mượt, không đo runtime
+                getItemLayout={(_, index) => ({
+                  length: CARD_HEIGHT,
+                  offset: CARD_HEIGHT * index,
+                  index,
+                })}
+                initialNumToRender={10}       // render 10 item đầu tiên thay vì toàn bộ
+                maxToRenderPerBatch={8}        // mỗi batch chỉ render 8 item khi scroll
+                windowSize={5}                 // giữ 5 "màn hình" trong bộ nhớ (trên+dưới viewport)
+                removeClippedSubviews={true}   // unmount item ngoài viewport để giải phóng memory
                 ListEmptyComponent={
                   loading ? (
                     <View style={styles.centerState}>
@@ -323,133 +360,43 @@ export default function WordlistScreen({ navigation }) {
           </>
         )}
 
-        {/* ═══════════════════ ADD WORD VIEW ═══════════════════ */}
-        {viewState === 'add' && (
-          <>
-            <View style={styles.headerSection}>
-              <TouchableOpacity onPress={() => setViewState('list')} style={styles.backButton}>
-                <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, resizeMode: 'contain' }} />
-              </TouchableOpacity>
-              <View style={styles.headerTextContainer}>
-                <Text style={styles.appName}>Add Vocabulary</Text>
-                <Text style={styles.appSubtitle}>Add new words to your deck</Text>
-              </View>
-            </View>
-
-            <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
-              <View style={[styles.whiteCardContainer, { paddingBottom: 32 }]}>
-                <View style={styles.addWordContainer}>
-
-                  {/* Topic selector */}
-                  <Text style={styles.addWordContainerTitle}>TARGET TOPIC</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-                    {topics.map((t) => {
-                      const sel = (newTopicId || selectedTopicId) === t.topic_id;
-                      return (
-                        <TouchableOpacity
-                          key={t.topic_id}
-                          style={[styles.formTopicChip, sel && styles.formTopicChipSel]}
-                          onPress={() => setNewTopicId(t.topic_id)}
-                        >
-                          <Text style={[styles.formTopicChipText, sel && styles.formTopicChipTextSel]}>
-                            {t.topic_name}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </ScrollView>
-
-                  <Text style={styles.addWordContainerTitle}>WORD / PHRASE *</Text>
-                  <View style={styles.addWordInputContainer}>
-                    <TextInput placeholder="e.g. Resilience" style={styles.addWordInput} value={newWord} onChangeText={setNewWord} />
-                  </View>
-
-                  <Text style={styles.addWordContainerTitle}>PHONETIC</Text>
-                  <View style={styles.addWordInputContainer}>
-                    <TextInput placeholder="e.g. /rɪˈzɪl.jəns/" style={styles.addWordInput} value={newPhonetic} onChangeText={setNewPhonetic} />
-                  </View>
-
-                  <Text style={styles.addWordContainerTitle}>VIETNAMESE MEANING *</Text>
-                  <View style={styles.addWordInputContainer}>
-                    <TextInput placeholder="e.g. Khả năng phục hồi" style={styles.addWordInput} value={newMeaningVi} onChangeText={setNewMeaningVi} />
-                  </View>
-
-                  <Text style={styles.addWordContainerTitle}>EXAMPLE SENTENCE (ENGLISH) *</Text>
-                  <View style={styles.addWordInputContainer}>
-                    <TextInput placeholder="e.g. She showed great resilience." style={styles.addWordInput} value={newExampleEn} onChangeText={setNewExampleEn} multiline />
-                  </View>
-
-                  <Text style={styles.addWordContainerTitle}>EXAMPLE TRANSLATION (VIETNAMESE) *</Text>
-                  <View style={styles.addWordInputContainer}>
-                    <TextInput placeholder="e.g. Cô ấy thể hiện sự kiên cường tuyệt vời." style={styles.addWordInput} value={newExampleVi} onChangeText={setNewExampleVi} multiline />
-                  </View>
-
-                  <Text style={styles.addWordContainerTitle}>PART OF SPEECH</Text>
-                  <View style={styles.wordTypeButtonContainer}>
-                    {WORD_TYPES.map((t) => {
-                      const sel = selectedType === t.id;
-                      return (
-                        <TouchableOpacity
-                          key={t.id}
-                          style={[styles.wordTypeButton, sel && styles.wordTypeButtonSelected]}
-                          onPress={() => setSelectedType(t.id)}
-                        >
-                          <Text style={[styles.wordTypeButtonText, sel && styles.wordTypeButtonTextSelected]}>{t.label}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-
-                  <TouchableOpacity
-                    style={[styles.addWordButton, submitting && { opacity: 0.6 }]}
-                    onPress={handleAddWordSubmit}
-                    disabled={submitting}
-                  >
-                    {submitting
-                      ? <ActivityIndicator size="small" color="#ffffff" />
-                      : <Text style={styles.addWordButtonText}>Save Word to Database</Text>}
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </ScrollView>
-          </>
-        )}
-
         {/* ═══════════════════ TOPIC FILTER MODAL ═══════════════════ */}
         <Modal visible={isTopicModalVisible} transparent animationType="fade" onRequestClose={() => setIsTopicModalVisible(false)}>
           <View style={styles.modalOverlay}>
             <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setIsTopicModalVisible(false)} />
-            <View style={styles.modalContainer}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Filter by Topic</Text>
-                <TouchableOpacity onPress={() => setIsTopicModalVisible(false)}>
-                  <Ionicons name="close" size={20} color="#64748b" />
-                </TouchableOpacity>
+            <View style={Platform.OS === 'web' ? styles.modalWebWrapper : null}>
+              <View style={styles.modalContainer}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>Filter by Topic</Text>
+                  <TouchableOpacity onPress={() => setIsTopicModalVisible(false)}>
+                    <Ionicons name="close" size={20} color="#64748b" />
+                  </TouchableOpacity>
+                </View>
+                <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 8 }}>
+                  <TouchableOpacity
+                    style={[styles.topicOptionItem, selectedTopicId === null && styles.topicOptionItemActive]}
+                    onPress={() => { setSelectedTopicId(null); setIsTopicModalVisible(false); }}
+                  >
+                    <Ionicons name="grid-outline" size={16} color={selectedTopicId === null ? '#6366f1' : '#64748b'} style={{ marginRight: 10 }} />
+                    <Text style={[styles.topicOptionText, selectedTopicId === null && styles.topicOptionTextActive]}>All Topics</Text>
+                    {selectedTopicId === null && <Ionicons name="checkmark" size={16} color="#6366f1" style={{ marginLeft: 'auto' }} />}
+                  </TouchableOpacity>
+                  {topics.map((t) => {
+                    const active = selectedTopicId === t.topic_id;
+                    return (
+                      <TouchableOpacity
+                        key={t.topic_id}
+                        style={[styles.topicOptionItem, active && styles.topicOptionItemActive]}
+                        onPress={() => { setSelectedTopicId(t.topic_id); setIsTopicModalVisible(false); }}
+                      >
+                        <Ionicons name="pricetag-outline" size={16} color={active ? '#6366f1' : '#64748b'} style={{ marginRight: 10 }} />
+                        <Text style={[styles.topicOptionText, active && styles.topicOptionTextActive]} numberOfLines={1}>{t.topic_name}</Text>
+                        {active && <Ionicons name="checkmark" size={16} color="#6366f1" style={{ marginLeft: 'auto' }} />}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
               </View>
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 8 }}>
-                <TouchableOpacity
-                  style={[styles.topicOptionItem, selectedTopicId === null && styles.topicOptionItemActive]}
-                  onPress={() => { setSelectedTopicId(null); setIsTopicModalVisible(false); }}
-                >
-                  <Ionicons name="grid-outline" size={16} color={selectedTopicId === null ? '#6366f1' : '#64748b'} style={{ marginRight: 10 }} />
-                  <Text style={[styles.topicOptionText, selectedTopicId === null && styles.topicOptionTextActive]}>All Topics</Text>
-                  {selectedTopicId === null && <Ionicons name="checkmark" size={16} color="#6366f1" style={{ marginLeft: 'auto' }} />}
-                </TouchableOpacity>
-                {topics.map((t) => {
-                  const active = selectedTopicId === t.topic_id;
-                  return (
-                    <TouchableOpacity
-                      key={t.topic_id}
-                      style={[styles.topicOptionItem, active && styles.topicOptionItemActive]}
-                      onPress={() => { setSelectedTopicId(t.topic_id); setIsTopicModalVisible(false); }}
-                    >
-                      <Ionicons name="pricetag-outline" size={16} color={active ? '#6366f1' : '#64748b'} style={{ marginRight: 10 }} />
-                      <Text style={[styles.topicOptionText, active && styles.topicOptionTextActive]} numberOfLines={1}>{t.topic_name}</Text>
-                      {active && <Ionicons name="checkmark" size={16} color="#6366f1" style={{ marginLeft: 'auto' }} />}
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
             </View>
           </View>
         </Modal>
@@ -573,9 +520,9 @@ const styles = StyleSheet.create({
   formTopicChipTextSel: { color: '#ffffff' },
 
   // ── Topic filter modal ────────────────────────────────────────────────────────
-  modalOverlay: { flex: 1, justifyContent: 'flex-end', alignItems: 'center' },
+  modalOverlay: { flex: 1, justifyContent: 'flex-end' },
   modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
-  modalContainer: { backgroundColor: '#ffffff', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 20, paddingBottom: 32, maxHeight: '75%', width: '100%', maxWidth: Platform.OS === 'web' ? 400 : '100%', },
+  modalContainer: { backgroundColor: '#ffffff', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 20, paddingBottom: 32, maxHeight: '75%' },
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
   modalTitle: { fontSize: 17, fontWeight: '700', color: '#1e293b' },
   topicOptionItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 13, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },

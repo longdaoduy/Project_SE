@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, TextInput, View, StatusBar, Platform,
-  TouchableOpacity, ScrollView, Image, ActivityIndicator, Alert, Animated
+  TouchableOpacity, ScrollView, Image, ActivityIndicator, Alert, Animated, Modal
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -11,9 +11,12 @@ import {
   getFlashcardQueue,
   submitSRSRating,
   getDailyStatus,
+  getDailyStatusBulk,
   createFlashcardSession, completeFlashcardSession,
   createFlashcardProgress, updateFlashcardProgress,
   getActiveFlashcardSession,
+  bulkCreateFlashcardProgress,
+  rateCardInSession,
 } from '../api';
 import * as Speech from 'expo-speech';
 
@@ -45,11 +48,14 @@ export default function FlashcardScreen({ navigation }) {
   // ── Deck search / filter ─────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
 
+  // ── Delete-confirm modal ──────────────────────────────────────────────────────
+  const [deletingDeck, setDeletingDeck] = useState(null); // deck object | null
   // ── Add/Edit-deck form state ─────────────────────────────────────────────────
   // editingDeck: null → CREATE mode | non-null → EDIT mode
   const [editingDeck, setEditingDeck] = useState(null);
   const [deckFormError, setDeckFormError] = useState('');
-  const [visibleTopicsCount, setVisibleTopicsCount] = useState(TOPICS_PER_PAGE);
+  const [topicPage, setTopicPage]   = useState(0); // 0-indexed page for backend topics
+  const [deckPage,  setDeckPage]    = useState(0); // 0-indexed page for user decks
   const [topicsExpanded, setTopicsExpanded] = useState(true);
 
   // ── Add-deck form state ─────────────────────────────────────────────────────
@@ -93,19 +99,29 @@ export default function FlashcardScreen({ navigation }) {
     if (topics.length === 0) loadTopics();
   }, []);
 
-  // Load daily status for all visible topics so we can show badges
-  // Re-runs whenever userId/topics change, OR when returning to the select screen
+  // Reset pagination when search query changes
+  useEffect(() => {
+    setTopicPage(0);
+    setDeckPage(0);
+  }, [searchQuery]);
+
+  // Load daily status for all topics in ONE bulk request instead of N sequential calls.
+  // Re-runs whenever userId/topics change, OR when returning to the select screen.
   useEffect(() => {
     if (!userId || topics.length === 0 || phase !== 'select') return;
     const loadStatuses = async () => {
-      const results = {};
-      for (const topic of topics) {
-        try {
-          const status = await getDailyStatus(userId, topic.topic_id);
-          results[topic.topic_id] = status;
-        } catch (_) { /* ignore per-topic errors */ }
+      try {
+        const topicIds = topics.map((t) => t.topic_id);
+        const bulk = await getDailyStatusBulk(userId, topicIds);
+        // bulk is keyed by string topic_id — normalise to number keys
+        const results = {};
+        for (const [k, v] of Object.entries(bulk)) {
+          results[Number(k)] = v;
+        }
+        setTopicDailyStatus(results);
+      } catch (_) {
+        // Silently ignore — badges are non-critical UI
       }
-      setTopicDailyStatus(results);
     };
     loadStatuses();
   }, [userId, topics, phase]);
@@ -119,7 +135,21 @@ export default function FlashcardScreen({ navigation }) {
   const filteredTopics = topics.filter((t) =>
     t.topic_name.toLowerCase().includes(searchQuery.toLowerCase())
   );
-  const visibleTopics = filteredTopics.slice(0, visibleTopicsCount);
+  // Pagination for backend topics — reset page when search changes
+  const topicTotalPages = Math.max(1, Math.ceil(filteredTopics.length / TOPICS_PER_PAGE));
+  const clampedTopicPage = Math.min(topicPage, topicTotalPages - 1);
+  const visibleTopics = filteredTopics.slice(
+    clampedTopicPage * TOPICS_PER_PAGE,
+    clampedTopicPage * TOPICS_PER_PAGE + TOPICS_PER_PAGE
+  );
+
+  // Pagination for user decks
+  const deckTotalPages = Math.max(1, Math.ceil(filteredDecks.length / TOPICS_PER_PAGE));
+  const clampedDeckPage = Math.min(deckPage, deckTotalPages - 1);
+  const visibleDecks = filteredDecks.slice(
+    clampedDeckPage * TOPICS_PER_PAGE,
+    clampedDeckPage * TOPICS_PER_PAGE + TOPICS_PER_PAGE
+  );
 
   // ── Add/Edit-deck handlers ────────────────────────────────────────────────────
   const handleAddTermRow = () => {
@@ -221,10 +251,7 @@ export default function FlashcardScreen({ navigation }) {
   };
 
   const confirmDeleteDeck = (deck) => {
-    Alert.alert('Delete Deck', `Delete "${deck.title}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteDeck(deck.id) },
-    ]);
+    setDeletingDeck(deck);
   };
 
   // ── Navigate to Quiz using deck vocabulary ───────────────────────────────
@@ -372,25 +399,27 @@ export default function FlashcardScreen({ navigation }) {
 
       if (existingSession) {
         session = existingSession;
+        // Lấy progress_id đã có từ session
         if (session.progresses && session.progresses.length > 0) {
           session.progresses.forEach(p => { pIds[p.word_id] = p.progress_id; });
         }
-        for (const w of allCards) {
-          if (!pIds[w.word_id]) {
-            try {
-              const prog = await createFlashcardProgress(session.session_id, w.word_id);
-              pIds[w.word_id] = prog.progress_id;
-            } catch (_) { /* non-critical */ }
-          }
+        // Bulk create progress cho các card chưa có — 1 request thay vì N
+        const missingWordIds = allCards
+          .map(w => w.word_id)
+          .filter(wid => !pIds[wid]);
+        if (missingWordIds.length > 0) {
+          try {
+            const { progress_map } = await bulkCreateFlashcardProgress(session.session_id, missingWordIds);
+            Object.assign(pIds, progress_map);
+          } catch (_) { /* non-critical */ }
         }
       } else {
         session = await createFlashcardSession(userId, topic.topic_id, allCards.length);
-        for (const w of allCards) {
-          try {
-            const prog = await createFlashcardProgress(session.session_id, w.word_id);
-            pIds[w.word_id] = prog.progress_id;
-          } catch (_) { /* non-critical */ }
-        }
+        // Bulk create tất cả progress records trong 1 request
+        try {
+          const { progress_map } = await bulkCreateFlashcardProgress(session.session_id, allCards.map(w => w.word_id));
+          pIds = progress_map;
+        } catch (_) { /* non-critical */ }
       }
 
       const store = {};
@@ -449,7 +478,7 @@ export default function FlashcardScreen({ navigation }) {
 
   // ── Flip card ────────────────────────────────────────────────────────────────
   // ── Flip card (Có hiệu ứng) ──────────────────────────────────────────────────
-  const handleFlip = useCallback(async () => {
+  const handleFlip = useCallback(() => {
     if (showMeaning) return;
 
     // Bước 1: Xoay thẻ 90 độ (úp thẻ xuống)
@@ -469,22 +498,23 @@ export default function FlashcardScreen({ navigation }) {
       }).start();
     });
 
-    // Code gọi API lưu tiến độ (giữ nguyên của bạn)
+    // Fire-and-forget — không await, không block animation
     const card = cards[currentIndex];
     const pid = progressIds[card.word_id];
     if (pid) {
-      try { await updateFlashcardProgress(pid, { is_flipped: true }); }
-      catch (e) { console.warn('flip progress:', e.message); }
+      updateFlashcardProgress(pid, { is_flipped: true })
+        .catch(e => console.warn('flip progress:', e.message));
     }
   }, [showMeaning, cards, currentIndex, progressIds, flipAnim]);
 
   // ── Rate & advance – full session tracking + SRS ────────────────────────────
-  const handleRate = useCallback(async (rating) => {
+  const handleRate = useCallback((rating) => {
     const card = cards[currentIndex];
     const pid = progressIds[card.word_id];
     const wid = card.word_id;
+    const topicId = card.topic_id ?? selectedTopic?.topic_id;
 
-    // ── Update per-card session stats ─────────────────────────────────────────
+    // ── 1. Update per-card session stats (synchronous) ────────────────────────
     setCardStats(prev => {
       const existing = prev[wid] || { again_count: 0, last_option: null, flagged_difficult: false };
       if (rating === 'again') {
@@ -493,63 +523,66 @@ export default function FlashcardScreen({ navigation }) {
           [wid]: {
             again_count: existing.again_count + 1,
             last_option: 'again',
-            flagged_difficult: true,      // once flagged, stays flagged for done screen
-          },
-        };
-      } else {
-        // Hard/Good/Easy → reset again_count, keep flagged if previously flagged
-        return {
-          ...prev,
-          [wid]: {
-            again_count: 0,               // RESET per spec
-            last_option: rating,
-            flagged_difficult: existing.flagged_difficult || rating === 'hard',
+            flagged_difficult: true,
           },
         };
       }
+      return {
+        ...prev,
+        [wid]: {
+          again_count: 0,
+          last_option: rating,
+          flagged_difficult: existing.flagged_difficult || rating === 'hard',
+        },
+      };
     });
 
-    // ── Legacy flip-progress (keeps session history) ──────────────────────────
-    if (pid) {
-      try { await updateFlashcardProgress(pid, { difficulty_rating: rating }); }
-      catch (e) { console.warn('rate progress:', e.message); }
-    }
-
-    // ── SRS rating (backend) ──────────────────────────────────────────────────
-    if (selectedTopic && card.topic_id !== undefined) {
-      try {
-        const topicId = card.topic_id ?? selectedTopic.topic_id;
-        const srsResult = await submitSRSRating(userId, card.word_id, topicId, rating);
-        setSrsResults(prev => ({ ...prev, [wid]: srsResult }));
-      } catch (e) { console.warn('srs rating:', e.message); }
-    }
-
-    // ── Queue management ──────────────────────────────────────────────────────
+    // ── 2. Optimistic queue update — KHÔNG chờ API ────────────────────────────
     if (rating === 'again') {
-      // Move card to end; do NOT record a final rating
+      // Requeue: đưa thẻ xuống cuối hàng, chuyển ngay
       const rest = cards.slice(currentIndex + 1);
       setCards(rest.length > 0 ? [...rest, card] : [card]);
       setCurrentIndex(0);
       setShowMeaning(false);
       flipAnim.setValue(0);
-      return;
-    }
-
-    // Hard / Good / Easy → card leaves the queue, record final rating
-    setRatings(prev => ({ ...prev, [wid]: rating }));
-    const remainingCards = cards.slice(currentIndex + 1);
-
-    if (remainingCards.length === 0) {
-      try { if (sessionId) await completeFlashcardSession(sessionId); }
-      catch (e) { console.warn('complete session:', e.message); }
-      setPhase('done');
     } else {
-      setCards(remainingCards);
-      setCurrentIndex(0);
-      setShowMeaning(false);
-      flipAnim.setValue(0);
+      // Hard / Good / Easy → card rời queue, record final rating
+      setRatings(prev => ({ ...prev, [wid]: rating }));
+      const remainingCards = cards.slice(currentIndex + 1);
+      if (remainingCards.length === 0) {
+        setPhase('done');
+        // complete session fire-and-forget
+        if (sessionId) {
+          completeFlashcardSession(sessionId)
+            .catch(e => console.warn('complete session:', e.message));
+        }
+      } else {
+        setCards(remainingCards);
+        setCurrentIndex(0);
+        setShowMeaning(false);
+        flipAnim.setValue(0);
+      }
     }
-  }, [cards, currentIndex, progressIds, ratings, sessionId, selectedTopic, userId, flipAnim]);
+
+    // ── 3. Persist rating to backend (fire-and-forget) ────────────────────────
+    const canUseRateEndpoint = sessionId && topicId != null && pid;
+    if (canUseRateEndpoint) {
+      rateCardInSession(sessionId, wid, topicId, rating)
+        .then(({ srs }) => setSrsResults(prev => ({ ...prev, [wid]: srs })))
+        .catch(e => console.warn('rate-in-session:', e.message));
+    } else {
+      // Fallback: local deck hoặc không có sessionId
+      if (pid) {
+        updateFlashcardProgress(pid, { difficulty_rating: rating })
+          .catch(e => console.warn('rate progress:', e.message));
+      }
+      if (selectedTopic && topicId != null) {
+        submitSRSRating(userId, wid, topicId, rating)
+          .then(srsResult => setSrsResults(prev => ({ ...prev, [wid]: srsResult })))
+          .catch(e => console.warn('srs rating:', e.message));
+      }
+    }
+  }, [cards, currentIndex, progressIds, sessionId, selectedTopic, userId, flipAnim]);
 
   const handleRestart = () => {
     if (selectedLocalDeck) startLocalSession(selectedLocalDeck);
@@ -790,7 +823,7 @@ export default function FlashcardScreen({ navigation }) {
                         <Text style={s.emptySubText}>Try a different search keyword</Text>
                       </View>
                     ) : (
-                      filteredDecks.map((deck) => (
+                      visibleDecks.map((deck) => (
                         <View key={deck.id} style={s.deckCard}>
                           <View style={s.deckHeader}>
                             <View style={s.deckIconContainer}>
@@ -865,6 +898,28 @@ export default function FlashcardScreen({ navigation }) {
                           </View>
                         </View>
                       ))
+                    )}
+                    {/* ── Deck pagination ── */}
+                    {deckTotalPages > 1 && (
+                      <View style={s.paginationRow}>
+                        <TouchableOpacity
+                          style={[s.pageBtn, clampedDeckPage === 0 && s.pageBtnDisabled]}
+                          activeOpacity={0.7}
+                          disabled={clampedDeckPage === 0}
+                          onPress={() => setDeckPage((p) => Math.max(0, p - 1))}
+                        >
+                          <Ionicons name="chevron-back" size={18} color={clampedDeckPage === 0 ? '#cbd5e1' : '#4f46e5'} />
+                        </TouchableOpacity>
+                        <Text style={s.pageLabel}>{clampedDeckPage + 1} / {deckTotalPages}</Text>
+                        <TouchableOpacity
+                          style={[s.pageBtn, clampedDeckPage === deckTotalPages - 1 && s.pageBtnDisabled]}
+                          activeOpacity={0.7}
+                          disabled={clampedDeckPage === deckTotalPages - 1}
+                          onPress={() => setDeckPage((p) => Math.min(deckTotalPages - 1, p + 1))}
+                        >
+                          <Ionicons name="chevron-forward" size={18} color={clampedDeckPage === deckTotalPages - 1 ? '#cbd5e1' : '#4f46e5'} />
+                        </TouchableOpacity>
+                      </View>
                     )}
                   </>
                 )}
@@ -947,17 +1002,27 @@ export default function FlashcardScreen({ navigation }) {
                       </TouchableOpacity>
                     ))}
 
-                    {filteredTopics.length > visibleTopics.length && (
-                      <TouchableOpacity
-                        style={s.showMoreBtn}
-                        activeOpacity={0.8}
-                        onPress={() => setVisibleTopicsCount((prev) => prev + TOPICS_PER_PAGE)}
-                      >
-                        <Ionicons name="chevron-down" size={16} color="#5b65d6" />
-                        <Text style={s.showMoreText}>
-                          Show more ({filteredTopics.length - visibleTopics.length} remaining)
-                        </Text>
-                      </TouchableOpacity>
+                    {/* ── Topic pagination ── */}
+                    {topicTotalPages > 1 && (
+                      <View style={s.paginationRow}>
+                        <TouchableOpacity
+                          style={[s.pageBtn, clampedTopicPage === 0 && s.pageBtnDisabled]}
+                          activeOpacity={0.7}
+                          disabled={clampedTopicPage === 0}
+                          onPress={() => setTopicPage((p) => Math.max(0, p - 1))}
+                        >
+                          <Ionicons name="chevron-back" size={18} color={clampedTopicPage === 0 ? '#cbd5e1' : '#4f46e5'} />
+                        </TouchableOpacity>
+                        <Text style={s.pageLabel}>{clampedTopicPage + 1} / {topicTotalPages}</Text>
+                        <TouchableOpacity
+                          style={[s.pageBtn, clampedTopicPage === topicTotalPages - 1 && s.pageBtnDisabled]}
+                          activeOpacity={0.7}
+                          disabled={clampedTopicPage === topicTotalPages - 1}
+                          onPress={() => setTopicPage((p) => Math.min(topicTotalPages - 1, p + 1))}
+                        >
+                          <Ionicons name="chevron-forward" size={18} color={clampedTopicPage === topicTotalPages - 1 ? '#cbd5e1' : '#4f46e5'} />
+                        </TouchableOpacity>
+                      </View>
                     )}
                   </>
                 )
@@ -967,6 +1032,48 @@ export default function FlashcardScreen({ navigation }) {
 
           <BottomNav navigation={navigation} active="FlashcardScreen" />
         </LinearGradient>
+
+        {/* ── Delete-confirm modal ───────────────────────────────────────── */}
+        <Modal
+          visible={!!deletingDeck}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setDeletingDeck(null)}
+        >
+          <View style={s.modalOverlay}>
+            <View style={s.modalBox}>
+              <View style={s.modalIconWrap}>
+                <Ionicons name="trash-outline" size={28} color="#ef4444" />
+              </View>
+              <Text style={s.modalTitle}>Delete Deck</Text>
+              <Text style={s.modalBody}>
+                Are you sure you want to delete{'\n'}
+                <Text style={s.modalDeckName}>"{deletingDeck?.title}"</Text>?{'\n'}
+                This action cannot be undone.
+              </Text>
+              <View style={s.modalActions}>
+                <TouchableOpacity
+                  style={s.modalCancelBtn}
+                  activeOpacity={0.8}
+                  onPress={() => setDeletingDeck(null)}
+                >
+                  <Text style={s.modalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={s.modalDeleteBtn}
+                  activeOpacity={0.8}
+                  onPress={() => {
+                    deleteDeck(deletingDeck.id);
+                    setDeletingDeck(null);
+                  }}
+                >
+                  <Ionicons name="trash-outline" size={15} color="#ffffff" />
+                  <Text style={s.modalDeleteText}>Delete</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </View>
     );
   }
@@ -1723,4 +1830,23 @@ const s = StyleSheet.create({
   // Inline error in add-deck form
   inlineErrorBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', borderRadius: 10, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: '#fecaca' },
   inlineErrorText: { color: '#b91c1c', fontSize: 13, fontWeight: '500', flex: 1 },
+
+  // Pagination controls
+  paginationRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16, marginTop: 4, marginBottom: 12 },
+  pageBtn: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#ffffff', borderWidth: 1.5, borderColor: '#c7d2fe', alignItems: 'center', justifyContent: 'center' },
+  pageBtnDisabled: { borderColor: '#e2e8f0', backgroundColor: '#f8fafc' },
+  pageLabel: { fontSize: 14, fontWeight: '700', color: '#475569', minWidth: 48, textAlign: 'center' },
+
+  // Delete-confirm modal
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32 },
+  modalBox: { backgroundColor: '#ffffff', borderRadius: 24, padding: 28, width: '100%', maxWidth: 360, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.18, shadowRadius: 24, elevation: 10 },
+  modalIconWrap: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#fef2f2', alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
+  modalTitle: { fontSize: 18, fontWeight: '800', color: '#0f172a', marginBottom: 10 },
+  modalBody: { fontSize: 14, color: '#475569', textAlign: 'center', lineHeight: 22, marginBottom: 24 },
+  modalDeckName: { fontWeight: '700', color: '#0f172a' },
+  modalActions: { flexDirection: 'row', gap: 10, width: '100%' },
+  modalCancelBtn: { flex: 1, paddingVertical: 13, borderRadius: 14, backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' },
+  modalCancelText: { fontSize: 14, fontWeight: '700', color: '#475569' },
+  modalDeleteBtn: { flex: 1, flexDirection: 'row', paddingVertical: 13, borderRadius: 14, backgroundColor: '#ef4444', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  modalDeleteText: { fontSize: 14, fontWeight: '700', color: '#ffffff' },
 });

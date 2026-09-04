@@ -15,7 +15,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 # Cấu hình OpenRouter API – đọc từ biến môi trường (xem backend/.env.example)
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "inclusionai/ling-3.0-tiny:free")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "minimax/minimax-m3:free")
 
 
 def _extract_text_openrouter(response_json: dict[str, Any]) -> str:
@@ -32,19 +32,23 @@ def _extract_text_openrouter(response_json: dict[str, Any]) -> str:
     return text
 
 
-def call_openrouter(prompt: str, max_retries: int = 5) -> str:
+def call_openrouter(prompt: str, max_retries: int = 3, timeout: int = 45) -> str:
+    """Call OpenRouter API with retry logic.
+
+    `timeout` is intentionally short (45 s) for realtime/user-facing calls so
+    the endpoint fails fast rather than blocking for 2 minutes.  The seed
+    script passes a higher value explicitly when needed.
+    """
     if not OPENROUTER_API_KEY:
         raise RuntimeError("Missing OPENROUTER_API_KEY in environment or variable")
 
     url = "https://openrouter.ai/api/v1/chat/completions"
 
-    # Header bắt buộc theo doc của OpenRouter
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
     }
 
-    # Body chuẩn theo doc của OpenRouter
     payload = {
         "model": OPENROUTER_MODEL,
         "messages": [
@@ -56,10 +60,11 @@ def call_openrouter(prompt: str, max_retries: int = 5) -> str:
     }
 
     for attempt in range(max_retries):
-        response = requests.post(url, headers=headers, json=payload, timeout=120)
+        response = requests.post(url, headers=headers, json=payload, timeout=timeout)
 
         if response.status_code == 429:
-            wait_time = (2 ** attempt) * 5
+            # Short fixed wait — exponential backoff is too slow for live requests
+            wait_time = 3 * (attempt + 1)
             print(f"⏳ API đang quá tải (429). Đang đợi {wait_time} giây để thử lại (Lần {attempt + 1}/{max_retries})...")
             time.sleep(wait_time)
             continue
@@ -107,8 +112,8 @@ def generate_words_for_topic(topic: str, count: int = 30) -> list[dict]:
     """
 
     try:
-        # Gọi qua OpenRouter thay vì Gemini
-        response_text = call_openrouter(prompt)
+        # Seed calls are non-interactive so can afford longer timeout
+        response_text = call_openrouter(prompt, max_retries=5, timeout=120)
         words_data = parse_json_block(response_text)
 
         print(f"✅ Đã nhận thành công {len(words_data)} từ vựng chủ đề {topic} từ OpenRouter AI!")

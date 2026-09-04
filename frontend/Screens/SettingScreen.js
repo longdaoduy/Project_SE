@@ -31,12 +31,13 @@ async function clearAuthStorage() {
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 export default function SettingScreen({ navigation }) {
-    const { token, currentUser, userId, setToken, setCurrentUser, setUserId } = useData();
+    const { token, currentUser, userId, setToken, setCurrentUser, setUserId, clearUserDecks } = useData();
 
 
     const [isDarkMode, setIsDarkMode] = useState(false);
     const [isVietnamese, setIsVietnamese] = useState(false);
     const [notifications, setNotifications] = useState(true);
+    const [reminderTime, setReminderTime] = useState('08:00');   // HH:MM string
     const [soundEffects, setSoundEffects] = useState(true);
     const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
     const [currentPassword, setCurrentPassword] = useState('');
@@ -61,14 +62,19 @@ export default function SettingScreen({ navigation }) {
         }
     };
 
+    // Build a complete settings payload so every persist call includes all fields.
+    const buildSettings = (overrides = {}) => ({
+        dark_mode: isDarkMode,
+        language: isVietnamese ? 'vi' : 'en',
+        notification_enabled: notifications,
+        reminder_time: reminderTime,
+        ...overrides,
+    });
+
     const handleDarkModeToggle = () => {
         const nextValue = !isDarkMode;
         setIsDarkMode(nextValue);
-        persistProfileSettings({
-            dark_mode: nextValue,
-            language: isVietnamese ? 'vi' : 'en',
-            notification_enabled: notifications,
-        });
+        persistProfileSettings(buildSettings({ dark_mode: nextValue }));
     }
 
     const handleLogout = () => {
@@ -96,6 +102,7 @@ export default function SettingScreen({ navigation }) {
         } catch (e) {
             console.warn('logout error:', e.message);
         }
+        await clearUserDecks();
         await clearAuthStorage();
         setToken(null);
         setCurrentUser(null);
@@ -121,6 +128,7 @@ export default function SettingScreen({ navigation }) {
             setDeleteAccountLoading(false);
         }
         closeConfirmAction();
+        await clearUserDecks();
         await clearAuthStorage();
         setToken(null);
         setCurrentUser(null);
@@ -190,6 +198,10 @@ export default function SettingScreen({ navigation }) {
                     setIsDarkMode(!!settings.dark_mode);
                     setIsVietnamese(settings.language === 'vi');
                     setNotifications(!!settings.notification_enabled);
+                    // reminder_time is stored as "HH:MM:SS" on the server; keep only HH:MM
+                    if (settings.reminder_time) {
+                        setReminderTime(String(settings.reminder_time).slice(0, 5));
+                    }
                 }
             }
         } catch (error) {
@@ -301,11 +313,7 @@ export default function SettingScreen({ navigation }) {
                                     onPress={() => {
                                         const nextValue = !isVietnamese;
                                         setIsVietnamese(nextValue);
-                                        persistProfileSettings({
-                                            dark_mode: isDarkMode,
-                                            language: nextValue ? 'vi' : 'en',
-                                            notification_enabled: notifications,
-                                        });
+                                        persistProfileSettings(buildSettings({ language: nextValue ? 'vi' : 'en' }));
                                     }}
                                 >
                                     <View style={[styles.customToggleThumb, isVietnamese && styles.customToggleThumbActive]}>
@@ -329,18 +337,16 @@ export default function SettingScreen({ navigation }) {
                             <View style={styles.accountSettingItem}>
                                 <View style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
                                     <Text style={styles.accountSettingLabel}>Notification Reminder</Text>
-                                    <Text style={styles.accountSettingSubLabel}>Daily at 8:00 AM</Text>
+                                    <Text style={styles.accountSettingSubLabel}>
+                                        {notifications ? `Daily at ${reminderTime}` : 'Reminders off'}
+                                    </Text>
                                 </View>
                                 <TouchableOpacity
                                     style={[styles.customToggle, notifications && styles.customToggleActive]}
                                     onPress={() => {
                                         const nextValue = !notifications;
                                         setNotifications(nextValue);
-                                        persistProfileSettings({
-                                            dark_mode: isDarkMode,
-                                            language: isVietnamese ? 'vi' : 'en',
-                                            notification_enabled: nextValue,
-                                        });
+                                        persistProfileSettings(buildSettings({ notification_enabled: nextValue }));
                                     }}
                                 >
                                     <View style={[styles.customToggleThumb, notifications && styles.customToggleThumbActive]}>
@@ -352,6 +358,38 @@ export default function SettingScreen({ navigation }) {
                                     </View>
                                 </TouchableOpacity>
                             </View>
+
+                            {/* Reminder time picker — only shown when notifications are on */}
+                            {notifications && (
+                                <View style={styles.accountSettingItem}>
+                                    <View style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
+                                        <Text style={styles.accountSettingLabel}>Reminder Time</Text>
+                                        <Text style={styles.accountSettingSubLabel}>Choose your daily reminder hour</Text>
+                                    </View>
+                                    <View style={styles.reminderTimeRow}>
+                                        {['06:00', '08:00', '12:00', '20:00', '22:00'].map((t) => (
+                                            <TouchableOpacity
+                                                key={t}
+                                                style={[
+                                                    styles.timeChip,
+                                                    reminderTime === t && styles.timeChipActive,
+                                                ]}
+                                                onPress={() => {
+                                                    setReminderTime(t);
+                                                    persistProfileSettings(buildSettings({ reminder_time: t + ':00' }));
+                                                }}
+                                            >
+                                                <Text style={[
+                                                    styles.timeChipText,
+                                                    reminderTime === t && styles.timeChipTextActive,
+                                                ]}>
+                                                    {t}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        ))}
+                                    </View>
+                                </View>
+                            )}
 
                             <View style={styles.accountSettingItem}>
                                 <View style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
@@ -1423,6 +1461,39 @@ const styles = StyleSheet.create({
         borderRadius: 12,
         borderColor: '#c7d2fe',
         borderWidth: 1,
+    },
+
+    reminderTimeRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 6,
+        justifyContent: 'flex-end',
+        flex: 1,
+        marginLeft: 8,
+    },
+
+    timeChip: {
+        paddingVertical: 4,
+        paddingHorizontal: 10,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: '#c7d2fe',
+        backgroundColor: '#f1f5f9',
+    },
+
+    timeChipActive: {
+        backgroundColor: '#667eea',
+        borderColor: '#667eea',
+    },
+
+    timeChipText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#475569',
+    },
+
+    timeChipTextActive: {
+        color: '#ffffff',
     },
 
     modalOverlay: {

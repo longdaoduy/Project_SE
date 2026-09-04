@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getMe, getTopics, getStarredWords, starWord, unstarWord } from '../api';
+import { getMe, getMyStatistics, getMyDailySummary, getTopics, getStarredWords, starWord, unstarWord } from '../api';
 
 async function clearAuthStorage() {
   await Promise.all([
@@ -11,10 +11,14 @@ async function clearAuthStorage() {
 }
 
 const DataContext = createContext();
-const DECKS_STORAGE_KEY = 'user_decks_v2';
+const DECKS_KEY_PREFIX = 'user_decks_v3_';
+const LEGACY_DECKS_KEY = 'user_decks_v2';
 
 /** Normalise for duplicate comparison: trim + lowercase. */
 const normalise = (s) => (s || '').trim().toLowerCase();
+
+/** Returns the per-user AsyncStorage key. Falls back to a guest key when userId is unknown. */
+const decksKey = (userId) => userId ? `${DECKS_KEY_PREFIX}${userId}` : `${DECKS_KEY_PREFIX}guest`;
 
 export function DataProvider({ children }) {
   // ── Auth ────────────────────────────────────────────────────────────────────
@@ -27,7 +31,7 @@ export function DataProvider({ children }) {
     const restoreAuth = async () => {
       try {
         const savedToken = await AsyncStorage.getItem('jwt_token');
-        const savedUser = await AsyncStorage.getItem('current_user');
+        const savedUser  = await AsyncStorage.getItem('current_user');
 
         if (savedUser) {
           const parsedUser = JSON.parse(savedUser);
@@ -57,6 +61,54 @@ export function DataProvider({ children }) {
     restoreAuth();
   }, []);
 
+  // ── Statistics cache (shared between HomeScreen and ProfileScreen) ───────────
+  // Avoids each screen fetching /me/statistics independently on every mount.
+  const [statistics,        setStatistics]        = useState(null);
+  const [statisticsLoading, setStatisticsLoading] = useState(false);
+
+  const refreshStatistics = useCallback(async (tokenOverride) => {
+    const tok = tokenOverride ?? token;
+    if (!tok) return;
+    try {
+      setStatisticsLoading(true);
+      const data = await getMyStatistics(tok);
+      setStatistics(data ?? null);
+    } catch (e) {
+      console.warn('refreshStatistics error:', e.message);
+    } finally {
+      setStatisticsLoading(false);
+    }
+  }, [token]);
+
+  // Fetch once when auth is ready and a token exists.
+  // Individual screens call refreshStatistics() when they need fresh data
+  // (e.g. after completing a quiz or flashcard session).
+  useEffect(() => {
+    if (authReady && token) refreshStatistics(token);
+  }, [authReady, token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Daily summary cache ───────────────────────────────────────────────────
+  const [dailySummary,        setDailySummary]        = useState(null);
+  const [dailySummaryLoading, setDailySummaryLoading] = useState(false);
+
+  const refreshDailySummary = useCallback(async (tokenOverride) => {
+    const tok = tokenOverride ?? token;
+    if (!tok) return;
+    try {
+      setDailySummaryLoading(true);
+      const data = await getMyDailySummary(tok).catch(() => null);
+      setDailySummary(data ?? null);
+    } catch (e) {
+      console.warn('refreshDailySummary error:', e.message);
+    } finally {
+      setDailySummaryLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (authReady && token) refreshDailySummary(token);
+  }, [authReady, token]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Backend topics ──────────────────────────────────────────────────────────
   const [topics,        setTopics]        = useState([]);
   const [topicsLoading, setTopicsLoading] = useState(false);
@@ -78,23 +130,60 @@ export function DataProvider({ children }) {
 
   useEffect(() => { loadTopics(); }, [loadTopics]);
 
-  // ── User-created decks — persisted to AsyncStorage ───────────────────────────
+  // ── User-created decks — persisted to AsyncStorage keyed by userId ──────────
   const [decks, setDecks] = useState([]);
 
+  // Reload decks whenever userId changes (login / logout / switch account)
   useEffect(() => {
-    AsyncStorage.getItem(DECKS_STORAGE_KEY)
-      .then((raw) => { if (raw) setDecks(JSON.parse(raw)); })
-      .catch(() => {});
-  }, []);
+    (async () => {
+      try {
+        const key = decksKey(userId);
 
-  const _persist = (updated) => {
-    AsyncStorage.setItem(DECKS_STORAGE_KEY, JSON.stringify(updated)).catch(() => {});
-  };
+        // One-time migration: fold the old global key into the current user's key
+        // so existing decks aren't lost after this upgrade.
+        const legacyRaw = await AsyncStorage.getItem(LEGACY_DECKS_KEY);
+        if (legacyRaw) {
+          let legacyDecks = [];
+          try { legacyDecks = JSON.parse(legacyRaw); } catch (_) {}
+          if (Array.isArray(legacyDecks) && legacyDecks.length > 0) {
+            // Merge legacy decks into current user's key (avoid duplicates by id)
+            const existingRaw = await AsyncStorage.getItem(key);
+            let existing = [];
+            try { existing = JSON.parse(existingRaw) || []; } catch (_) {}
+            for (const d of legacyDecks) {
+              if (!existing.find(e => e.id === d.id)) existing.push(d);
+            }
+            await AsyncStorage.setItem(key, JSON.stringify(existing));
+            await AsyncStorage.removeItem(LEGACY_DECKS_KEY);
+            setDecks(existing);
+            return;
+          }
+          // Legacy key was empty — just remove it
+          await AsyncStorage.removeItem(LEGACY_DECKS_KEY);
+        }
+
+        const raw = await AsyncStorage.getItem(key);
+        setDecks(raw ? JSON.parse(raw) : []);
+      } catch (e) {
+        console.warn('loadDecks error:', e);
+        setDecks([]);
+      }
+    })();
+  }, [userId]); // re-run on every userId change
+
+  const _persist = useCallback((updated) => {
+    AsyncStorage.setItem(decksKey(userId), JSON.stringify(updated)).catch(() => {});
+  }, [userId]);
+
+  /** Remove all local deck data for this user (call on account deletion / logout). */
+  const clearUserDecks = useCallback(async () => {
+    await AsyncStorage.removeItem(decksKey(userId)).catch(() => {});
+    setDecks([]);
+  }, [userId]);
 
   /**
    * Create a new deck.
    * Returns Promise<{ success, deck? }> or { success: false, error }.
-   * Rejects duplicate names (case-insensitive, trimmed).
    */
   const addDeck = useCallback((deck) => {
     const trimTitle = (deck.title || '').trim();
@@ -126,12 +215,10 @@ export function DataProvider({ children }) {
         return updated;
       });
     });
-  }, []);
+  }, [_persist]);
 
   /**
    * Full deck edit — replaces title + entire terms list atomically.
-   * Duplicate title check skips the deck being edited.
-   * Returns Promise<{ success }> or { success: false, error }.
    */
   const saveDeckEdit = useCallback((deckId, newTitle, newTerms) => {
     const trimTitle = (newTitle || '').trim();
@@ -143,7 +230,6 @@ export function DataProvider({ children }) {
           resolve({ success: false, error: `A deck named "${trimTitle}" already exists.` });
           return prev;
         }
-        // In-list duplicate term check
         const termSet = new Set();
         for (const t of newTerms) {
           const key = normalise(t.term);
@@ -169,7 +255,7 @@ export function DataProvider({ children }) {
         return updated;
       });
     });
-  }, []);
+  }, [_persist]);
 
   const updateDeckProgress = useCallback((deckId, currentWords, totalWords) => {
     setDecks((prev) => {
@@ -182,19 +268,17 @@ export function DataProvider({ children }) {
       _persist(updated);
       return updated;
     });
-  }, []);
+  }, [_persist]);
 
   const deleteDeck = useCallback((deckId) => {
     setDecks((prev) => {
-      const updated = prev.filter((d) => d.id !== deckId);
+      const updated = prev.filter((d) => String(d.id) !== String(deckId));
       _persist(updated);
       return updated;
     });
-  }, []);
+  }, [_persist]);
 
   // ── Starred Words ───────────────────────────────────────────────────────────
-  // starredWordIds: Set<number> — quick O(1) lookup for any screen
-  // starredWords: array of full word objects (for WordlistScreen)
   const [starredWordIds, setStarredWordIds] = useState(new Set());
   const [starredWords,   setStarredWords]   = useState([]);
   const [starredLoading, setStarredLoading] = useState(false);
@@ -213,7 +297,6 @@ export function DataProvider({ children }) {
     }
   }, []);
 
-  // Re-load whenever userId becomes available (after login / restore)
   useEffect(() => {
     if (userId) loadStarredWords(userId);
   }, [userId, loadStarredWords]);
@@ -221,7 +304,6 @@ export function DataProvider({ children }) {
   const toggleStar = useCallback(async (wordId) => {
     if (!userId) return;
     const isStarred = starredWordIds.has(wordId);
-    // Optimistic update
     setStarredWordIds(prev => {
       const next = new Set(prev);
       isStarred ? next.delete(wordId) : next.add(wordId);
@@ -236,7 +318,6 @@ export function DataProvider({ children }) {
         setStarredWords(prev => [record, ...prev]);
       }
     } catch (e) {
-      // Revert optimistic update on failure
       setStarredWordIds(prev => {
         const next = new Set(prev);
         isStarred ? next.add(wordId) : next.delete(wordId);
@@ -252,8 +333,10 @@ export function DataProvider({ children }) {
       currentUser, setCurrentUser,
       userId, setUserId,
       authReady,
+      statistics, statisticsLoading, refreshStatistics,
+      dailySummary, dailySummaryLoading, refreshDailySummary,
       topics, topicsLoading, topicsError, loadTopics,
-      decks, addDeck, saveDeckEdit, updateDeckProgress, deleteDeck,
+      decks, addDeck, saveDeckEdit, updateDeckProgress, deleteDeck, clearUserDecks,
       starredWordIds, starredWords, starredLoading, loadStarredWords, toggleStar,
     }}>
       {children}

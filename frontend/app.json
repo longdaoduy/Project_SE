@@ -7,7 +7,7 @@
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/brain.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -15,13 +15,20 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.logga.frontend",
       "adaptiveIcon": {
+        "foregroundImage": "./assets/brain.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "e5502222-5c1c-4ef1-bc14-4f223d2e4c3f"
+      }
     }
   }
 }

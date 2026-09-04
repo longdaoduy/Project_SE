@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import os
 import secrets
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
@@ -91,12 +92,15 @@ def list_words(
         return words
 
     # === LẤY TRẠNG THÁI ĐÃ HỌC TỪ BẢNG UserCardSRS ===
-    studied_records = (
+    # Scope theo topic_id nếu có để tránh load toàn bộ SRS records của user
+    q_srs = (
         db.query(models.UserCardSRS.word_id)
         .filter(models.UserCardSRS.user_id == user_id)
-        .all()
     )
-    
+    if topic_id is not None:
+        q_srs = q_srs.filter(models.UserCardSRS.topic_id == topic_id)
+    studied_records = q_srs.all()
+
     # Tạo một set chứa ID của các từ đã học để dò tìm cho nhanh
     studied_word_ids = {r.word_id for r in studied_records}
 
@@ -265,7 +269,20 @@ def change_user_password(db: Session, user: models.User, new_hashed_password: st
 
 
 def delete_user_account(db: Session, user: models.User) -> None:
-    """Permanently remove the user and all dependent records via ORM cascades."""
+    """Permanently remove the user and all dependent records.
+
+    UserCardSRS and DailyLearningLog have no ORM relationship defined on User,
+    so SQLAlchemy's cascade won't reach them automatically.  We delete those
+    rows explicitly first to avoid FK-constraint violations (or silent orphans
+    when FK enforcement is off).
+    """
+    uid = user.user_id
+    db.query(models.UserCardSRS).filter(models.UserCardSRS.user_id == uid).delete(
+        synchronize_session=False
+    )
+    db.query(models.DailyLearningLog).filter(models.DailyLearningLog.user_id == uid).delete(
+        synchronize_session=False
+    )
     db.delete(user)
     db.commit()
 
@@ -437,25 +454,52 @@ def list_learning_history(
 
 
 def get_weekly_activity(db: Session, user_id: int) -> list[dict]:
-    """Return exactly 7 days of activity data for the Profile weekly chart."""
-    today = datetime.now(timezone.utc).date()
+    """Return seven local-calendar days with unique words reviewed and study time."""
+    today = datetime.now(_app_timezone()).date()
     start = today - timedelta(days=6)
-    rows = (
-        db.query(models.LearningHistory)
-        .filter(
-            models.LearningHistory.user_id == user_id,
-            models.LearningHistory.completed_at >= datetime(
-                start.year, start.month, start.day, tzinfo=timezone.utc
-            ),
-        )
+    buckets = {
+        start + timedelta(days=i): {"activities": 0, "minutes": 0, "words": 0}
+        for i in range(7)
+    }
+
+    flashcards = (db.query(models.FlashcardSession)
+                  .filter(models.FlashcardSession.user_id == user_id,
+                          models.FlashcardSession.is_completed.is_(True)).all())
+    quizzes = (db.query(models.Quiz)
+               .filter(models.Quiz.user_id == user_id,
+                       models.Quiz.is_completed.is_(True)).all())
+    readings = (db.query(models.AIReading)
+                .filter(models.AIReading.user_id == user_id,
+                        models.AIReading.is_completed.is_(True)).all())
+    for item in [*flashcards, *quizzes, *readings]:
+        day = _activity_date(item.completed_at)
+        if day not in buckets:
+            continue
+        buckets[day]["activities"] += 1
+        if isinstance(item, models.AIReading):
+            seconds = max(0, int(item.completion_seconds or 0))
+        else:
+            started = _as_utc(item.started_at)
+            completed = _as_utc(item.completed_at)
+            seconds = max(0, int((completed - started).total_seconds())) if started and completed else 0
+        buckets[day]["minutes"] += round(seconds / 60)
+
+    reviewed_words = (
+        db.query(models.FlashcardProgress.word_id, models.FlashcardProgress.reviewed_at)
+        .join(models.FlashcardSession,
+              models.FlashcardProgress.session_id == models.FlashcardSession.session_id)
+        .filter(models.FlashcardSession.user_id == user_id,
+                models.FlashcardProgress.reviewed_at.isnot(None))
         .all()
     )
-    buckets = {start + timedelta(days=i): {"activities": 0, "minutes": 0} for i in range(7)}
-    for row in rows:
-        d = row.completed_at.date() if hasattr(row.completed_at, "date") else row.completed_at
-        if d in buckets:
-            buckets[d]["activities"] += 1
-            buckets[d]["minutes"] += int(row.duration or 0)
+    words_by_day: dict[date, set[int]] = {}
+    for word_id, reviewed_at in reviewed_words:
+        reviewed_date = _activity_date(reviewed_at)
+        if reviewed_date is not None:
+            words_by_day.setdefault(reviewed_date, set()).add(word_id)
+    for day, word_ids in words_by_day.items():
+        if day in buckets:
+            buckets[day]["words"] = len(word_ids)
     return [{"date": d.isoformat(), **buckets[d]} for d in sorted(buckets)]
 
 
@@ -465,6 +509,83 @@ def get_user_statistics(db: Session, user_id: int) -> models.UserStatistics | No
         .filter(models.UserStatistics.user_id == user_id)
         .first()
     )
+
+
+def _app_timezone() -> ZoneInfo:
+    try:
+        return ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh"))
+    except Exception:
+        return ZoneInfo("UTC")
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def _activity_date(value: datetime | None) -> date | None:
+    utc_value = _as_utc(value)
+    return utc_value.astimezone(_app_timezone()).date() if utc_value else None
+
+
+def refresh_user_statistics(db: Session, user_id: int) -> models.UserStatistics | None:
+    """Repair and rebuild profile metrics from completed activity records."""
+    stats = get_user_statistics(db, user_id)
+    if stats is None:
+        stats = models.UserStatistics(user_id=user_id)
+        db.add(stats)
+        db.flush()
+
+    flashcards = (db.query(models.FlashcardSession)
+                  .filter(models.FlashcardSession.user_id == user_id,
+                          models.FlashcardSession.is_completed.is_(True)).all())
+    quizzes = (db.query(models.Quiz)
+               .filter(models.Quiz.user_id == user_id,
+                       models.Quiz.is_completed.is_(True)).all())
+    readings = (db.query(models.AIReading)
+                .filter(models.AIReading.user_id == user_id,
+                        models.AIReading.is_completed.is_(True)).all())
+
+    stats.total_flashcards = len(flashcards)
+    stats.total_quizzes = len(quizzes)
+    stats.average_score = round(
+        sum(float(q.accuracy or 0) for q in quizzes) / len(quizzes), 2
+    ) if quizzes else 0.0
+    stats.total_words = int(
+        db.query(func.count(func.distinct(models.UserCardSRS.word_id)))
+        .filter(
+            models.UserCardSRS.user_id == user_id,
+            models.UserCardSRS.card_status.in_(["review", "learning"]),
+        )
+        .scalar() or 0
+    )
+
+    total_seconds = 0
+    for item in [*flashcards, *quizzes]:
+        started = _as_utc(item.started_at)
+        completed = _as_utc(item.completed_at)
+        if started and completed:
+            total_seconds += max(0, int((completed - started).total_seconds()))
+    total_seconds += sum(max(0, int(r.completion_seconds or 0)) for r in readings)
+    stats.study_hours = round(total_seconds / 3600, 2)
+
+    activity_dates = {
+        day for day in (
+            _activity_date(item.completed_at) for item in [*flashcards, *quizzes, *readings]
+        ) if day is not None
+    }
+    today = datetime.now(_app_timezone()).date()
+    cursor = today if today in activity_dates else today - timedelta(days=1)
+    streak = 0
+    while cursor in activity_dates:
+        streak += 1
+        cursor -= timedelta(days=1)
+    stats.current_streak = streak
+
+    db.commit()
+    db.refresh(stats)
+    return stats
 
 
 def _refresh_streak(db: Session, user_id: int, stats: models.UserStatistics) -> None:
@@ -628,6 +749,39 @@ def create_flashcard_progress(
     db.commit()
     db.refresh(progress)
     return progress
+
+
+def bulk_create_flashcard_progress(
+    db: Session, session_id: int, word_ids: list[int]
+) -> dict[int, int]:
+    """
+    Tạo FlashcardProgress cho nhiều word_ids trong 1 transaction.
+    Bỏ qua các word_id đã có progress trong session này (idempotent).
+    Trả về dict { word_id: progress_id }.
+    """
+    # Lấy các word_id đã tồn tại trong session
+    existing = (
+        db.query(models.FlashcardProgress.word_id, models.FlashcardProgress.progress_id)
+        .filter(models.FlashcardProgress.session_id == session_id)
+        .all()
+    )
+    result: dict[int, int] = {row.word_id: row.progress_id for row in existing}
+
+    # Chỉ insert các word_id chưa có
+    new_ids = [wid for wid in word_ids if wid not in result]
+    if new_ids:
+        new_records = [
+            models.FlashcardProgress(session_id=session_id, word_id=wid)
+            for wid in new_ids
+        ]
+        db.add_all(new_records)
+        db.flush()   # flush để lấy progress_id mà không cần commit từng cái
+        for rec in new_records:
+            db.refresh(rec)
+            result[rec.word_id] = rec.progress_id
+        db.commit()
+
+    return result
 
 
 def get_flashcard_progress(db: Session, progress_id: int) -> models.FlashcardProgress | None:
@@ -798,6 +952,19 @@ def get_or_create_srs(
     return srs, True
 
 
+def get_words_learned_today(db: Session, user_id: int) -> int:
+    """Count distinct words the user has rated for the first time today,
+    across ALL topics. This is the correct source for 'Today's goal' progress."""
+    return int(
+        db.query(func.count(models.DailyLearningLog.log_id))
+        .filter(
+            models.DailyLearningLog.user_id == user_id,
+            models.DailyLearningLog.learned_at == date.today(),
+        )
+        .scalar() or 0
+    )
+
+
 def _ensure_daily_log(
     db: Session, user_id: int, word_id: int, topic_id: int, today: date
 ) -> None:
@@ -851,57 +1018,99 @@ def apply_srs_rating(
 def get_daily_status(
     db: Session, user_id: int, topic_id: int
 ) -> dict:
-    """
-    Return daily learning stats for a (user, topic) pair.
+    """Return daily learning stats for a single (user, topic) pair.
 
-    'daily_learned' counts words the user has already rated today (DailyLearningLog).
-    Words that have a 'new' SRS record but haven't been rated yet are also counted
-    against the daily limit to avoid over-queuing.
+    Delegates to get_daily_status_bulk so the logic lives in one place.
     """
+    result = get_daily_status_bulk(db, user_id=user_id, topic_ids=[topic_id])
+    return result.get(topic_id, {
+        "topic_id": topic_id,
+        "daily_learned": 0,
+        "daily_limit": DAILY_NEW_LIMIT,
+        "daily_remaining": DAILY_NEW_LIMIT,
+        "due_review_count": 0,
+    })
+
+
+def get_daily_status_bulk(
+    db: Session, user_id: int, topic_ids: list[int]
+) -> dict[int, dict]:
+    """
+    Return daily learning stats for multiple (user, topic) pairs in **3 queries**
+    instead of 3×N queries, using GROUP BY on topic_id.
+
+    Returns a dict keyed by topic_id (int).
+    """
+    if not topic_ids:
+        return {}
+
     today = date.today()
+    now   = datetime.now(timezone.utc)
+    ids_set = set(topic_ids)
 
-    # Words actually rated today
-    learned_today = (
-        db.query(func.count(models.DailyLearningLog.log_id))
+    # ── Query 1: DailyLearningLog counts per topic ────────────────────────
+    learned_rows = (
+        db.query(
+            models.DailyLearningLog.topic_id,
+            func.count(models.DailyLearningLog.log_id).label("cnt"),
+        )
         .filter(
             models.DailyLearningLog.user_id == user_id,
-            models.DailyLearningLog.topic_id == topic_id,
+            models.DailyLearningLog.topic_id.in_(ids_set),
             models.DailyLearningLog.learned_at == today,
         )
-        .scalar() or 0
+        .group_by(models.DailyLearningLog.topic_id)
+        .all()
     )
+    learned_map: dict[int, int] = {row.topic_id: row.cnt for row in learned_rows}
 
-    # Words introduced but not yet rated (card_status='new' in SRS)
-    unrated_new_count = (
-        db.query(func.count(models.UserCardSRS.srs_id))
+    # ── Query 2: unrated 'new' SRS cards per topic ────────────────────────
+    unrated_rows = (
+        db.query(
+            models.UserCardSRS.topic_id,
+            func.count(models.UserCardSRS.srs_id).label("cnt"),
+        )
         .filter(
             models.UserCardSRS.user_id == user_id,
-            models.UserCardSRS.topic_id == topic_id,
+            models.UserCardSRS.topic_id.in_(ids_set),
             models.UserCardSRS.card_status == "new",
         )
-        .scalar() or 0
+        .group_by(models.UserCardSRS.topic_id)
+        .all()
     )
+    unrated_map: dict[int, int] = {row.topic_id: row.cnt for row in unrated_rows}
 
-    total_accounted = learned_today + unrated_new_count
-
-    now = datetime.now(timezone.utc)
-    due_review_count = (
-        db.query(func.count(models.UserCardSRS.srs_id))
+    # ── Query 3: due review/learning cards per topic ──────────────────────
+    due_rows = (
+        db.query(
+            models.UserCardSRS.topic_id,
+            func.count(models.UserCardSRS.srs_id).label("cnt"),
+        )
         .filter(
             models.UserCardSRS.user_id == user_id,
-            models.UserCardSRS.topic_id == topic_id,
+            models.UserCardSRS.topic_id.in_(ids_set),
             models.UserCardSRS.card_status.in_(["review", "learning"]),
             models.UserCardSRS.due_date <= now,
         )
-        .scalar() or 0
+        .group_by(models.UserCardSRS.topic_id)
+        .all()
     )
-    return {
-        "topic_id": topic_id,
-        "daily_learned": learned_today,
-        "daily_limit": DAILY_NEW_LIMIT,
-        "daily_remaining": max(0, DAILY_NEW_LIMIT - total_accounted),
-        "due_review_count": due_review_count,
-    }
+    due_map: dict[int, int] = {row.topic_id: row.cnt for row in due_rows}
+
+    # ── Assemble result for every requested topic ─────────────────────────
+    result: dict[int, dict] = {}
+    for tid in topic_ids:
+        learned   = learned_map.get(tid, 0)
+        unrated   = unrated_map.get(tid, 0)
+        due       = due_map.get(tid, 0)
+        result[tid] = {
+            "topic_id":         tid,
+            "daily_learned":    learned,
+            "daily_limit":      DAILY_NEW_LIMIT,
+            "daily_remaining":  max(0, DAILY_NEW_LIMIT - learned - unrated),
+            "due_review_count": due,
+        }
+    return result
 
 
 def build_session_queue(
@@ -1065,6 +1274,111 @@ def add_quiz_question(db: Session, payload: schemas.QuizQuestionCreate) -> model
     db.commit()
     db.refresh(question)
     return question
+
+
+def create_quiz_with_questions_bulk(
+    db: Session, payload: schemas.QuizBulkCreate
+) -> tuple[models.Quiz, list[models.QuizQuestion]]:
+    """Create quiz header + all questions in a single transaction."""
+    quiz = models.Quiz(
+        user_id=payload.user_id,
+        topic_id=payload.topic_id,
+        quiz_type=payload.quiz_type,
+        total_questions=len(payload.questions),
+    )
+    db.add(quiz)
+    db.flush()  # get quiz_id without committing
+
+    questions = []
+    for q in payload.questions:
+        question = models.QuizQuestion(
+            quiz_id=quiz.quiz_id,
+            word_id=q.word_id,
+            question_text=q.question_text,
+            option_a=q.option_a,
+            option_b=q.option_b,
+            option_c=q.option_c,
+            option_d=q.option_d,
+            correct_option=q.correct_option,
+        )
+        db.add(question)
+        questions.append(question)
+
+    db.commit()
+    db.refresh(quiz)
+    for q in questions:
+        db.refresh(q)
+    return quiz, questions
+
+
+def submit_all_answers_and_score(
+    db: Session, quiz: models.Quiz, answers: list[schemas.QuizBulkAnswerItem]
+) -> models.Quiz:
+    """Apply all answers at once then calculate score – replaces N×PATCH + POST /submit."""
+    if quiz.is_completed:
+        return quiz
+
+    # Index existing questions by question_id for O(1) lookup
+    questions = (
+        db.query(models.QuizQuestion)
+        .filter(models.QuizQuestion.quiz_id == quiz.quiz_id)
+        .all()
+    )
+    q_map = {q.question_id: q for q in questions}
+
+    now = datetime.now(timezone.utc)
+    for item in answers:
+        q = q_map.get(item.question_id)
+        if q is None:
+            continue
+        q.user_answer = item.user_answer
+        q.is_correct = item.user_answer == q.correct_option
+        q.answered_at = now
+
+    db.flush()
+
+    # Re-read from in-memory objects (already updated above)
+    correct = sum(1 for q in questions if q.is_correct)
+    total = len(questions)
+
+    quiz.score = float(correct)
+    quiz.accuracy = round((correct / total) * 100, 2) if total else 0.0
+    quiz.is_completed = True
+    quiz.completed_at = now
+    duration = _duration_minutes(quiz.started_at, quiz.completed_at)
+
+    _update_statistics_after_quiz(db, quiz.user_id, quiz.score, quiz.accuracy)
+    stats = get_user_statistics(db, quiz.user_id)
+    if stats and duration is not None:
+        stats.study_hours = round(stats.study_hours + duration / 60.0, 2)
+
+    db.commit()
+    db.refresh(quiz)
+    _ = quiz.questions  # eager-load while session open
+
+    try:
+        record_learning_history(
+            db,
+            user_id=quiz.user_id,
+            activity_type="Quiz",
+            activity_id=quiz.quiz_id,
+            score=quiz.score,
+            accuracy=quiz.accuracy,
+            duration=duration,
+        )
+    except Exception:
+        pass
+    return quiz
+
+
+def get_quiz_with_questions(db: Session, quiz_id: int) -> models.Quiz | None:
+    """Return quiz eagerly loaded with all its questions."""
+    return (
+        db.query(models.Quiz)
+        .options(joinedload(models.Quiz.questions))
+        .filter(models.Quiz.quiz_id == quiz_id)
+        .first()
+    )
 
 
 def get_quiz_question(db: Session, question_id: int) -> models.QuizQuestion | None:
@@ -1275,11 +1589,12 @@ def submit_ai_reading_with_answers(
     reading: models.AIReading,
     answers: dict[int, str],
     completion_seconds: int,
-    generate_explanations_fn,        # callable from seed_gemini
 ) -> models.AIReading:
     """
-    One-shot submit: record answers, score, generate explanations (first attempt only),
-    mark completed, write history.
+    One-shot submit: record answers, score, mark completed, write history.
+    Explanation generation is intentionally excluded — it is a slow AI call
+    that runs as a background task after this function returns so the user
+    sees results immediately.
     """
     if reading.is_completed:
         db.refresh(reading)
@@ -1299,7 +1614,7 @@ def submit_ai_reading_with_answers(
             q.user_answer = ans
             q.is_correct = ans == q.correct_option
 
-    # 2. Score
+    # 2. Score + mark complete
     correct = sum(1 for q in questions if q.is_correct)
     total = len(questions)
     reading.score = float(correct)
@@ -1307,30 +1622,8 @@ def submit_ai_reading_with_answers(
     reading.is_completed = True
     reading.completion_seconds = min(completion_seconds, reading.time_limit_seconds)
     reading.completed_at = datetime.now(timezone.utc)
-    db.flush()
 
-    # 3. Generate explanations (only when not already present – covers first attempt)
-    needs_explanation = [q for q in questions if not q.explanation]
-    if needs_explanation:
-        try:
-            q_dicts = [
-                {
-                    "question_text": q.question_text,
-                    "option_a": q.option_a,
-                    "option_b": q.option_b,
-                    "option_c": q.option_c,
-                    "option_d": q.option_d,
-                    "correct_option": q.correct_option,
-                }
-                for q in needs_explanation
-            ]
-            explanations = generate_explanations_fn(reading.generated_passage, q_dicts)
-            for q, expl in zip(needs_explanation, explanations):
-                q.explanation = expl
-        except Exception as exc:
-            print(f"⚠️  Explanation generation failed: {exc}")
-
-    # 4. Stats + history
+    # 3. Stats + history
     _update_statistics_after_reading(db, reading.user_id, reading.accuracy)
     db.commit()
     db.refresh(reading)
@@ -1348,6 +1641,57 @@ def submit_ai_reading_with_answers(
     except Exception:
         pass
     return reading
+
+
+def backfill_explanations(
+    reading_id: int,
+    generate_explanations_fn,
+) -> None:
+    """
+    Generate and persist explanation text for every question that still lacks one.
+    Runs AFTER the submit response has been returned to the client so it does not
+    block the user-facing latency.  Uses its own DB session so it is safe to call
+    from a background thread / FastAPI BackgroundTask.
+    """
+    from .database import SessionLocal  # local import avoids circular deps
+    db = SessionLocal()
+    try:
+        reading = (
+            db.query(models.AIReading)
+            .filter(models.AIReading.reading_id == reading_id)
+            .first()
+        )
+        if not reading:
+            return
+
+        questions = (
+            db.query(models.AIReadingQuestion)
+            .filter(models.AIReadingQuestion.reading_id == reading_id)
+            .all()
+        )
+        needs_explanation = [q for q in questions if not q.explanation]
+        if not needs_explanation:
+            return
+
+        q_dicts = [
+            {
+                "question_text": q.question_text,
+                "option_a": q.option_a,
+                "option_b": q.option_b,
+                "option_c": q.option_c,
+                "option_d": q.option_d,
+                "correct_option": q.correct_option,
+            }
+            for q in needs_explanation
+        ]
+        explanations = generate_explanations_fn(reading.generated_passage, q_dicts)
+        for q, expl in zip(needs_explanation, explanations):
+            q.explanation = expl
+        db.commit()
+    except Exception as exc:
+        print(f"⚠️  backfill_explanations failed for reading {reading_id}: {exc}")
+    finally:
+        db.close()
 
 
 def retake_ai_reading(

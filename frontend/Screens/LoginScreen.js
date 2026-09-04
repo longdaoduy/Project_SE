@@ -25,11 +25,15 @@ export default function LoginScreen({ navigation }) {
     const [showPassword, setShowPassword] = useState(false);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [loginError, setLoginError] = useState('');
+    const [loading, setLoading] = useState(false);
     const { setToken, setCurrentUser, setUserId } = useData();
 
     // Hàm để xử lý khi người dùng nhấn vào nút đăng nhập
     const handleLogin = async () => {
+        setLoginError('');
         try {
+            setLoading(true);
             const response = await loginUser({
                 email,
                 password,
@@ -50,7 +54,21 @@ export default function LoginScreen({ navigation }) {
                 routes: [{ name: 'Home' }], // Chuyển hướng đến màn hình Home sau khi đăng nhập thành công
             });
         } catch (error) {
-            Alert.alert('Login failed', error.message || 'Cannot login');
+            const status = error.statusCode;
+            let msg;
+            if (status === 401) {
+                msg = 'No account found with this email, or the password is incorrect.';
+            } else if (status === 403) {
+                msg = 'Your email has not been verified yet. Please check your inbox and verify before logging in.';
+            } else if (status === 422) {
+                msg = 'Please enter a valid email address.';
+            } else {
+                msg = error.message || 'Cannot login. Please try again later.';
+            }
+            setLoginError(msg);
+            Alert.alert('Login failed', msg);
+        } finally {
+            setLoading(false);
         }
     }
 
@@ -111,7 +129,7 @@ export default function LoginScreen({ navigation }) {
                                     placeholder="Enter your email"
                                     keyboardType="email-address"
                                     value={email}
-                                    onChangeText={setEmail}
+                                    onChangeText={v => { setEmail(v); setLoginError(''); }}
                                 />
 
                             </View>
@@ -126,7 +144,7 @@ export default function LoginScreen({ navigation }) {
                                     placeholder="Enter your password"
                                     secureTextEntry={!showPassword}
                                     value={password}
-                                    onChangeText={setPassword}
+                                    onChangeText={v => { setPassword(v); setLoginError(''); }}
                                 />
 
                                 {/*Icon mắt để hiển thị mật khẩu*/}
@@ -145,9 +163,21 @@ export default function LoginScreen({ navigation }) {
                             <Text style={styles.forgotPassword}>Forgot Password?</Text>
                         </TouchableOpacity>
 
+                        {/* Error message box */}
+                        {!!loginError && (
+                            <View style={styles.errorBox}>
+                                <Ionicons name="alert-circle-outline" size={16} color="#b91c1c" style={{ marginRight: 6, flexShrink: 0 }} />
+                                <Text style={styles.errorText}>{loginError}</Text>
+                            </View>
+                        )}
+
                         {/* Nút đăng nhập */}
-                        <TouchableOpacity style={styles.loginButton} onPress={handleLogin}>
-                            <Text style={styles.loginButtonText}>Sign in</Text>
+                        <TouchableOpacity
+                            style={[styles.loginButton, loading && { opacity: 0.7 }]}
+                            onPress={handleLogin}
+                            disabled={loading}
+                        >
+                            <Text style={styles.loginButtonText}>{loading ? 'Signing in…' : 'Sign in'}</Text>
                         </TouchableOpacity>
 
 
@@ -364,6 +394,25 @@ const styles = StyleSheet.create({
         marginTop: 10,
         width: '100%',
         alignItems: 'center',
+    },
+
+    errorBox: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        backgroundColor: '#fef2f2',
+        borderWidth: 1,
+        borderColor: '#fecaca',
+        borderRadius: 10,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        marginTop: 12,
+        width: '100%',
+    },
+    errorText: {
+        color: '#b91c1c',
+        fontSize: 13,
+        flex: 1,
+        lineHeight: 18,
     },
 
     loginButtonText: {

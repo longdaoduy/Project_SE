@@ -15,13 +15,16 @@ import {
 
 import { AntDesign } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { getMe, getMyStatistics } from '../api';
 import { useData } from '../context/DataContext';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 export default function HomeScreen({ navigation }) {
-    const { token, currentUser, authReady } = useData();
+    const {
+        token, currentUser, authReady,
+        statistics, statisticsLoading, refreshStatistics,
+        dailySummary, refreshDailySummary,
+    } = useData();
 
     const [userData, setUserData] = useState({
         name: '—',
@@ -38,48 +41,46 @@ export default function HomeScreen({ navigation }) {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState('');
 
+    // Derive display data from cached context values — no extra network calls
     useEffect(() => {
-        const loadHomeData = async () => {
-            if (!authReady) return;
+        if (!authReady) return;
+        if (!currentUser && !statistics) {
+            setIsLoading(false);
+            return;
+        }
 
-            if (!token && !currentUser) {
-                setIsLoading(false);
-                return;
+        const totalXp      = statistics?.total_xp      ?? 0;
+        const totalWords   = statistics?.total_words    ?? 0;
+        const streak       = statistics?.current_streak ?? 0;
+        const wordsToday   = dailySummary?.words_learned_today ?? 0;
+        const dailyTarget  = dailySummary?.daily_goal ?? currentUser?.daily_goal ?? 0;
+
+        setUserData({
+            name: currentUser?.full_name || '—',
+            streak,
+            level: currentUser?.english_level || '—',
+            xp: totalXp,
+            wordlearned: totalWords,
+            dailyGoal: {
+                current: wordsToday,
+                target: dailyTarget,
+            },
+        });
+        setIsLoading(statisticsLoading);
+        setError('');
+    }, [authReady, currentUser, statistics, statisticsLoading, dailySummary]);
+
+    // Refresh stats + daily summary whenever the screen comes back into focus
+    // (e.g. user finishes flashcards and navigates back to Home)
+    useEffect(() => {
+        const unsub = navigation.addListener('focus', () => {
+            if (authReady && token) {
+                refreshStatistics();
+                refreshDailySummary();
             }
-
-            try {
-                setIsLoading(true);
-                setError('');
-
-                const [me, stats] = await Promise.all([
-                    token ? getMe(token) : Promise.resolve(currentUser),
-                    token ? getMyStatistics(token) : Promise.resolve(null),
-                ]);
-
-                const totalXp = stats?.total_xp ?? 0;
-                const totalWords = stats?.total_words ?? 0;
-                const streak = stats?.current_streak ?? 0;
-
-                setUserData({
-                    name: me?.full_name || me?.username || '—',
-                    streak,
-                    level: me?.english_level || '—',
-                    xp: totalXp,
-                    wordlearned: totalWords,
-                    dailyGoal: {
-                        current: Math.min(totalWords, me?.daily_goal ?? 0),
-                        target: me?.daily_goal ?? 0,
-                    },
-                });
-            } catch (e) {
-                setError(e.message || 'Could not load user data');
-            } finally {
-                setIsLoading(false);
-            }
-        };
-
-        loadHomeData();
-    }, [authReady, currentUser, token]);
+        });
+        return unsub;
+    }, [navigation, authReady, token, refreshStatistics, refreshDailySummary]);
 
     const wordRemaining = Math.max(userData.dailyGoal.target - userData.dailyGoal.current, 0);
     const goalProgress = userData.dailyGoal.target > 0

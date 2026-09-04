@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Dimensions,
   Image,
+  Modal,
   Platform,
   ScrollView,
   StatusBar,
@@ -85,7 +87,9 @@ import { useData } from '../context/DataContext';
 
 const { width: screenWidth } = Dimensions.get('window');
 
-// Difficulty → time limit in seconds (must match backend defaults)
+// Difficulty → time limit in seconds — used as preview BEFORE server responds.
+// The authoritative value always comes from reading.time_limit_seconds in the API
+// response; this map is only a fallback when that field is missing.
 const DIFFICULTY_TIME = { A1: 600, A2: 600, B1: 720, B2: 900, C1: 1080, C2: 1200 };
 const DEFAULT_TIME = 600;
 
@@ -114,7 +118,7 @@ function formatTime(seconds) {
 }
 
 export default function AIReadingScreen({ navigation, route }) {
-  const { userId, topics, topicsLoading, loadTopics } = useData();
+  const { userId, topics, topicsLoading, loadTopics, decks } = useData();
 
   // Route params injected when launched from a deck card
   const presetDeckTitle = route?.params?.presetDeckTitle || null;
@@ -136,6 +140,14 @@ export default function AIReadingScreen({ navigation, route }) {
   const [topicWords, setTopicWords]             = useState([]);   // words loaded from selected topic
   const [manualInput, setManualInput]           = useState(presetVocab || '');   // pre-filled from deck
   const [loadingWords, setLoadingWords]         = useState(false);
+
+  // Deck/topic dropdown modal
+  const [deckPickerVisible, setDeckPickerVisible]   = useState(false);
+  const [deckPickerSearch, setDeckPickerSearch]     = useState('');
+  // Label shown on the selector button — null means nothing selected yet
+  const [selectedSourceLabel, setSelectedSourceLabel] = useState(
+    presetDeckTitle ? `📋 ${presetDeckTitle}` : null
+  );
 
   // Active reading
   const [currentReading, setCurrentReading]     = useState(null);
@@ -260,6 +272,36 @@ export default function AIReadingScreen({ navigation, route }) {
     }
   }, [quickTopicId]);
 
+  // Called when user picks a topic OR a user-created deck from the modal
+  const handleDeckPickerSelect = useCallback(async (item) => {
+    setDeckPickerVisible(false);
+    setDeckPickerSearch('');
+    setScreenError('');
+
+    if (item.type === 'topic') {
+      setSelectedSourceLabel(`📚 ${item.topic_name}`);
+      setManualInput('');
+      setQuickTopicId(item.topic_id);
+      setTopicWords([]);
+      try {
+        setLoadingWords(true);
+        const words = await getWords(item.topic_id, 30);
+        setTopicWords(words || []);
+      } catch (e) {
+        setScreenError(e.message || 'Could not load topic words');
+      } finally {
+        setLoadingWords(false);
+      }
+    } else {
+      // user-created deck
+      const vocab = (item.terms || []).map(t => t.term.trim()).filter(Boolean).join(', ');
+      setSelectedSourceLabel(`📋 ${item.title}`);
+      setQuickTopicId(null);
+      setTopicWords([]);
+      setManualInput(vocab);
+    }
+  }, []);
+
   const handleGenerate = useCallback(async () => {
     // Build vocabulary: topic words first, then any manually entered words
     const topicVocab  = topicWords.map(w => w.word);
@@ -293,7 +335,9 @@ export default function AIReadingScreen({ navigation, route }) {
       setGenerating(true);
       setScreenError('');
       const reading = await generateAIReading(userId, vocab, null, difficultyParam || null);
-      const limit = DIFFICULTY_TIME[difficultyParam] || reading.time_limit_seconds || DEFAULT_TIME;
+      // Prefer the authoritative time_limit_seconds from the server response.
+      // Fall back to the local map only if the server field is missing/zero.
+      const limit = reading.time_limit_seconds || DIFFICULTY_TIME[difficultyParam] || DEFAULT_TIME;
 
       setCurrentReading(reading);
       setSelectedAnswers({});
@@ -369,10 +413,12 @@ export default function AIReadingScreen({ navigation, route }) {
         selectedAnswers,
         elapsed,
       );
+      // Show result immediately — don't wait for history to reload
       setCurrentReading(scored);
       setResultReading(scored);
       setViewState('result');
-      await loadHistory();
+      // Refresh history in the background so it's ready when user navigates back
+      loadHistory().catch(() => {});
     } catch (e) {
       setScreenError(e.message || 'Submit failed');
     } finally {
@@ -413,10 +459,88 @@ export default function AIReadingScreen({ navigation, route }) {
   }, [stopTimer]);
 
   const handleBackToHistory = useCallback(() => {
+    if (viewState === 'test') {
+      // Pause timer while dialog is open
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      Alert.alert(
+        'Leave test?',
+        'Your answers and remaining time will be saved. You can resume from History.',
+        [
+          {
+            text: 'Stay',
+            style: 'cancel',
+            onPress: () => {
+              // Resume timer
+              if (timerActive && timeLeft > 0) {
+                timerRef.current = setInterval(() => {
+                  setTimeLeft(prev => {
+                    if (prev <= 1) {
+                      clearInterval(timerRef.current);
+                      timerRef.current = null;
+                      setTimerActive(false);
+                      autoSubmitRef.current = true;
+                      return 0;
+                    }
+                    elapsedRef.current += 1;
+                    return prev - 1;
+                  });
+                }, 1000);
+              }
+            },
+          },
+          {
+            text: 'Leave',
+            style: 'destructive',
+            onPress: () => {
+              stopTimer();
+              setViewState('history');
+              setScreenError('');
+            },
+          },
+        ]
+      );
+      return;
+    }
     stopTimer();
     setViewState('history');
     setScreenError('');
-  }, [stopTimer]);
+  }, [viewState, timerActive, timeLeft, stopTimer]);
+
+  // Pause/stop timer when screen loses focus (user navigates away via bottom nav etc.)
+  useEffect(() => {
+    const unsub = navigation.addListener('blur', () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    });
+    return unsub;
+  }, [navigation]);
+
+  // Resume timer when screen regains focus and test is still in progress
+  useEffect(() => {
+    const unsub = navigation.addListener('focus', () => {
+      if (timerActive && !timerRef.current && timeLeft > 0) {
+        timerRef.current = setInterval(() => {
+          setTimeLeft(prev => {
+            if (prev <= 1) {
+              clearInterval(timerRef.current);
+              timerRef.current = null;
+              setTimerActive(false);
+              autoSubmitRef.current = true;
+              return 0;
+            }
+            elapsedRef.current += 1;
+            return prev - 1;
+          });
+        }, 1000);
+      }
+    });
+    return unsub;
+  }, [navigation, timerActive, timeLeft]);
 
   // Timer urgency color
   const timerColor = timeLeft <= 60 ? '#ef4444' : timeLeft <= 180 ? '#f97316' : '#22c55e';
@@ -667,30 +791,22 @@ export default function AIReadingScreen({ navigation, route }) {
                   </Text>
                 </View>
 
-                {/* ── Topic picker ── */}
-                <Text style={[styles.fieldLabel, { marginTop: 18 }]}>TOPIC (loads vocabulary automatically)</Text>
-                {topicsLoading ? (
-                  <ActivityIndicator color="#5b4feb" style={{ marginVertical: 8 }} />
-                ) : (
-                  <View style={styles.chipRow}>
-                    {topics.slice(0, 16).map(topic => (
-                      <TouchableOpacity
-                        key={topic.topic_id}
-                        style={[styles.chip, quickTopicId === topic.topic_id && styles.chipActive]}
-                        onPress={() => handleTopicSelect(topic.topic_id)}
-                      >
-                        <Ionicons
-                          name="document-text"
-                          size={13}
-                          color={quickTopicId === topic.topic_id ? '#ffffff' : '#1e293b'}
-                        />
-                        <Text style={[styles.chipText, quickTopicId === topic.topic_id && styles.chipTextActive]}>
-                          {topic.topic_name}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                )}
+                {/* ── Deck / Topic selector ── */}
+                <Text style={[styles.fieldLabel, { marginTop: 18 }]}>VOCABULARY SOURCE</Text>
+                <TouchableOpacity
+                  style={styles.deckPickerBtn}
+                  activeOpacity={0.8}
+                  onPress={() => { setDeckPickerSearch(''); setDeckPickerVisible(true); }}
+                >
+                  <Ionicons name="albums-outline" size={16} color={selectedSourceLabel ? '#4f46e5' : '#94a3b8'} />
+                  <Text
+                    style={[styles.deckPickerBtnText, selectedSourceLabel && styles.deckPickerBtnTextActive]}
+                    numberOfLines={1}
+                  >
+                    {selectedSourceLabel || 'Select a topic or your deck…'}
+                  </Text>
+                  <Ionicons name="chevron-down" size={16} color="#94a3b8" />
+                </TouchableOpacity>
 
                 {/* ── Vocabulary preview from topic ── */}
                 {loadingWords && (
@@ -777,13 +893,33 @@ export default function AIReadingScreen({ navigation, route }) {
           {/* ── TEST VIEW ─────────────────────────────────────────────── */}
           {viewState === 'test' && currentReading && (
             <View style={{ flex: 1, width: '100%' }}>
+              {/* No questions fallback — let the user escape */}
+              {(currentReading.comprehension_questions || []).length === 0 && (
+                <View style={styles.noQuestionsBox}>
+                  <Ionicons name="warning-outline" size={36} color="#f97316" style={{ marginBottom: 10 }} />
+                  <Text style={styles.noQuestionsTitle}>Questions could not be generated</Text>
+                  <Text style={styles.noQuestionsText}>
+                    The AI failed to produce questions for this passage. Please go back and try generating a new test.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.noQuestionsBackBtn}
+                    onPress={() => { stopTimer(); setViewState('history'); setScreenError(''); }}
+                  >
+                    <Ionicons name="arrow-back" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                    <Text style={styles.noQuestionsBackBtnText}>Back to History</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
               {/* Timer bar */}
+              {(currentReading.comprehension_questions || []).length > 0 && (
               <View style={styles.timerBar}>
                 <View style={[styles.timerBarFill, {
                   width: `${(timeLeft / (currentReading.time_limit_seconds || DEFAULT_TIME)) * 100}%`,
                   backgroundColor: timerColor,
                 }]} />
               </View>
+              )}
 
               <ScrollView contentContainerStyle={styles.scrollContentResult} showsVerticalScrollIndicator={false}>
                 {/* Passage */}
@@ -976,7 +1112,8 @@ export default function AIReadingScreen({ navigation, route }) {
 
         </View>{/* end whiteCardContainer */}
 
-        {/* ── Bottom nav ──────────────────────────────────────────────── */}
+        {/* ── Bottom nav — hidden during active test to prevent navigation away ── */}
+        {viewState !== 'test' && (
         <View style={styles.quickNavContainer}>
           {[
             { icon: 'home',              label: 'Home',    screen: 'Home' },
@@ -1001,7 +1138,119 @@ export default function AIReadingScreen({ navigation, route }) {
             </TouchableOpacity>
           ))}
         </View>
+        )}
       </LinearGradient>
+
+      {/* ── Deck / Topic picker modal ─────────────────────────────────── */}
+      <Modal
+        visible={deckPickerVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setDeckPickerVisible(false)}
+      >
+        {/* On web: centre the sheet inside the phone frame. On native: sheet slides up from bottom. */}
+        <View style={styles.pickerOverlay}>
+          <View style={Platform.OS === 'web' ? styles.pickerWebWrapper : null}>
+            <View style={styles.pickerSheet}>
+            {/* Header */}
+            <View style={styles.pickerHeader}>
+              <Text style={styles.pickerTitle}>Choose Vocabulary Source</Text>
+              <TouchableOpacity onPress={() => setDeckPickerVisible(false)} style={styles.pickerCloseBtn}>
+                <Ionicons name="close" size={20} color="#475569" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Search */}
+            <View style={styles.pickerSearchRow}>
+              <Ionicons name="search-outline" size={15} color="#94a3b8" />
+              <TextInput
+                style={styles.pickerSearchInput}
+                placeholder="Search decks or topics…"
+                placeholderTextColor="#94a3b8"
+                value={deckPickerSearch}
+                onChangeText={setDeckPickerSearch}
+                autoFocus={false}
+              />
+              {deckPickerSearch.length > 0 && (
+                <TouchableOpacity onPress={() => setDeckPickerSearch('')}>
+                  <Ionicons name="close-circle" size={15} color="#94a3b8" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <ScrollView style={styles.pickerList} showsVerticalScrollIndicator={false}>
+              {/* ── Your Decks ── */}
+              {decks.filter(d =>
+                !deckPickerSearch.trim() ||
+                d.title.toLowerCase().includes(deckPickerSearch.toLowerCase())
+              ).length > 0 && (
+                <Text style={styles.pickerSectionLabel}>YOUR DECKS</Text>
+              )}
+              {decks
+                .filter(d =>
+                  !deckPickerSearch.trim() ||
+                  d.title.toLowerCase().includes(deckPickerSearch.toLowerCase())
+                )
+                .map(deck => (
+                  <TouchableOpacity
+                    key={deck.id}
+                    style={styles.pickerItem}
+                    activeOpacity={0.75}
+                    onPress={() => handleDeckPickerSelect({ ...deck, type: 'deck' })}
+                  >
+                    <View style={styles.pickerItemIcon}>
+                      <Ionicons name="clipboard-outline" size={16} color="#4f46e5" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.pickerItemTitle} numberOfLines={1}>{deck.title}</Text>
+                      <Text style={styles.pickerItemSub}>{(deck.terms || []).length} words</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={16} color="#cbd5e1" />
+                  </TouchableOpacity>
+                ))
+              }
+
+              {/* ── Backend Topics ── */}
+              {(topicsLoading ? (
+                <ActivityIndicator color="#5b4feb" style={{ marginVertical: 12 }} />
+              ) : (
+                <>
+                  {topics.filter(t =>
+                    !deckPickerSearch.trim() ||
+                    t.topic_name.toLowerCase().includes(deckPickerSearch.toLowerCase())
+                  ).length > 0 && (
+                    <Text style={styles.pickerSectionLabel}>TOPICS (30 words each)</Text>
+                  )}
+                  {topics
+                    .filter(t =>
+                      !deckPickerSearch.trim() ||
+                      t.topic_name.toLowerCase().includes(deckPickerSearch.toLowerCase())
+                    )
+                    .map(topic => (
+                      <TouchableOpacity
+                        key={topic.topic_id}
+                        style={styles.pickerItem}
+                        activeOpacity={0.75}
+                        onPress={() => handleDeckPickerSelect({ ...topic, type: 'topic' })}
+                      >
+                        <View style={[styles.pickerItemIcon, { backgroundColor: '#ede9fe' }]}>
+                          <Ionicons name="albums-outline" size={16} color="#7c3aed" />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.pickerItemTitle} numberOfLines={1}>{topic.topic_name}</Text>
+                          <Text style={styles.pickerItemSub}>30 vocabulary words</Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={16} color="#cbd5e1" />
+                      </TouchableOpacity>
+                    ))
+                  }
+                </>
+              ))}
+            </ScrollView>
+          </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1096,6 +1345,25 @@ Object.assign(styles, StyleSheet.create({
 
   // Retake button
   retakeBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#0f172a', borderRadius: 16, paddingVertical: 15, marginBottom: 10 },
+
+  // No-questions fallback box
+  noQuestionsBox: {
+    margin: 20,
+    padding: 24,
+    backgroundColor: '#fff7ed',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#fed7aa',
+    alignItems: 'center',
+  },
+  noQuestionsTitle: { fontSize: 16, fontWeight: '700', color: '#c2410c', marginBottom: 8, textAlign: 'center' },
+  noQuestionsText:  { fontSize: 13, color: '#78350f', textAlign: 'center', lineHeight: 20, marginBottom: 16 },
+  noQuestionsBackBtn: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#f97316', paddingVertical: 10, paddingHorizontal: 20,
+    borderRadius: 10,
+  },
+  noQuestionsBackBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 14 },
 
   // Timer progress bar (top of test view)
   timerBar: { height: 4, width: '100%', backgroundColor: '#e2e8f0' },
@@ -1211,4 +1479,42 @@ Object.assign(styles, StyleSheet.create({
   deckSourceBanner: { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: '#ede9fe', borderRadius: 12, padding: 12, marginBottom: 16, borderWidth: 1.5, borderColor: '#c4b5fd' },
   deckSourceTitle: { fontSize: 13, fontWeight: '700', color: '#4f46e5', marginBottom: 3 },
   deckSourceSub: { fontSize: 11, color: '#6d28d9', lineHeight: 16 },
+
+  // Deck / Topic picker dropdown button
+  deckPickerBtn: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#f8fafc', borderRadius: 14, borderWidth: 1.5, borderColor: '#e2e8f0', paddingVertical: 13, paddingHorizontal: 14, marginBottom: 4 },
+  deckPickerBtnText: { flex: 1, fontSize: 14, color: '#94a3b8', fontWeight: '500' },
+  deckPickerBtnTextActive: { color: '#1e293b', fontWeight: '600' },
+
+  // Picker modal
+  pickerOverlay: {
+    flex: 1,
+    backgroundColor: 'transparent',
+    justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end',
+    alignItems: Platform.OS === 'web' ? 'center' : 'stretch',
+  },
+  // Web only: constrain the sheet to the phone frame width and clip it
+  pickerWebWrapper: {
+    width: 400,
+    maxHeight: 640,
+    borderRadius: 24,
+    overflow: 'hidden',
+  },
+  pickerSheet: {
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 8,
+    maxHeight: Platform.OS === 'web' ? 640 : '80%',
+  },
+  pickerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderColor: '#f1f5f9' },
+  pickerTitle: { fontSize: 16, fontWeight: '700', color: '#0f172a' },
+  pickerCloseBtn: { width: 32, height: 32, borderRadius: 10, backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' },
+  pickerSearchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 16, marginVertical: 10, backgroundColor: '#f8fafc', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', paddingHorizontal: 12, paddingVertical: 9 },
+  pickerSearchInput: { flex: 1, fontSize: 14, color: '#1e293b' },
+  pickerList: { paddingHorizontal: 16, paddingBottom: 32 },
+  pickerSectionLabel: { fontSize: 11, fontWeight: '700', color: '#94a3b8', letterSpacing: 1, marginTop: 12, marginBottom: 6 },
+  pickerItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderColor: '#f1f5f9' },
+  pickerItemIcon: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#ede9fe', alignItems: 'center', justifyContent: 'center' },
+  pickerItemTitle: { fontSize: 14, fontWeight: '600', color: '#1e293b' },
+  pickerItemSub: { fontSize: 12, color: '#94a3b8', marginTop: 2 },
 }));

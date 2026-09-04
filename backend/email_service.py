@@ -5,6 +5,45 @@ import smtplib
 from email.message import EmailMessage
 from email.utils import formataddr
 
+try:
+    import dns.resolver as _dns_resolver
+    _DNS_AVAILABLE = True
+except ImportError:
+    _DNS_AVAILABLE = False
+
+
+def validate_email_domain(email: str) -> None:
+    """Raise ValueError if the email domain has no MX (or A) record.
+
+    This is a best-effort check — it rejects obviously fake domains
+    (e.g. 'abc@notadomainthatexists.xyz') early, before we attempt
+    SMTP delivery and create a zombie account.
+
+    Falls back silently if dnspython is not installed or DNS times out,
+    so SMTP is still attempted in those edge cases.
+    """
+    if not _DNS_AVAILABLE:
+        return
+    domain = email.split('@')[-1].lower()
+    try:
+        # Try MX first, then fall back to A record (some small providers skip MX)
+        try:
+            answers = _dns_resolver.resolve(domain, 'MX', lifetime=5)
+            if not answers:
+                raise ValueError(f"The email domain '{domain}' does not appear to exist.")
+        except (_dns_resolver.NXDOMAIN, _dns_resolver.NoAnswer):
+            # No MX — check A record as fallback
+            try:
+                _dns_resolver.resolve(domain, 'A', lifetime=5)
+            except (_dns_resolver.NXDOMAIN, _dns_resolver.NoAnswer):
+                raise ValueError(f"The email domain '{domain}' does not appear to exist.")
+    except ValueError:
+        raise
+    except Exception:
+        # DNS timeout, network error, etc. — don't block registration
+        pass
+
+
 
 def send_verification_email(to_email: str, full_name: str, code: str) -> None:
     host = os.getenv("SMTP_HOST", "").strip()

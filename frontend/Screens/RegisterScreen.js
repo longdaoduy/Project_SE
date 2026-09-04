@@ -15,7 +15,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { loginUser, registerUser, resendVerification, verifyEmail } from '../api';
+import { loginUser, registerUser, resendVerification, verifyEmail, checkEmailExists } from '../api';
 import { useData } from '../context/DataContext';
 
 const LEVELS = [
@@ -43,6 +43,10 @@ export default function RegisterScreen({ navigation }) {
     const [step, setStep] = useState(1); // 1 | 2 | 3 | 4 (email verification)
     const [loading, setLoading] = useState(false);
     const [verificationCode, setVerificationCode] = useState('');
+
+    // Step 1 inline errors
+    const [step1Error, setStep1Error] = useState('');
+    const [emailChecking, setEmailChecking] = useState(false);
 
     // Hiện/ẩn mật khẩu
     const [showPassword, setShowPassword] = useState(false);
@@ -77,16 +81,35 @@ export default function RegisterScreen({ navigation }) {
     };
 
     // --- Nút Chuyển Bước / Submit ---
-    const handleNext = () => {
+    const handleNext = async () => {
         if (step === 1) {
             if (!formData.username || !formData.email || !formData.password) {
-                Alert.alert('Lỗi', 'Vui lòng điền đầy đủ thông tin');
+                setStep1Error('Please fill in all fields.');
                 return;
             }
             if (formData.password !== formData.confirmPassword) {
-                Alert.alert('Lỗi', 'Mật khẩu xác nhận không trùng khớp');
+                setStep1Error('Passwords do not match.');
                 return;
             }
+            if (formData.password.length < 6) {
+                setStep1Error('Password must be at least 6 characters.');
+                return;
+            }
+            // Check duplicate email before moving on
+            try {
+                setEmailChecking(true);
+                const { exists } = await checkEmailExists(formData.email);
+                if (exists) {
+                    setStep1Error('This email is already registered. Please log in or use a different email.');
+                    return;
+                }
+            } catch (_) {
+                // If the check fails (e.g. network), still allow proceeding —
+                // the server will reject duplicates at final registration anyway.
+            } finally {
+                setEmailChecking(false);
+            }
+            setStep1Error('');
             setStep(2);
         } else if (step === 2) {
             setStep(3);
@@ -124,7 +147,20 @@ export default function RegisterScreen({ navigation }) {
             setStep(4);
             Alert.alert('Check your email', `We sent a 6-digit code to ${formData.email}.`);
         } catch (err) {
-            Alert.alert('Đăng ký thất bại', err.message);
+            const status = err.statusCode;
+            let msg;
+            if (status === 400 && (err.message || '').toLowerCase().includes('already')) {
+                msg = 'This email is already registered. Please log in or use a different email.';
+            } else if (status === 400 && (err.message || '').toLowerCase().includes('domain')) {
+                msg = 'This email address does not exist. Please enter a real email so we can send your verification code.';
+            } else if (status === 422) {
+                msg = 'Please enter a valid email address.';
+            } else if (status === 503) {
+                msg = 'Could not send verification email. Please check the email address and try again.';
+            } else {
+                msg = err.message || 'Registration failed. Please try again.';
+            }
+            Alert.alert('Registration failed', msg);
         } finally {
             setLoading(false);
         }
@@ -161,7 +197,14 @@ export default function RegisterScreen({ navigation }) {
                 routes: [{ name: 'Home' }],
             });
         } catch (err) {
-            Alert.alert('Verification failed', err.message);
+            const status = err.statusCode;
+            let msg;
+            if (status === 400) {
+                msg = 'Invalid or expired verification code. Please request a new one.';
+            } else {
+                msg = err.message || 'Verification failed. Please try again.';
+            }
+            Alert.alert('Verification failed', msg);
         } finally {
             setLoading(false);
         }
@@ -174,7 +217,7 @@ export default function RegisterScreen({ navigation }) {
             setVerificationCode('');
             Alert.alert('Code sent', 'A new verification code was sent to your email.');
         } catch (err) {
-            Alert.alert('Could not resend code', err.message);
+            Alert.alert('Could not resend code', err.message || 'Please try again later.');
         } finally {
             setLoading(false);
         }
@@ -243,12 +286,12 @@ export default function RegisterScreen({ navigation }) {
                                 </View>
 
                                 {/* Input Fields */}
-                                <Text style={styles.inputLabel}>Username</Text>
+                                <Text style={styles.inputLabel}>Full Name</Text>
                                 <View style={styles.inputBox}>
                                     <Ionicons name="person-outline" size={18} color="#94a3b8" />
                                     <TextInput
                                         style={styles.input}
-                                        placeholder="Duy Long"
+                                        placeholder="Nguyen Van A"
                                         placeholderTextColor="#cbd5e1"
                                         value={formData.username}
                                         onChangeText={(val) => updateForm('username', val)}
@@ -256,17 +299,28 @@ export default function RegisterScreen({ navigation }) {
                                 </View>
 
                                 <Text style={styles.inputLabel}>Email</Text>
-                                <View style={styles.inputBox}>
+                                <View style={[styles.inputBox, step1Error && step1Error.toLowerCase().includes('email') && styles.inputBoxError]}>
                                     <Ionicons name="mail-outline" size={18} color="#94a3b8" />
                                     <TextInput
                                         style={styles.input}
-                                        placeholder="longdeptrai@gmail.com"
+                                        placeholder="nguyenvana@gmail.com"
                                         placeholderTextColor="#cbd5e1"
                                         keyboardType="email-address"
                                         autoCapitalize="none"
                                         value={formData.email}
-                                        onChangeText={(val) => updateForm('email', val)}
+                                        onChangeText={(val) => { updateForm('email', val); setStep1Error(''); }}
+                                        onBlur={async () => {
+                                            const email = formData.email.trim();
+                                            if (!email || !email.includes('@')) return;
+                                            try {
+                                                setEmailChecking(true);
+                                                const { exists } = await checkEmailExists(email);
+                                                if (exists) setStep1Error('This email is already registered. Please log in or use a different email.');
+                                            } catch (_) {}
+                                            finally { setEmailChecking(false); }
+                                        }}
                                     />
+                                    {emailChecking && <ActivityIndicator size="small" color="#667eea" style={{ marginLeft: 4 }} />}
                                 </View>
 
                                 <Text style={styles.inputLabel}>Password</Text>
@@ -465,13 +519,22 @@ export default function RegisterScreen({ navigation }) {
                         )}
 
                         {/* NÚT ACTION CHÍNH (CONTINUE / START LEARNING) */}
+
+                        {/* Inline error box cho Step 1 */}
+                        {step === 1 && !!step1Error && (
+                            <View style={styles.errorBox}>
+                                <Ionicons name="alert-circle-outline" size={16} color="#b91c1c" style={{ marginRight: 6, flexShrink: 0 }} />
+                                <Text style={styles.errorText}>{step1Error}</Text>
+                            </View>
+                        )}
+
                         <TouchableOpacity
-                            style={styles.actionBtn}
+                            style={[styles.actionBtn, (loading || emailChecking) && { opacity: 0.7 }]}
                             onPress={step === 4 ? handleVerifyEmail : handleNext}
-                            disabled={loading}
+                            disabled={loading || emailChecking}
                             activeOpacity={0.8}
                         >
-                            {loading ? (
+                            {(loading || (step === 1 && emailChecking)) ? (
                                 <ActivityIndicator color="#fff" />
                             ) : (
                                 <Text style={styles.actionBtnText}>
@@ -639,6 +702,28 @@ const styles = StyleSheet.create({
         paddingHorizontal: 14,
         borderWidth: 1,
         borderColor: '#e2e8f0',
+    },
+    inputBoxError: {
+        borderColor: '#fca5a5',
+        backgroundColor: '#fff5f5',
+    },
+    errorBox: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        backgroundColor: '#fef2f2',
+        borderWidth: 1,
+        borderColor: '#fecaca',
+        borderRadius: 10,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        marginBottom: 10,
+        width: '100%',
+    },
+    errorText: {
+        color: '#b91c1c',
+        fontSize: 13,
+        flex: 1,
+        lineHeight: 18,
     },
     input: {
         flex: 1,
