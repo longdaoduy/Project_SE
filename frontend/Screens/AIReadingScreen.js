@@ -413,12 +413,39 @@ export default function AIReadingScreen({ navigation, route }) {
         selectedAnswers,
         elapsed,
       );
-      // Show result immediately — don't wait for history to reload
+      // Show result immediately — explanations arrive shortly via background task
       setCurrentReading(scored);
       setResultReading(scored);
       setViewState('result');
       // Refresh history in the background so it's ready when user navigates back
       loadHistory().catch(() => {});
+
+      // ── Poll for explanations ────────────────────────────────────────────
+      // The backend generates explanations as a BackgroundTask after the submit
+      // response is sent, so the initial `scored` object has no explanation text.
+      // Poll GET /ai-readings/{id} every 2.5 s (up to 6 attempts ≈ 15 s) until
+      // all questions have explanations, then update the result view in-place.
+      const readingId = scored.reading_id;
+      const totalQs   = (scored.comprehension_questions || []).length;
+      let attempts    = 0;
+      const maxAttempts = 6;
+      const pollInterval = setInterval(async () => {
+        attempts += 1;
+        try {
+          const fresh = await getAIReading(readingId);
+          const explained = (fresh.comprehension_questions || []).filter(q => !!q.explanation).length;
+          if (explained >= totalQs || attempts >= maxAttempts) {
+            clearInterval(pollInterval);
+            if (explained > 0) {
+              setResultReading(fresh);
+              setCurrentReading(fresh);
+            }
+          }
+        } catch (_) {
+          // Non-critical — stop polling on error
+          clearInterval(pollInterval);
+        }
+      }, 2500);
     } catch (e) {
       setScreenError(e.message || 'Submit failed');
     } finally {
@@ -1084,10 +1111,15 @@ export default function AIReadingScreen({ navigation, route }) {
                       </View>
 
                       {/* Explanation */}
-                      {!!q.explanation && (
+                      {!!q.explanation ? (
                         <View style={styles.explanationBox}>
                           <Ionicons name="bulb-outline" size={14} color="#7c3aed" style={{ marginRight: 6, marginTop: 1 }} />
                           <Text style={styles.explanationText}>{q.explanation}</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.explanationBoxPending}>
+                          <Ionicons name="time-outline" size={13} color="#a78bfa" style={{ marginRight: 6, marginTop: 1 }} />
+                          <Text style={styles.explanationTextPending}>Generating explanation…</Text>
                         </View>
                       )}
                     </View>
@@ -1408,6 +1440,8 @@ Object.assign(styles, StyleSheet.create({
   // Explanation box
   explanationBox: { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: '#faf5ff', borderRadius: 12, padding: 12, marginTop: 10, borderWidth: 1, borderColor: '#e9d5ff' },
   explanationText: { fontSize: 13, color: '#6b21a8', lineHeight: 19, flex: 1 },
+  explanationBoxPending: { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: '#f5f3ff', borderRadius: 12, padding: 10, marginTop: 10, borderWidth: 1, borderColor: '#ede9fe' },
+  explanationTextPending: { fontSize: 12, color: '#a78bfa', lineHeight: 18, flex: 1, fontStyle: 'italic' },
 
   // Bottom nav
   quickNavContainer: { backgroundColor: '#ffffff', flexDirection: 'row', width: '100%' },
