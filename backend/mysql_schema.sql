@@ -138,6 +138,7 @@ CREATE TABLE IF NOT EXISTS topics (
 
 CREATE TABLE IF NOT EXISTS words (
     word_id         INT AUTO_INCREMENT PRIMARY KEY,
+    owner_user_id  INT          NULL,
     topic_id        INT          NOT NULL,
     word            VARCHAR(120) NOT NULL,
     part_of_speech  VARCHAR(80)  NULL,
@@ -146,7 +147,9 @@ CREATE TABLE IF NOT EXISTS words (
     example_en      TEXT         NOT NULL,
     example_vi      TEXT         NOT NULL,
     created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_words_owner_user_id (owner_user_id),
     INDEX idx_words_topic_id (topic_id),
+    CONSTRAINT fk_words_owner_user FOREIGN KEY (owner_user_id) REFERENCES users (user_id) ON DELETE CASCADE,
     INDEX idx_words_word     (word),
     CONSTRAINT fk_words_topics FOREIGN KEY (topic_id) REFERENCES topics (topic_id)
         ON DELETE CASCADE ON UPDATE CASCADE

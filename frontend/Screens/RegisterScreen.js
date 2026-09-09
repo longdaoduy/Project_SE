@@ -60,7 +60,7 @@ export default function RegisterScreen({ navigation }) {
         confirmPassword: '',
         level: 'B2', // Default chọn B2 như UI
         goals: ['IELTS / TOEIC'], // Mặc định chọn 1 goal
-        dailyGoal: 10, // Mặc định 10 min
+        dailyGoal: 10, // Mặc định 10 words
     });
 
     // Helper cập nhật field trong formData
@@ -464,17 +464,17 @@ export default function RegisterScreen({ navigation }) {
 
                                 <Text style={styles.dailyGoalTitle}>DAILY GOAL</Text>
                                 <View style={styles.dailyGoalRow}>
-                                    {DAILY_GOALS.map((mins) => {
-                                        const selected = formData.dailyGoal === mins;
+                                    {DAILY_GOALS.map((words) => {
+                                        const selected = formData.dailyGoal === words;
                                         return (
                                             <TouchableOpacity
-                                                key={mins}
+                                                key={words}
                                                 style={[
                                                     styles.timeBtn,
                                                     selected && styles.selectedTimeBtn,
                                                 ]}
                                                 activeOpacity={0.7}
-                                                onPress={() => updateForm('dailyGoal', mins)}
+                                                onPress={() => updateForm('dailyGoal', words)}
                                             >
                                                 <Text
                                                     style={[
@@ -482,7 +482,7 @@ export default function RegisterScreen({ navigation }) {
                                                         selected && styles.selectedTimeText,
                                                     ]}
                                                 >
-                                                    {mins} min
+                                                    {words} words
                                                 </Text>
                                             </TouchableOpacity>
                                         );

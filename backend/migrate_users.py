@@ -84,6 +84,7 @@ add_col("users", "avatar",        "VARCHAR(255) NULL")
 add_col("users", "english_level", "ENUM('A1','A2','B1','B2','C1','C2') NULL")
 add_col("users", "daily_goal",    "INT NOT NULL DEFAULT 20")
 add_col("users", "role",          "ENUM('student','admin') NOT NULL DEFAULT 'student'")
+add_col("words", "owner_user_id", "INT NULL")
 
 # Keep legacy columns from blocking writes made through the new ORM schema.
 # Existing clients can still populate these columns, but new clients no longer

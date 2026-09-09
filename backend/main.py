@@ -67,6 +67,15 @@ def _auto_migrate_columns() -> None:
                 "TINYINT(1) NOT NULL DEFAULT 1"
             ))
 
+    # User-created vocabulary is private; NULL keeps seeded vocabulary shared.
+    word_cols = {c["name"] for c in inspector.get_columns("words")}
+    if "owner_user_id" not in word_cols:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "ALTER TABLE words ADD COLUMN owner_user_id INT NULL"
+            ))
+            print("  [auto-migrate] ADD words.owner_user_id")
+
     # ── ai_readings missing columns ──────────────────────────────────────────
     ai_cols = {c["name"] for c in inspector.get_columns("ai_readings")}
     missing_ai: dict[str, str] = {
@@ -135,6 +144,25 @@ def get_current_user(
     return user
 
 
+def get_optional_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+    db: Session = Depends(get_db),
+):
+    """Return the authenticated user when a valid token is supplied."""
+    if not credentials:
+        return None
+    try:
+        payload = decode_access_token(credentials.credentials)
+        user_id = int(payload.get("sub"))
+    except Exception:
+        return None
+    session = crud.get_active_session_by_token(db, credentials.credentials)
+    if not session or session.user_id != user_id:
+        return None
+    user = crud.get_user_by_id(db, user_id)
+    return user if user and user.is_active else None
+
+
 # ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/health", tags=["health"])
 def health_check():
@@ -170,10 +198,14 @@ def get_topic(topic_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/words", response_model=schemas.WordRead, tags=["vocabulary"])
-def create_word(payload: schemas.WordCreate, db: Session = Depends(get_db)):
+def create_word(
+    payload: schemas.WordCreate,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     if not crud.get_topic_by_id(db, payload.topic_id):
         raise HTTPException(404, "Topic not found")
-    return crud.create_word(db, payload)
+    return crud.create_word(db, payload, owner_user_id=current_user.user_id)
 
 
 @app.get("/words", response_model=List[schemas.WordRead], tags=["vocabulary"])
@@ -182,10 +214,13 @@ def get_words(
     offset: int = Query(0, ge=0),
     topic_id: int | None = Query(default=None, ge=1),
     user_id: int | None = Query(default=None, ge=1),
+    current_user=Depends(get_optional_current_user),
     db: Session = Depends(get_db),
 ):
+    # Prefer the authenticated identity; the query parameter is legacy only.
+    effective_user_id = current_user.user_id if current_user else None
     return crud.list_words(
-        db, limit=limit, offset=offset, topic_id=topic_id, user_id=user_id
+        db, limit=limit, offset=offset, topic_id=topic_id, user_id=effective_user_id
     )
 
 

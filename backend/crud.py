@@ -55,8 +55,11 @@ def list_topics(db: Session, limit: int = 100, offset: int = 0) -> list[models.T
     )
 
 
-def create_word(db: Session, payload: schemas.WordCreate) -> models.Word:
+def create_word(
+    db: Session, payload: schemas.WordCreate, owner_user_id: int | None = None
+) -> models.Word:
     word = models.Word(
+        owner_user_id=owner_user_id,
         topic_id=payload.topic_id,
         word=payload.word.strip(),
         part_of_speech=payload.part_of_speech.strip() if payload.part_of_speech else None,
@@ -82,6 +85,11 @@ def list_words(
     q = db.query(models.Word)
     if topic_id is not None:
         q = q.filter(models.Word.topic_id == topic_id)
+    if user_id is not None:
+        q = q.filter(
+            (models.Word.owner_user_id.is_(None)) |
+            (models.Word.owner_user_id == user_id)
+        )
     
     words = q.order_by(models.Word.word_id.asc()).offset(offset).limit(limit).all()
 

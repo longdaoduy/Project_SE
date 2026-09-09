@@ -12,7 +12,7 @@ import { Platform } from 'react-native';
 
 // ⚠️ Set this to your computer's LAN IP (run `ipconfig` to find it)
 // Example: '192.168.1.5'  — keep port 8000
-const LAN_IP = '192.168.1.96';
+const LAN_IP = '192.168.6.106';
 
 // 🌐 Ngrok URL — paste your ngrok https URL here when using ngrok tunnel
 // Example: 'https://xxxx-xxx-xxx.ngrok-free.app'
@@ -86,8 +86,8 @@ export const getTopic = (topicId) =>
 // userId is optional because most callers only need the vocabulary itself.
 // Keep `limit` second to preserve the existing call sites.
 // signal: AbortController signal để cancel request khi topic thay đổi nhanh
-export const getWords = (topicId, limit = 50, userId = null, signal = null) =>
-  get('/words', { topic_id: topicId, user_id: userId, limit }, null, signal);
+export const getWords = (topicId, limit = 50, userId = null, signal = null, token = null) =>
+  get('/words', { topic_id: topicId, user_id: userId, limit }, token, signal);
 
 export const getWord = (wordId) =>
   get(`/words/${wordId}`);
@@ -414,8 +414,8 @@ export const submitAIAnswer = (questionId, userAnswer) =>
 
 // ─── Words (add to topic) ─────────────────────────────────────────────────────
 
-export const addWord = (payload) =>
-  post('/words', payload);
+export const addWord = (payload, token = null) =>
+  post('/words', payload, token);
 // payload: { topic_id, word, part_of_speech, phonetic, meaning_vi, example_en, example_vi }
 
 /**

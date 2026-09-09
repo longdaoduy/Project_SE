@@ -263,6 +263,9 @@ class Word(Base):
     __tablename__ = "words"
 
     word_id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    owner_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), nullable=True, index=True
+    )
     topic_id: Mapped[int] = mapped_column(
         ForeignKey("topics.topic_id", ondelete="CASCADE"), nullable=False, index=True
     )

@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import {
   StyleSheet, Text, TextInput, View, ScrollView,
   StatusBar, Platform, Dimensions, Image,
-  TouchableOpacity, FlatList, ActivityIndicator, Alert, Modal,
+  TouchableOpacity, SectionList, ActivityIndicator, Alert, Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -25,7 +25,7 @@ const WORD_TYPES = [
 ];
 
 export default function WordlistScreen({ navigation }) {
-  const { userId, topics, loadTopics, starredWordIds, starredWords, toggleStar } = useData();
+  const { token, userId, topics, loadTopics, starredWordIds, starredWords, toggleStar } = useData();
 
   // ── Data state ──────────────────────────────────────────────────────────────
   const [vocabularies, setVocabularies] = useState([]);
@@ -67,11 +67,12 @@ export default function WordlistScreen({ navigation }) {
     try {
       setLoading(true);
       setError(null);
-      const data = await getWords(selectedTopicId, selectedTopicId ? 50 : 2000, userId, controller.signal);
+      const data = await getWords(selectedTopicId, selectedTopicId ? 50 : 2000, userId, controller.signal, token);
       // Nếu request này đã bị cancel thì không update state
       if (controller.signal.aborted) return;
       const normalized = (data || []).map((w) => ({
         id: w.word_id,
+        ownerUserId: w.owner_user_id,
         word: w.word,
         type: w.part_of_speech || 'word',
         phonetic: w.phonetic || '',
@@ -92,7 +93,7 @@ export default function WordlistScreen({ navigation }) {
         setRefreshing(false);
       }
     }
-  }, [selectedTopicId, userId]);
+  }, [selectedTopicId, userId, token]);
 
   useEffect(() => { if (topics.length === 0) loadTopics(); }, []);
   useEffect(() => { fetchVocabularies(); }, [fetchVocabularies]);
@@ -133,7 +134,7 @@ export default function WordlistScreen({ navigation }) {
         meaning_vi: m,
         example_en: en,
         example_vi: vi,
-      });
+      }, token);
       Alert.alert('Success', `"${w}" added to your vocabulary!`);
       setNewWord(''); setNewPhonetic(''); setNewMeaningVi('');
       setNewExampleEn(''); setNewExampleVi(''); setNewTopicId(null);
@@ -161,6 +162,16 @@ export default function WordlistScreen({ navigation }) {
             selectedFilter === 'unstudied' ? item.wordStatus === 'unstudied' : true;
     return matchSearch && matchFilter;
   }), [vocabularies, searchQuery, selectedFilter, starredWordIds]);
+
+  const wordSections = useMemo(() => {
+    const userWords = displayList.filter((item) => item.ownerUserId !== null && item.ownerUserId !== undefined);
+    const availableWords = displayList.filter((item) => item.ownerUserId === null || item.ownerUserId === undefined);
+
+    return [
+      { title: 'Words you created', data: userWords },
+      { title: 'Available vocabulary', data: availableWords },
+    ];
+  }, [displayList]);
 
   // ── Render word card ─────────────────────────────────────────────────────────
   const renderVocabularyCard = ({ item }) => {
@@ -234,8 +245,8 @@ export default function WordlistScreen({ navigation }) {
                   {selectedTopic ? `${selectedTopic.topic_name} · ` : ''}{vocabularies.length} words
                 </Text>
               </View>
-              <TouchableOpacity style={styles.addButton} onPress={() => navigation.navigate('FlashcardScreen')}>
-                <Ionicons name="albums-outline" size={18} color="#ffffff" />
+              <TouchableOpacity style={styles.addButton} onPress={() => setViewState('add')}>
+                <Ionicons name="add" size={20} color="#ffffff" />
               </TouchableOpacity>
             </View>
 
@@ -307,23 +318,23 @@ export default function WordlistScreen({ navigation }) {
               {/* Count label */}
               <Text style={styles.countLabel}>{displayList.length} word{displayList.length !== 1 ? 's' : ''}</Text>
 
-              {/* Word FlatList */}
-              <FlatList
+              {/* Word sections */}
+              <SectionList
                 style={{ width: '100%', flex: 1 }}
                 contentContainerStyle={styles.listContent}
-                data={displayList}
+                sections={wordSections}
                 renderItem={renderVocabularyCard}
+                renderSectionHeader={({ section }) => (
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>{section.title}</Text>
+                    <Text style={styles.sectionCount}>{section.data.length}</Text>
+                  </View>
+                )}
                 keyExtractor={(item) => String(item.id)}
                 showsVerticalScrollIndicator={false}
                 refreshing={refreshing}
                 onRefresh={handleRefresh}
                 // ── Hiệu năng ──────────────────────────────────────────────
-                // getItemLayout: FlatList tính trước offset từng item → scroll mượt, không đo runtime
-                getItemLayout={(_, index) => ({
-                  length: CARD_HEIGHT,
-                  offset: CARD_HEIGHT * index,
-                  index,
-                })}
                 initialNumToRender={10}       // render 10 item đầu tiên thay vì toàn bộ
                 maxToRenderPerBatch={8}        // mỗi batch chỉ render 8 item khi scroll
                 windowSize={5}                 // giữ 5 "màn hình" trong bộ nhớ (trên+dưới viewport)
@@ -357,6 +368,129 @@ export default function WordlistScreen({ navigation }) {
                 }
               />
             </View>
+          </>
+        )}
+
+        {/* ═══════════════════ ADD WORD VIEW ═══════════════════ */}
+        {viewState === 'add' && (
+          <>
+            <View style={styles.headerSection}>
+              <TouchableOpacity onPress={() => setViewState('list')} style={styles.backButton}>
+                <Image source={require('../assets/back.png')} style={{ width: 16, height: 16, resizeMode: 'contain' }} />
+              </TouchableOpacity>
+              <View style={styles.headerTextContainer}>
+                <Text style={styles.appName}>Add Vocabulary</Text>
+                <Text style={styles.appSubtitle}>Add a word to a topic</Text>
+              </View>
+            </View>
+
+            <ScrollView
+              style={styles.whiteCardContainer}
+              contentContainerStyle={{ paddingBottom: 24 }}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.addWordContainer}>
+                <Text style={styles.addWordContainerTitle}>TOPIC</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  {(topics || []).map((topic) => {
+                    const active = (newTopicId ?? selectedTopicId) === topic.topic_id;
+                    return (
+                      <TouchableOpacity
+                        key={topic.topic_id}
+                        style={[styles.formTopicChip, active && styles.formTopicChipSel]}
+                        onPress={() => setNewTopicId(topic.topic_id)}
+                      >
+                        <Text style={[styles.formTopicChipText, active && styles.formTopicChipTextSel]}>
+                          {topic.topic_name}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+
+                <Text style={styles.addWordContainerTitle}>WORD OR PHRASE</Text>
+                <View style={styles.addWordInputContainer}>
+                  <TextInput
+                    style={styles.addWordInput}
+                    placeholder="Enter word or phrase"
+                    placeholderTextColor="#94a3b8"
+                    value={newWord}
+                    onChangeText={setNewWord}
+                  />
+                </View>
+
+                <Text style={styles.addWordContainerTitle}>WORD TYPE</Text>
+                <View style={styles.wordTypeButtonContainer}>
+                  {WORD_TYPES.map((type) => (
+                    <TouchableOpacity
+                      key={type.id}
+                      style={[styles.wordTypeButton, selectedType === type.id && styles.wordTypeButtonSelected]}
+                      onPress={() => setSelectedType(type.id)}
+                    >
+                      <Text style={[styles.wordTypeButtonText, selectedType === type.id && styles.wordTypeButtonTextSelected]}>
+                        {type.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <Text style={styles.addWordContainerTitle}>PHONETIC (OPTIONAL)</Text>
+                <View style={styles.addWordInputContainer}>
+                  <TextInput
+                    style={styles.addWordInput}
+                    placeholder="e.g. /ˈhəʊm/"
+                    placeholderTextColor="#94a3b8"
+                    value={newPhonetic}
+                    onChangeText={setNewPhonetic}
+                  />
+                </View>
+
+                <Text style={styles.addWordContainerTitle}>VIETNAMESE MEANING</Text>
+                <View style={styles.addWordInputContainer}>
+                  <TextInput
+                    style={styles.addWordInput}
+                    placeholder="Enter meaning"
+                    placeholderTextColor="#94a3b8"
+                    value={newMeaningVi}
+                    onChangeText={setNewMeaningVi}
+                  />
+                </View>
+
+                <Text style={styles.addWordContainerTitle}>ENGLISH EXAMPLE</Text>
+                <View style={styles.addWordInputContainer}>
+                  <TextInput
+                    style={styles.addWordInput}
+                    placeholder="Enter an example sentence"
+                    placeholderTextColor="#94a3b8"
+                    value={newExampleEn}
+                    onChangeText={setNewExampleEn}
+                  />
+                </View>
+
+                <Text style={styles.addWordContainerTitle}>VIETNAMESE TRANSLATION</Text>
+                <View style={styles.addWordInputContainer}>
+                  <TextInput
+                    style={styles.addWordInput}
+                    placeholder="Translate the example sentence"
+                    placeholderTextColor="#94a3b8"
+                    value={newExampleVi}
+                    onChangeText={setNewExampleVi}
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.addWordButton, submitting && { opacity: 0.6 }]}
+                  onPress={handleAddWordSubmit}
+                  disabled={submitting}
+                >
+                  {submitting ? (
+                    <ActivityIndicator color="#ffffff" />
+                  ) : (
+                    <Text style={styles.addWordButtonText}>Save Word</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           </>
         )}
 
@@ -470,6 +604,9 @@ const styles = StyleSheet.create({
 
   // ── Count label ──────────────────────────────────────────────────────────────
   countLabel: { fontSize: 12, color: '#64748b', fontWeight: '600', marginBottom: 6, paddingHorizontal: 2 },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 2, paddingTop: 10, paddingBottom: 6 },
+  sectionTitle: { fontSize: 14, color: '#334155', fontWeight: '800' },
+  sectionCount: { minWidth: 24, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 10, backgroundColor: '#e0e7ff', color: '#4f46e5', fontSize: 11, fontWeight: '700', textAlign: 'center' },
   listContent: { paddingBottom: 12 },
 
   // ── Word card ────────────────────────────────────────────────────────────────

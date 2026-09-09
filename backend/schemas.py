@@ -44,6 +44,7 @@ class WordCreate(BaseModel):
 class WordRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     word_id: int
+    owner_user_id: int | None = None
     topic_id: int
     word: str
     part_of_speech: str | None
